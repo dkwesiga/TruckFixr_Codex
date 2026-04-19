@@ -1,0 +1,366 @@
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Check, ChevronRight, Clock, Zap, BarChart3, AlertCircle, ArrowRight } from "lucide-react";
+import { getLoginUrl } from "@/const";
+import { useState } from "react";
+
+const LOGO_URL = "https://d2xsxph8kpxj0f.cloudfront.net/310519663529519149/YnVdyzctfNJSdviqTiJBrV/compact_logo_78801859.png";
+
+export default function Landing() {
+  const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
+
+  const faqs = [
+    {
+      question: "How does TADIS work?",
+      answer: "TADIS combines driver-reported symptoms, fault codes, truck history, and operational context to produce an urgency level and recommended action. It uses rule-based logic augmented by AI to identify likely causes and provide reasoning for every defect.",
+    },
+    {
+      question: "Can I start with a free trial?",
+      answer: "Yes. All new fleets get a 14-day free trial on the Starter plan. No credit card required. Upgrade anytime to access more trucks and premium TADIS features.",
+    },
+    {
+      question: "How do I add my team?",
+      answer: "During onboarding, you'll invite managers and drivers via email. Managers see the full dashboard and can triage issues. Drivers use the mobile-first inspection workflow.",
+    },
+    {
+      question: "What if I have more than 20 trucks?",
+      answer: "The Fleet plan supports up to 20 trucks. For larger fleets, contact our sales team for custom pricing.",
+    },
+    {
+      question: "Is my data secure?",
+      answer: "Yes. All data is encrypted in transit and at rest. We use industry-standard security practices and comply with GDPR and CCPA.",
+    },
+  ];
+
+  const pricingPlans = [
+    {
+      name: "Starter",
+      trucks: "2–5 trucks",
+      price: "$99",
+      period: "/month",
+      features: [
+        "Daily inspections & defect capture",
+        "Basic TADIS diagnostics",
+        "Morning fleet summary",
+        "Action queue & defect tracking",
+        "Up to 3 team members",
+        "Email support",
+      ],
+      cta: "Start Free Trial",
+      highlighted: false,
+    },
+    {
+      name: "Growth",
+      trucks: "6–10 trucks",
+      price: "$249",
+      period: "/month",
+      features: [
+        "Everything in Starter, plus:",
+        "Advanced reporting & analytics",
+        "Maintenance history & logs",
+        "Up to 10 team members",
+        "Priority email support",
+        "Truck health trends",
+      ],
+      cta: "Start Free Trial",
+      highlighted: true,
+    },
+    {
+      name: "Fleet",
+      trucks: "11–20 trucks",
+      price: "$499",
+      period: "/month",
+      features: [
+        "Everything in Growth, plus:",
+        "Custom inspection templates",
+        "Predictive maintenance insights",
+        "Unlimited team members",
+        "Phone & email support",
+        "API access (coming soon)",
+      ],
+      cta: "Start Free Trial",
+      highlighted: false,
+    },
+  ];
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+      {/* Navigation */}
+      <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <img src={LOGO_URL} alt="TruckFixr" className="h-10 w-auto" />
+            <span className="font-bold text-lg text-slate-900 hidden sm:inline">TruckFixr</span>
+          </div>
+          <div className="flex items-center gap-4">
+            <a href="#pricing" className="text-sm text-slate-600 hover:text-slate-900">
+              Pricing
+            </a>
+            <a href="#faq" className="text-sm text-slate-600 hover:text-slate-900">
+              FAQ
+            </a>
+            <Button asChild size="sm" className="bg-blue-600 hover:bg-blue-700 text-white">
+              <a href="/signup">Sign Up</a>
+            </Button>
+            <Button asChild variant="outline" size="sm">
+              <a href="/auth/email">Sign In</a>
+            </Button>
+          </div>
+        </div>
+      </nav>
+
+      {/* Hero Section */}
+      <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-20 sm:py-32">
+        <div className="text-center space-y-8">
+          <div className="space-y-4">
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-slate-900 leading-tight">
+              Keep More Trucks on the Road
+            </h1>
+            <p className="text-lg sm:text-xl text-slate-600 max-w-2xl mx-auto">
+              Daily inspections, AI-powered diagnostics, and real-time fleet management. Catch issues before they become downtime.
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            <Button asChild size="lg" className="bg-blue-600 hover:bg-blue-700">
+              <a href="/signup">
+                Start Free Trial <ArrowRight className="ml-2 w-4 h-4" />
+              </a>
+            </Button>
+            <Button asChild variant="outline" size="lg">
+              <a href="#how-it-works">See How It Works</a>
+            </Button>
+          </div>
+          <p className="text-sm text-slate-500">No credit card required. 14-day free trial on Starter plan.</p>
+        </div>
+      </section>
+
+      {/* Features Section */}
+      <section className="bg-white py-20 sm:py-32">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-4">
+              Everything You Need to Run a Smarter Fleet
+            </h2>
+            <p className="text-lg text-slate-600 max-w-2xl mx-auto">
+              From daily inspections to predictive maintenance, TruckFixr gives you visibility and control.
+            </p>
+          </div>
+          <div className="grid md:grid-cols-3 gap-8">
+            {[
+              {
+                icon: Clock,
+                title: "Daily Inspections",
+                description: "Drivers complete inspections in minutes. Capture defects with photos and detailed notes.",
+              },
+              {
+                icon: Zap,
+                title: "TADIS Diagnostics",
+                description: "AI-powered analysis produces urgency levels and recommended actions instantly.",
+              },
+              {
+                icon: BarChart3,
+                title: "Real-Time Visibility",
+                description: "Managers see the complete fleet status, action queue, and maintenance history at a glance.",
+              },
+              {
+                icon: AlertCircle,
+                title: "Smart Alerts",
+                description: "Get notified of critical issues before they cause breakdowns.",
+              },
+              {
+                icon: Check,
+                title: "Action Tracking",
+                description: "Assign, track, and resolve defects with a full audit trail.",
+              },
+              {
+                icon: BarChart3,
+                title: "Maintenance Insights",
+                description: "Understand fleet health trends and plan preventive maintenance.",
+              },
+            ].map((feature, idx) => (
+              <Card key={idx} className="border-slate-200">
+                <CardHeader>
+                  <feature.icon className="w-8 h-8 text-blue-600 mb-2" />
+                  <CardTitle className="text-lg">{feature.title}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-slate-600">{feature.description}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* How It Works */}
+      <section id="how-it-works" className="py-20 sm:py-32 bg-slate-50">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-4">How It Works</h2>
+            <p className="text-lg text-slate-600">Three simple steps to smarter fleet management.</p>
+          </div>
+          <div className="grid md:grid-cols-3 gap-8">
+            {[
+              {
+                step: "1",
+                title: "Driver Inspects",
+                description: "Drivers use the mobile app to complete daily inspections. They report defects with photos and details.",
+              },
+              {
+                step: "2",
+                title: "TADIS Analyzes",
+                description: "Our AI engine analyzes each defect and produces an urgency level, recommended action, and likely cause.",
+              },
+              {
+                step: "3",
+                title: "Manager Acts",
+                description: "Managers see the prioritized action queue and assign repairs. Track everything from defect to resolution.",
+              },
+            ].map((item, idx) => (
+              <div key={idx} className="text-center">
+                <div className="w-12 h-12 bg-blue-600 text-white rounded-full flex items-center justify-center mx-auto mb-4 text-lg font-bold">
+                  {item.step}
+                </div>
+                <h3 className="text-xl font-semibold text-slate-900 mb-2">{item.title}</h3>
+                <p className="text-slate-600">{item.description}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Pricing Section */}
+      <section id="pricing" className="py-20 sm:py-32 bg-white">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-4">Simple, Transparent Pricing</h2>
+            <p className="text-lg text-slate-600">All plans include a 14-day free trial. Upgrade anytime.</p>
+          </div>
+          <div className="grid md:grid-cols-3 gap-8">
+            {pricingPlans.map((plan, idx) => (
+              <Card
+                key={idx}
+                className={`flex flex-col ${
+                  plan.highlighted ? "border-blue-600 border-2 shadow-lg" : "border-slate-200"
+                }`}
+              >
+                {plan.highlighted && (
+                  <div className="bg-blue-600 text-white px-4 py-2 text-center text-sm font-semibold">
+                    Most Popular
+                  </div>
+                )}
+                <CardHeader>
+                  <CardTitle>{plan.name}</CardTitle>
+                  <CardDescription>{plan.trucks}</CardDescription>
+                  <div className="mt-4">
+                    <span className="text-3xl font-bold text-slate-900">{plan.price}</span>
+                    <span className="text-slate-600">{plan.period}</span>
+                  </div>
+                </CardHeader>
+                <CardContent className="flex-1 space-y-4">
+                  <Button asChild className="w-full" variant={plan.highlighted ? "default" : "outline"}>
+                    <a href="/signup">{plan.cta}</a>
+                  </Button>
+                  <ul className="space-y-3">
+                    {plan.features.map((feature, fidx) => (
+                      <li key={fidx} className="flex gap-2 text-sm text-slate-600">
+                        <Check className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
+                        <span>{feature}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+          <div className="mt-12 p-6 bg-blue-50 rounded-lg border border-blue-200 text-center">
+            <p className="text-slate-700">
+              <strong>Premium TADIS Add-on:</strong> $99/month for predictive maintenance, advanced telematics, and compliance insights.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* FAQ Section */}
+      <section id="faq" className="py-20 sm:py-32 bg-slate-50">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-4">Frequently Asked Questions</h2>
+          </div>
+          <div className="space-y-4">
+            {faqs.map((faq, idx) => (
+              <Card key={idx} className="border-slate-200 cursor-pointer" onClick={() => setExpandedFaq(expandedFaq === idx ? null : idx)}>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base">{faq.question}</CardTitle>
+                    <ChevronRight
+                      className={`w-5 h-5 text-slate-400 transition-transform ${
+                        expandedFaq === idx ? "rotate-90" : ""
+                      }`}
+                    />
+                  </div>
+                </CardHeader>
+                {expandedFaq === idx && (
+                  <CardContent className="pt-0">
+                    <p className="text-slate-600">{faq.answer}</p>
+                  </CardContent>
+                )}
+              </Card>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* CTA Section */}
+      <section className="bg-blue-600 py-16 sm:py-20">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+          <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">Ready to Keep More Trucks on the Road?</h2>
+          <p className="text-lg text-blue-100 mb-8">Start your free 14-day trial today. No credit card required.</p>
+          <Button asChild size="lg" className="bg-white text-blue-600 hover:bg-slate-100">
+            <a href="/signup">
+              Get Started <ArrowRight className="ml-2 w-4 h-4" />
+            </a>
+          </Button>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="bg-slate-900 text-slate-400 py-12">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid md:grid-cols-4 gap-8 mb-8">
+            <div>
+              <div className="flex items-center gap-2 mb-4">
+                <img src={LOGO_URL} alt="TruckFixr" className="h-6 w-auto" />
+                <span className="font-bold text-white hidden sm:inline">TruckFixr</span>
+              </div>
+              <p className="text-sm">Fleet operations copilot for small trucking companies.</p>
+            </div>
+            <div>
+              <h4 className="font-semibold text-white mb-4">Product</h4>
+              <ul className="space-y-2 text-sm">
+                <li><a href="#pricing" className="hover:text-white">Pricing</a></li>
+                <li><a href="#faq" className="hover:text-white">FAQ</a></li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-semibold text-white mb-4">Legal</h4>
+              <ul className="space-y-2 text-sm">
+                <li><a href="#" className="hover:text-white">Terms of Service</a></li>
+                <li><a href="#" className="hover:text-white">Privacy Policy</a></li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-semibold text-white mb-4">Support</h4>
+              <ul className="space-y-2 text-sm">
+                <li><a href="mailto:support@truckfixr.com" className="hover:text-white">support@truckfixr.com</a></li>
+              </ul>
+            </div>
+          </div>
+          <div className="border-t border-slate-800 pt-8 text-center text-sm">
+            <p>&copy; 2026 TruckFixr. All rights reserved.</p>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
