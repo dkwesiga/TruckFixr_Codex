@@ -71,15 +71,19 @@ export async function processStripeWebhookEvent(event: {
           await syncSubscriptionState({
             userId,
             tier: "free",
+            billingCadence: "monthly",
             billingStatus: "canceled",
             stripeCustomerId: object.customer,
             stripeSubscriptionId: object.id,
+            stripePriceId: null,
             currentPeriodStart: object.current_period_start
               ? new Date(object.current_period_start * 1000)
               : null,
             currentPeriodEnd: object.current_period_end
               ? new Date(object.current_period_end * 1000)
               : null,
+            trialStart: null,
+            trialEnd: null,
             cancelAtPeriodEnd: object.cancel_at_period_end ?? false,
           });
         }
@@ -101,11 +105,15 @@ export async function processStripeWebhookEvent(event: {
           await syncSubscriptionState({
             userId,
             tier: current.tier,
+            billingCadence: current.billingCadence,
             billingStatus: event.type === "invoice.payment_failed" ? "past_due" : "active",
             stripeCustomerId: object.customer,
             stripeSubscriptionId: object.subscription ?? current.stripeSubscriptionId,
+            stripePriceId: current.stripePriceId,
             currentPeriodStart: current.currentPeriodStart,
             currentPeriodEnd: current.currentPeriodEnd,
+            trialStart: current.trialStart,
+            trialEnd: current.trialEnd,
             cancelAtPeriodEnd: current.cancelAtPeriodEnd,
           });
         }

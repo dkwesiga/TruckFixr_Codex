@@ -1,10 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import AppLogo from "@/components/AppLogo";
 import { Check, ChevronRight, Clock, Zap, BarChart3, AlertCircle, ArrowRight } from "lucide-react";
 import { getLoginUrl } from "@/const";
 import { useState } from "react";
-
-const LOGO_URL = "https://d2xsxph8kpxj0f.cloudfront.net/310519663529519149/YnVdyzctfNJSdviqTiJBrV/compact_logo_78801859.png";
 
 export default function Landing() {
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
@@ -32,7 +31,7 @@ export default function Landing() {
     },
   ];
 
-  const pricingPlans = [
+const pricingPlans = [
     {
       name: "Starter",
       trucks: "2–5 trucks",
@@ -83,13 +82,35 @@ export default function Landing() {
     },
   ];
 
+  const supporters = [
+    {
+      name: "Black Founders Network",
+      href: "https://www.blackfounders.network/",
+      description: "Supporting Black-led startups and venture growth.",
+      logoSrc: "/partner-bfn.svg",
+      logoAlt: "Black Founders Network logo",
+      logoClassName: "h-12 w-auto",
+      logoWrapperClassName:
+        "rounded-2xl bg-slate-950 px-4 py-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]",
+    },
+    {
+      name: "DMZ",
+      href: "https://www.dmzlaunchpad.ca/",
+      description: "Backing high-potential founders building scalable companies.",
+      logoSrc: "/partner-dmz.png",
+      logoAlt: "DMZ logo",
+      logoClassName: "h-11 w-auto",
+      logoWrapperClassName: "rounded-2xl bg-slate-100 px-4 py-3",
+    },
+  ];
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
       {/* Navigation */}
       <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <img src={LOGO_URL} alt="TruckFixr" className="h-10 w-auto" />
+            <AppLogo imageClassName="h-10" frameClassName="p-1.5" />
             <span className="font-bold text-lg text-slate-900 hidden sm:inline">TruckFixr</span>
           </div>
           <div className="flex items-center gap-4">
@@ -187,6 +208,42 @@ export default function Landing() {
                   <p className="text-slate-600">{feature.description}</p>
                 </CardContent>
               </Card>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="bg-slate-50 py-16">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-10">
+            <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 mb-3">
+              Partners and Supporters
+            </h2>
+            <p className="text-lg text-slate-600 max-w-2xl mx-auto">
+              TruckFixr is supported by organizations helping founders build practical, high-impact products.
+            </p>
+          </div>
+          <div className="grid gap-6 md:grid-cols-2">
+            {supporters.map((supporter) => (
+              <a
+                key={supporter.name}
+                href={supporter.href}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-2xl border border-slate-200 bg-white p-6 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+              >
+                <div className="flex h-16 items-center">
+                  <div className={supporter.logoWrapperClassName}>
+                  <img
+                    src={supporter.logoSrc}
+                    alt={supporter.logoAlt}
+                    className={supporter.logoClassName}
+                  />
+                  </div>
+                </div>
+                <h3 className="text-xl font-semibold text-slate-900">{supporter.name}</h3>
+                <p className="mt-2 text-slate-600">{supporter.description}</p>
+              </a>
             ))}
           </div>
         </div>
@@ -330,7 +387,7 @@ export default function Landing() {
           <div className="grid md:grid-cols-4 gap-8 mb-8">
             <div>
               <div className="flex items-center gap-2 mb-4">
-                <img src={LOGO_URL} alt="TruckFixr" className="h-6 w-auto" />
+                <AppLogo imageClassName="h-6" frameClassName="p-1.5 bg-white" />
                 <span className="font-bold text-white hidden sm:inline">TruckFixr</span>
               </div>
               <p className="text-sm">Fleet operations copilot for small trucking companies.</p>

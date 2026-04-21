@@ -18,6 +18,7 @@ const TruckDetail = lazy(() => import("./pages/TruckDetail"));
 const Pricing = lazy(() => import("./pages/Pricing"));
 const EmailAuth = lazy(() => import("./pages/EmailAuth"));
 const UserProfile = lazy(() => import("./pages/UserProfile"));
+const AdminBillingDashboard = lazy(() => import("./pages/AdminBillingDashboard"));
 
 function RouteFallback() {
   return (
@@ -45,6 +46,7 @@ function Router() {
         <Route path={"/defect/:id"} component={DefectDetail} />
         <Route path={"/truck/:id"} component={TruckDetail} />
         <Route path={"/pricing"} component={Pricing} />
+        <Route path={"/admin/billing"} component={AdminBillingDashboard} />
         <Route path={"/404"} component={NotFound} />
         <Route path={"/"} component={LandingSaaS} />
         <Route component={NotFound} />

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { motion, type Transition } from "framer-motion";
+import AppLogo from "@/components/AppLogo";
 import { Button } from "@/components/ui/button";
 import {
   ArrowRight,
@@ -12,14 +13,33 @@ import {
   Users,
 } from "lucide-react";
 
-const LOGO_URL =
-  "https://d2xsxph8kpxj0f.cloudfront.net/310519663529519149/YnVdyzctfNJSdviqTiJBrV/compact_logo_78801859.png";
-
 const trustSignals = [
   "Built for owner-operators and small fleet teams",
   "Daily inspection workflows drivers actually complete",
   "AI-assisted triage with audit-friendly reasoning",
   "Operational visibility for compliance and uptime",
+];
+
+const supporters = [
+  {
+    name: "Black Founders Network",
+    href: "https://www.blackfounders.network/",
+    description: "Startup ecosystem support for Black-led ventures and innovation.",
+    logoSrc: "/partner-bfn.svg",
+    logoAlt: "Black Founders Network logo",
+    logoClassName: "h-12 w-auto",
+    logoWrapperClassName:
+      "rounded-2xl bg-slate-950 px-4 py-3 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]",
+  },
+  {
+    name: "DMZ",
+    href: "https://www.dmzlaunchpad.ca/",
+    description: "Startup acceleration and venture support for high-growth founders.",
+    logoSrc: "/partner-dmz.png",
+    logoAlt: "DMZ logo",
+    logoClassName: "h-11 w-auto",
+    logoWrapperClassName: "rounded-2xl bg-slate-100 px-4 py-3",
+  },
 ];
 
 const outcomes = [
@@ -265,7 +285,10 @@ export default function LandingSaaS() {
       <header className="sticky top-0 z-50 border-b border-slate-200/80 bg-white/80 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
           <a href="/" className="flex items-center gap-3">
-            <img src={LOGO_URL} alt="TruckFixr" className="h-10 w-auto" />
+            <AppLogo
+              imageClassName="h-10"
+              frameClassName="p-1.5"
+            />
             <div>
               <p className="text-sm font-semibold tracking-tight text-slate-950">TruckFixr</p>
               <p className="text-xs text-slate-500">Fleet uptime software</p>
@@ -384,6 +407,42 @@ export default function LandingSaaS() {
                   {signal}
                 </div>
               ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="border-b border-slate-200/80 bg-slate-50/80">
+          <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+              <div className="max-w-2xl">
+                <p className="section-label">Partners and supporters</p>
+                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
+                  Supported by organizations helping innovative founders build real operating products.
+                </h2>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[540px]">
+                {supporters.map((supporter) => (
+                  <a
+                    key={supporter.name}
+                    href={supporter.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+                  >
+                    <div className="flex h-16 items-center">
+                      <div className={supporter.logoWrapperClassName}>
+                      <img
+                        src={supporter.logoSrc}
+                        alt={supporter.logoAlt}
+                        className={supporter.logoClassName}
+                      />
+                      </div>
+                    </div>
+                    <p className="text-base font-semibold text-slate-950">{supporter.name}</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-600">{supporter.description}</p>
+                  </a>
+                ))}
+              </div>
             </div>
           </div>
         </section>
@@ -567,7 +626,7 @@ export default function LandingSaaS() {
       <footer className="border-t border-slate-200 bg-white/80">
         <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-8 text-sm text-slate-500 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
           <div className="flex items-center gap-3">
-            <img src={LOGO_URL} alt="TruckFixr" className="h-8 w-auto" />
+            <AppLogo imageClassName="h-8" frameClassName="p-1.5" />
             <span>TruckFixr</span>
           </div>
           <div className="flex flex-wrap items-center gap-5">

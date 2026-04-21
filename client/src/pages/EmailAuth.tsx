@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import AppLogo from "@/components/AppLogo";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -7,7 +8,11 @@ import { trpc } from "@/lib/trpc";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { trackSignup, trackLogin } from "@/lib/analytics";
-import { SUBSCRIPTION_PLANS, type SubscriptionTier } from "../../../shared/subscription";
+import {
+  formatCad,
+  SUBSCRIPTION_PLANS,
+  type SubscriptionTier,
+} from "../../../shared/billing";
 
 export default function EmailAuth() {
   const [location, setLocation] = useLocation();
@@ -194,18 +199,26 @@ export default function EmailAuth() {
             window.location.href = '/profile';
           }, 600);
         } else {
-          const checkout = await createCheckoutMutation.mutateAsync({
-            tier: selectedTier === "fleet" ? "fleet" : "pro",
-            successPath: "/profile?subscription=success",
-            cancelPath: "/pricing?subscription=cancelled",
-          });
+          if (selectedTier === "fleet") {
+            toast.success("Account created. Complete your profile and request a Fleet quote from Settings.");
+            setTimeout(() => {
+              window.location.href = "/profile";
+            }, 600);
+          } else {
+            const checkout = await createCheckoutMutation.mutateAsync({
+              tier: "pro",
+              billingCadence: "monthly",
+              successPath: "/profile?subscription=success",
+              cancelPath: "/pricing?subscription=cancelled",
+            });
 
-          if (!checkout.checkoutUrl) {
-            throw new Error("Stripe checkout could not be started.");
+            if (!checkout.checkoutUrl) {
+              throw new Error("Stripe checkout could not be started.");
+            }
+
+            toast.success(`Account created! Redirecting to ${SUBSCRIPTION_PLANS[selectedTier].label} checkout...`);
+            window.location.href = checkout.checkoutUrl;
           }
-
-          toast.success(`Account created! Redirecting to ${SUBSCRIPTION_PLANS[selectedTier].label} checkout...`);
-          window.location.href = checkout.checkoutUrl;
         }
       } else {
         const result = await handleSignin(email, password);
@@ -250,6 +263,9 @@ export default function EmailAuth() {
       <Card className="w-full max-w-md">
         <div className="p-8">
           <div className="text-center mb-8">
+            <div className="mb-5 flex justify-center">
+              <AppLogo imageClassName="h-14" frameClassName="p-2.5" href="/" />
+            </div>
             <h1 className="text-2xl font-bold text-slate-900 mb-2">
               {isRecoveryMode ? "Reset Password" : isSignup ? "Create Account" : "Sign In"}
             </h1>
@@ -361,10 +377,16 @@ export default function EmailAuth() {
                         </div>
                         <div className="text-right">
                           <p className="text-sm font-semibold text-slate-900">
-                            {plan.monthlyPriceUsd === 0 ? "Free" : `$${plan.monthlyPriceUsd}/mo`}
+                            {plan.tier === "free"
+                              ? "CAD $0"
+                              : plan.tier === "pro"
+                                ? `${formatCad(plan.monthlyPriceCad ?? 0)}/vehicle`
+                                : plan.publicPriceAnchor}
                           </p>
                           <p className="text-xs text-slate-500">
-                            {plan.limits.vehicleCount === null ? "Unlimited vehicles" : `${plan.limits.vehicleCount} vehicles`}
+                            {plan.limits.activeVehicleCount === null
+                              ? "Scales with active vehicles"
+                              : `${plan.limits.activeVehicleCount} active vehicles`}
                           </p>
                         </div>
                       </div>

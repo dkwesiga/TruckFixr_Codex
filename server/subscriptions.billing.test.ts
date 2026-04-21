@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SUBSCRIPTION_PLANS, getEffectiveTier, getPlanRestrictionMessage } from "../shared/subscription";
+import { SUBSCRIPTION_PLANS, getEffectiveTier, getPlanRestrictionMessage } from "../shared/billing";
 import type { TrpcContext } from "./_core/context";
 
 const {
   getSubscriptionState,
+  getEntitlementState,
   syncSubscriptionState,
   ensureStripeCustomerId,
   findUserIdByStripeReference,
@@ -14,6 +15,7 @@ const {
   isStripeConfigured,
 } = vi.hoisted(() => ({
   getSubscriptionState: vi.fn(),
+  getEntitlementState: vi.fn(),
   syncSubscriptionState: vi.fn(),
   ensureStripeCustomerId: vi.fn(),
   findUserIdByStripeReference: vi.fn(),
@@ -31,14 +33,15 @@ const { redeemPilotAccessCode, recordPilotMilestone } = vi.hoisted(() => ({
 
 vi.mock("./services/subscriptions", () => ({
   getSubscriptionState,
+  getEntitlementState,
   syncSubscriptionState,
   ensureStripeCustomerId,
   findUserIdByStripeReference,
   getPlanSummary: (state: any) => ({
     ...state,
     selectedPlan: SUBSCRIPTION_PLANS[state.tier],
-    effectivePlan: SUBSCRIPTION_PLANS[state.effectiveTier],
-    restrictedBecauseOfBilling: state.tier !== "free" && state.effectiveTier === "free",
+      effectivePlan: SUBSCRIPTION_PLANS[state.effectiveTier],
+      restrictedBecauseOfBilling: state.tier !== "free" && state.effectiveTier === "free",
   }),
 }));
 
@@ -92,11 +95,15 @@ function createContext(): TrpcContext {
       managerEmail: null,
       managerUserId: null,
       subscriptionTier: "free",
+      billingCadence: "monthly",
       billingStatus: "active",
       stripeCustomerId: null,
       stripeSubscriptionId: null,
+      stripePriceId: null,
       currentPeriodStart: null,
       currentPeriodEnd: null,
+      trialStart: null,
+      trialEnd: null,
       cancelAtPeriodEnd: false,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -117,11 +124,54 @@ describe("subscription billing flow", () => {
       tier: "free",
       billingStatus: "active",
       effectiveTier: "free",
+      activeFleetId: 1,
+      billingCadence: "monthly",
       stripeCustomerId: null,
       stripeSubscriptionId: null,
+      stripePriceId: null,
       currentPeriodStart: null,
       currentPeriodEnd: null,
+      trialStart: null,
+      trialEnd: null,
       cancelAtPeriodEnd: false,
+    });
+    getEntitlementState.mockResolvedValue({
+      subscription: {
+        tier: "free",
+        billingStatus: "active",
+        effectiveTier: "free",
+        activeFleetId: 1,
+        billingCadence: "monthly",
+        stripeCustomerId: null,
+        stripeSubscriptionId: null,
+        stripePriceId: null,
+        currentPeriodStart: null,
+        currentPeriodEnd: null,
+        trialStart: null,
+        trialEnd: null,
+        cancelAtPeriodEnd: false,
+        pilotAccess: null,
+      },
+      plan: SUBSCRIPTION_PLANS.free,
+      usage: {
+        diagnosticsThisMonth: 0,
+        activeVehicleCount: 2,
+        billableVehicleCount: 2,
+        managedDriverCount: 1,
+      },
+      activeVehicleLimit: 2,
+      driverLimit: 2,
+      billableVehicleCount: 2,
+      canAddVehicle: true,
+      canInviteDriver: true,
+      canRunDiagnostics: true,
+      canRunInspections: true,
+      canAccessPaidFeatures: false,
+      canSelfServeUpgradeToPro: true,
+      canSelfServeDowngrade: false,
+      requiresFleetContact: false,
+      canRedeemPilotAccessCode: true,
+      trialActive: false,
     });
   });
 
@@ -172,7 +222,7 @@ describe("subscription billing flow", () => {
     expect(syncSubscriptionState).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: 7,
-        tier: "pilot",
+        tier: "pilot_access",
         billingStatus: "active",
       })
     );
@@ -193,6 +243,7 @@ describe("subscription billing flow", () => {
     const caller = appRouter.createCaller(createContext());
     const result = await caller.subscriptions.createCheckoutSession({
       tier: "pro",
+      billingCadence: "monthly",
       successPath: "/profile?subscription=success",
       cancelPath: "/pricing?subscription=cancelled",
     });
@@ -212,12 +263,17 @@ describe("subscription billing flow", () => {
   it("surfaces billing state and restricted paid access in settings", async () => {
     getSubscriptionState.mockResolvedValue({
       tier: "pro",
+      billingCadence: "monthly",
       billingStatus: "past_due",
       effectiveTier: "free",
+      activeFleetId: 1,
       stripeCustomerId: "cus_123",
       stripeSubscriptionId: "sub_123",
+      stripePriceId: "price_pro_monthly",
       currentPeriodStart: null,
       currentPeriodEnd: null,
+      trialStart: null,
+      trialEnd: null,
       cancelAtPeriodEnd: false,
     });
 
@@ -235,10 +291,15 @@ describe("subscription billing flow", () => {
       tier: "pro",
       billingStatus: "active",
       effectiveTier: "pro",
+      activeFleetId: 1,
+      billingCadence: "monthly",
       stripeCustomerId: "cus_123",
       stripeSubscriptionId: "sub_123",
+      stripePriceId: "price_pro_monthly",
       currentPeriodStart: null,
       currentPeriodEnd: null,
+      trialStart: null,
+      trialEnd: null,
       cancelAtPeriodEnd: false,
     });
 
@@ -291,6 +352,6 @@ describe("subscription billing flow", () => {
   it("keeps plan restriction messaging direct and practical", () => {
     expect(getEffectiveTier("pro", "past_due")).toBe("free");
     expect(getPlanRestrictionMessage("diagnostics", "free")).toContain("monthly diagnostic limit");
-    expect(getPlanRestrictionMessage("vehicles", "free")).toContain("vehicle limit");
+    expect(getPlanRestrictionMessage("vehicles", "free")).toContain("active vehicles");
   });
 });

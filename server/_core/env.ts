@@ -14,7 +14,10 @@ export const ENV = {
   stripeSecretKey: process.env.STRIPE_SECRET_KEY ?? "",
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? "",
   stripePriceProMonthly: process.env.STRIPE_PRICE_PRO_MONTHLY ?? "",
+  stripePriceProAnnual: process.env.STRIPE_PRICE_PRO_ANNUAL ?? "",
   stripePriceFleetMonthly: process.env.STRIPE_PRICE_FLEET_MONTHLY ?? "",
+  adminEmails: process.env.ADMIN_EMAILS ?? "",
+  salesNotificationEmail: process.env.SALES_NOTIFICATION_EMAIL ?? "",
   appBaseUrl:
     process.env.APP_BASE_URL ??
     process.env.VITE_APP_BASE_URL ??

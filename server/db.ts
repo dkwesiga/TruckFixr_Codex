@@ -50,6 +50,20 @@ async function ensureAuthSchema(pool: Pool) {
     `);
 
     await pool.query(`
+      ALTER TYPE subscription_tier ADD VALUE IF NOT EXISTS 'pilot_access';
+    `);
+
+    await pool.query(`
+      DO $$
+      BEGIN
+        CREATE TYPE billing_cadence AS ENUM ('monthly', 'annual');
+      EXCEPTION
+        WHEN duplicate_object THEN NULL;
+      END
+      $$;
+    `);
+
+    await pool.query(`
       DO $$
       BEGIN
         CREATE TYPE billing_status AS ENUM ('active', 'trialing', 'past_due', 'canceled', 'incomplete', 'incomplete_expired', 'unpaid');
@@ -130,6 +144,11 @@ async function ensureAuthSchema(pool: Pool) {
 
     await pool.query(`
       ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "billingCadence" billing_cadence NOT NULL DEFAULT 'monthly';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "users"
       ADD COLUMN IF NOT EXISTS "billingStatus" billing_status NOT NULL DEFAULT 'active';
     `);
 
@@ -145,12 +164,27 @@ async function ensureAuthSchema(pool: Pool) {
 
     await pool.query(`
       ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "stripePriceId" varchar(255);
+    `);
+
+    await pool.query(`
+      ALTER TABLE "users"
       ADD COLUMN IF NOT EXISTS "currentPeriodStart" timestamp;
     `);
 
     await pool.query(`
       ALTER TABLE "users"
       ADD COLUMN IF NOT EXISTS "currentPeriodEnd" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "trialStart" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "trialEnd" timestamp;
     `);
 
     await pool.query(`
@@ -455,10 +489,14 @@ async function ensureAuthSchema(pool: Pool) {
         "userId" integer NOT NULL,
         "stripeCustomerId" varchar(255),
         "stripeSubscriptionId" varchar(255),
+        "stripePriceId" varchar(255),
         "tier" subscription_tier NOT NULL DEFAULT 'free',
+        "billingCadence" billing_cadence NOT NULL DEFAULT 'monthly',
         "billingStatus" billing_status NOT NULL DEFAULT 'active',
         "currentPeriodStart" timestamp,
         "currentPeriodEnd" timestamp,
+        "trialStart" timestamp,
+        "trialEnd" timestamp,
         "cancelAtPeriodEnd" boolean NOT NULL DEFAULT false,
         "createdAt" timestamp NOT NULL DEFAULT now(),
         "updatedAt" timestamp NOT NULL DEFAULT now()
@@ -482,7 +520,17 @@ async function ensureAuthSchema(pool: Pool) {
 
     await pool.query(`
       ALTER TABLE "subscriptions"
+      ADD COLUMN IF NOT EXISTS "stripePriceId" varchar(255);
+    `);
+
+    await pool.query(`
+      ALTER TABLE "subscriptions"
       ADD COLUMN IF NOT EXISTS "tier" subscription_tier NOT NULL DEFAULT 'free';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "subscriptions"
+      ADD COLUMN IF NOT EXISTS "billingCadence" billing_cadence NOT NULL DEFAULT 'monthly';
     `);
 
     await pool.query(`
@@ -498,6 +546,16 @@ async function ensureAuthSchema(pool: Pool) {
     await pool.query(`
       ALTER TABLE "subscriptions"
       ADD COLUMN IF NOT EXISTS "currentPeriodEnd" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "subscriptions"
+      ADD COLUMN IF NOT EXISTS "trialStart" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "subscriptions"
+      ADD COLUMN IF NOT EXISTS "trialEnd" timestamp;
     `);
 
     await pool.query(`
@@ -585,6 +643,45 @@ async function ensureAuthSchema(pool: Pool) {
     await pool.query(`
       ALTER TABLE "pilotAccessCodes"
       ADD COLUMN IF NOT EXISTS "updatedAt" timestamp NOT NULL DEFAULT now();
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "salesStatus" varchar(64) DEFAULT 'none';
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "fleetQuoteRequests" (
+        "id" serial PRIMARY KEY,
+        "userId" integer,
+        "fleetId" integer,
+        "companyName" varchar(255) NOT NULL,
+        "contactName" varchar(255) NOT NULL,
+        "email" varchar(320) NOT NULL,
+        "phone" varchar(50),
+        "vehicleCount" integer NOT NULL DEFAULT 0,
+        "driverCount" integer NOT NULL DEFAULT 0,
+        "mainNeeds" text NOT NULL,
+        "notes" text,
+        "status" varchar(64) NOT NULL DEFAULT 'pending_fleet_review',
+        "createdAt" timestamp NOT NULL DEFAULT now(),
+        "updatedAt" timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "adminAlerts" (
+        "id" serial PRIMARY KEY,
+        "userId" integer,
+        "fleetId" integer,
+        "type" varchar(100) NOT NULL,
+        "title" varchar(255) NOT NULL,
+        "body" text,
+        "metadata" jsonb,
+        "status" varchar(64) NOT NULL DEFAULT 'open',
+        "createdAt" timestamp NOT NULL DEFAULT now(),
+        "updatedAt" timestamp NOT NULL DEFAULT now()
+      );
     `);
 
     await pool.query(`

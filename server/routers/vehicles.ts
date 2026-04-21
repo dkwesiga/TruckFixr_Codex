@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { vehicles } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { vehicleInspectionConfigSchema } from "../../shared/inspection";
-import { assertVehicleWithinPlan } from "../services/subscriptions";
+import { assertVehicleWithinPlan, syncStripeQuantityForActiveVehicles } from "../services/subscriptions";
 import { recordPilotMilestone } from "../services/pilotAccess";
 
 export const vehiclesRouter = router({
@@ -76,6 +76,12 @@ export const vehiclesRouter = router({
           vehicleId: vehicle.id,
           vin: vehicle.vin,
         },
+      });
+
+      await syncStripeQuantityForActiveVehicles({
+        userId: ctx.user.id,
+        fleetId: vehicle.fleetId,
+        prorationBehavior: "create_prorations",
       });
       
       return vehicle;
@@ -154,11 +160,34 @@ export const vehiclesRouter = router({
         updatedAt: new Date(),
       };
 
+      const [existingVehicle] = await db
+        .select({
+          id: vehicles.id,
+          fleetId: vehicles.fleetId,
+          status: vehicles.status,
+        })
+        .from(vehicles)
+        .where(eq(vehicles.id, input.vehicleId))
+        .limit(1);
+
       const [vehicle] = await db
         .update(vehicles)
         .set(updates)
         .where(eq(vehicles.id, input.vehicleId))
         .returning();
+
+      if (
+        vehicle &&
+        existingVehicle &&
+        existingVehicle.status !== vehicle.status &&
+        (existingVehicle.status === "active" || vehicle.status === "active")
+      ) {
+        await syncStripeQuantityForActiveVehicles({
+          userId: ctx.user.id,
+          fleetId: vehicle.fleetId,
+          prorationBehavior: vehicle.status === "active" ? "create_prorations" : "none",
+        });
+      }
 
       return vehicle ?? null;
     }),

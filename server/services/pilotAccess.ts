@@ -10,7 +10,7 @@ import {
 } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { sendEmail } from "./email";
-import type { SubscriptionTier } from "../../shared/subscription";
+import type { SubscriptionTier } from "../../shared/billing";
 
 export type PilotAccessOverview = {
   codeId: number;
@@ -84,7 +84,7 @@ async function getPilotCounts(codeId: number, fleetId: number) {
   const [vehicleCountRow] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(vehicles)
-    .where(eq(vehicles.fleetId, fleetId));
+    .where(and(eq(vehicles.fleetId, fleetId), eq(vehicles.status, "active")));
 
   return {
     usersUsed: userCountRow?.count ?? 0,
@@ -502,7 +502,7 @@ export async function redeemPilotAccessCode(input: {
   const [vehicleCountRow] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(vehicles)
-    .where(eq(vehicles.fleetId, fleet.id));
+    .where(and(eq(vehicles.fleetId, fleet.id), eq(vehicles.status, "active")));
 
   if ((vehicleCountRow?.count ?? 0) > code.maxVehicles) {
     throw new TRPCError({

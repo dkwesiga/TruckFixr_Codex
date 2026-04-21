@@ -33,7 +33,14 @@ const pilotAccessRedemptionStatusEnum = pgEnum("pilot_access_redemption_status",
   "revoked",
   "converted",
 ]);
-const subscriptionTierEnum = pgEnum("subscription_tier", ["free", "pilot", "pro", "fleet"]);
+const subscriptionTierEnum = pgEnum("subscription_tier", [
+  "free",
+  "pilot",
+  "pilot_access",
+  "pro",
+  "fleet",
+]);
+const billingCadenceEnum = pgEnum("billing_cadence", ["monthly", "annual"]);
 const billingStatusEnum = pgEnum("billing_status", [
   "active",
   "trialing",
@@ -106,6 +113,7 @@ export const fleets = pgTable("fleets", {
   planId: integer("planId").default(1),
   premiumTadis: boolean("premiumTadis").default(false),
   trialEndsAt: dateTimestamp(),
+  salesStatus: varchar("salesStatus", { length: 64 }).default("none"),
   createdAt: dateTimestamp().defaultNow().notNull(),
   updatedAt: dateTimestamp().defaultNow().notNull(),
 });
@@ -230,11 +238,15 @@ export const users = pgTable("users", {
   managerEmail: varchar("managerEmail", { length: 320 }),
   managerUserId: integer("managerUserId"),
   subscriptionTier: subscriptionTierEnum("subscriptionTier").default("free").notNull(),
+  billingCadence: billingCadenceEnum("billingCadence").default("monthly").notNull(),
   billingStatus: billingStatusEnum("billingStatus").default("active").notNull(),
   stripeCustomerId: varchar("stripeCustomerId", { length: 255 }),
   stripeSubscriptionId: varchar("stripeSubscriptionId", { length: 255 }),
+  stripePriceId: varchar("stripePriceId", { length: 255 }),
   currentPeriodStart: dateTimestamp(),
   currentPeriodEnd: dateTimestamp(),
+  trialStart: dateTimestamp(),
+  trialEnd: dateTimestamp(),
   cancelAtPeriodEnd: boolean("cancelAtPeriodEnd").default(false).notNull(),
   createdAt: dateTimestamp().defaultNow().notNull(),
   updatedAt: dateTimestamp().defaultNow().notNull(),
@@ -269,11 +281,45 @@ export const subscriptions = pgTable("subscriptions", {
   userId: integer("userId").notNull(),
   stripeCustomerId: varchar("stripeCustomerId", { length: 255 }),
   stripeSubscriptionId: varchar("stripeSubscriptionId", { length: 255 }),
+  stripePriceId: varchar("stripePriceId", { length: 255 }),
   tier: subscriptionTierEnum("tier").default("free").notNull(),
+  billingCadence: billingCadenceEnum("billingCadence").default("monthly").notNull(),
   billingStatus: billingStatusEnum("billingStatus").default("active").notNull(),
   currentPeriodStart: dateTimestamp(),
   currentPeriodEnd: dateTimestamp(),
+  trialStart: dateTimestamp(),
+  trialEnd: dateTimestamp(),
   cancelAtPeriodEnd: boolean("cancelAtPeriodEnd").default(false).notNull(),
+  createdAt: dateTimestamp().defaultNow().notNull(),
+  updatedAt: dateTimestamp().defaultNow().notNull(),
+});
+
+export const fleetQuoteRequests = pgTable("fleetQuoteRequests", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId"),
+  fleetId: integer("fleetId"),
+  companyName: varchar("companyName", { length: 255 }).notNull(),
+  contactName: varchar("contactName", { length: 255 }).notNull(),
+  email: varchar("email", { length: 320 }).notNull(),
+  phone: varchar("phone", { length: 50 }),
+  vehicleCount: integer("vehicleCount").default(0).notNull(),
+  driverCount: integer("driverCount").default(0).notNull(),
+  mainNeeds: text("mainNeeds").notNull(),
+  notes: text("notes"),
+  status: varchar("status", { length: 64 }).default("pending_fleet_review").notNull(),
+  createdAt: dateTimestamp().defaultNow().notNull(),
+  updatedAt: dateTimestamp().defaultNow().notNull(),
+});
+
+export const adminAlerts = pgTable("adminAlerts", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId"),
+  fleetId: integer("fleetId"),
+  type: varchar("type", { length: 100 }).notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  body: text("body"),
+  metadata: jsonb("metadata"),
+  status: varchar("status", { length: 64 }).default("open").notNull(),
   createdAt: dateTimestamp().defaultNow().notNull(),
   updatedAt: dateTimestamp().defaultNow().notNull(),
 });

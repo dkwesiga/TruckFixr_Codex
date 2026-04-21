@@ -6,7 +6,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { useAuthContext } from "@/hooks/useAuthContext";
-import { SUBSCRIPTION_PLANS, type SubscriptionTier } from "../../../shared/subscription";
+import {
+  formatCad,
+  SUBSCRIPTION_PLANS,
+  type BillingCadence,
+  type SubscriptionTier,
+} from "../../../shared/billing";
 
 export default function UserProfile() {
   const { user } = useAuthContext();
@@ -23,9 +28,20 @@ export default function UserProfile() {
   const [step, setStep] = useState<"profile" | "fleet">("profile");
   const [pilotCode, setPilotCode] = useState("");
   const [pilotCompanyName, setPilotCompanyName] = useState("");
+  const [billingCadence, setBillingCadence] = useState<BillingCadence>("monthly");
   const [driverInvite, setDriverInvite] = useState({
     name: "",
     email: "",
+  });
+  const [fleetQuote, setFleetQuote] = useState({
+    companyName: formData.company,
+    contactName: formData.name,
+    email: formData.email,
+    phone: "",
+    vehicleCount: 25,
+    driverCount: 10,
+    mainNeeds: "",
+    notes: "",
   });
 
   const updateProfileMutation = trpc.auth.updateProfile.useMutation();
@@ -36,6 +52,11 @@ export default function UserProfile() {
   const createCheckoutMutation = trpc.subscriptions.createCheckoutSession.useMutation();
   const createPortalMutation = trpc.subscriptions.createPortalSession.useMutation();
   const redeemPilotAccessMutation = trpc.subscriptions.redeemPilotAccess.useMutation();
+  const requestFleetQuoteMutation = trpc.subscriptions.requestFleetQuote.useMutation();
+  const downgradeQuery = trpc.subscriptions.validateDowngrade.useQuery(
+    { targetTier: "free" },
+    { enabled: Boolean(user) }
+  );
   const inviteDriverMutation = trpc.auth.createManagedDriverInvite.useMutation();
 
   useEffect(() => {
@@ -49,6 +70,15 @@ export default function UserProfile() {
       managerEmail: current.managerEmail || user.managerEmail || "",
     }));
   }, [user]);
+
+  useEffect(() => {
+    setFleetQuote((current) => ({
+      ...current,
+      companyName: current.companyName || formData.company,
+      contactName: current.contactName || formData.name,
+      email: current.email || formData.email,
+    }));
+  }, [formData.company, formData.email, formData.name]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -159,8 +189,26 @@ export default function UserProfile() {
 
   const handleUpgrade = async (tier: SubscriptionTier) => {
     try {
+      if (tier === "fleet") {
+        await requestFleetQuoteMutation.mutateAsync({
+          companyName: fleetQuote.companyName || formData.company || "Fleet request",
+          contactName: fleetQuote.contactName || formData.name || "TruckFixr contact",
+          email: fleetQuote.email || formData.email,
+          phone: fleetQuote.phone || undefined,
+          vehicleCount: fleetQuote.vehicleCount,
+          driverCount: fleetQuote.driverCount,
+          mainNeeds:
+            fleetQuote.mainNeeds ||
+            "Looking for Fleet plan support, advanced reporting, and operational visibility.",
+          notes: fleetQuote.notes || undefined,
+        });
+        toast.success("Fleet quote request sent. Our team will follow up shortly.");
+        return;
+      }
+
       const result = await createCheckoutMutation.mutateAsync({
-        tier: tier === "fleet" ? "fleet" : "pro",
+        tier: "pro",
+        billingCadence,
         successPath: "/profile?subscription=success",
         cancelPath: "/profile?subscription=cancelled",
       });
@@ -418,7 +466,7 @@ export default function UserProfile() {
               </div>
             </CardHeader>
             <CardContent className="space-y-5">
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className="grid gap-4 md:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Current tier</p>
                   <p className="mt-2 text-2xl font-semibold text-slate-950">
@@ -429,15 +477,38 @@ export default function UserProfile() {
                   </p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Feature limits</p>
+                  <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Billing cadence</p>
+                  <p className="mt-2 text-2xl font-semibold text-slate-950">
+                    {subscription?.billingCadence === "annual" ? "Annual" : "Monthly"}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Next renewal: {subscription?.currentPeriodEnd ? new Date(subscription.currentPeriodEnd).toLocaleDateString() : "Not scheduled"}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Billable usage</p>
                   <p className="mt-2 text-sm font-semibold text-slate-900">
                     Diagnostics: {subscription?.effectivePlan.limits.diagnosticsPerMonth ?? "Unlimited"} / month
                   </p>
                   <p className="mt-1 text-sm text-slate-600">
-                    Vehicles: {subscription?.effectivePlan.limits.vehicleCount ?? "Unlimited"}
+                    Active vehicles: {subscription?.entitlements?.usage.activeVehicleCount ?? 0}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Billable vehicles: {subscription?.entitlements?.billableVehicleCount ?? 0}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Linked drivers: {subscription?.entitlements?.usage.managedDriverCount ?? 0}
                   </p>
                 </div>
               </div>
+
+              {subscription?.trialEnd ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                  Trial status: {subscription.billingStatus === "trialing" ? "Active trial" : "Not trialing"}.
+                  {` `}
+                  Trial end: {new Date(subscription.trialEnd).toLocaleDateString()}.
+                </div>
+              ) : null}
 
               {subscription?.restrictedBecauseOfBilling ? (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
@@ -521,19 +592,61 @@ export default function UserProfile() {
                 </div>
               ) : null}
 
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1">
+                  {(["monthly", "annual"] as BillingCadence[]).map((cadence) => (
+                    <button
+                      key={cadence}
+                      type="button"
+                      onClick={() => setBillingCadence(cadence)}
+                      className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                        billingCadence === cadence
+                          ? "bg-slate-950 text-white"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      {cadence === "monthly" ? "Monthly" : "Annual"}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-sm text-slate-500">
+                  Pro billing is based on active vehicles only. Archived vehicles do not count.
+                </p>
+              </div>
+
+              {downgradeQuery.data && !downgradeQuery.data.canDowngrade ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  <p className="font-semibold">Free downgrade requirements</p>
+                  <ul className="mt-2 space-y-1">
+                    {downgradeQuery.data.requiredActions.map((item) => (
+                      <li key={item}>- {item}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
               <div className="grid gap-4 lg:grid-cols-3">
                 {visiblePlans.map((plan) => {
                   const isCurrent = subscription?.selectedPlan.tier === plan.tier;
+                  const priceLabel =
+                    plan.tier === "free"
+                      ? "CAD $0"
+                      : plan.tier === "pro"
+                        ? billingCadence === "annual"
+                          ? `${formatCad(plan.annualPriceCad ?? 0)} / active vehicle / year`
+                          : `${formatCad(plan.monthlyPriceCad ?? 0)} / active vehicle / month`
+                        : plan.publicPriceAnchor;
                   return (
                     <div key={plan.tier} className="rounded-xl border border-slate-200 p-4">
                       <p className="text-sm font-semibold text-slate-900">{plan.label}</p>
                       <p className="mt-1 text-xs text-slate-600">{plan.description}</p>
                       <p className="mt-3 text-lg font-semibold text-slate-950">
-                        {plan.monthlyPriceUsd === 0 ? "Free" : `$${plan.monthlyPriceUsd}/month`}
+                        {priceLabel}
                       </p>
                       <ul className="mt-3 space-y-1 text-xs text-slate-600">
                         <li>Diagnostics: {plan.limits.diagnosticsPerMonth ?? "Unlimited"}</li>
-                        <li>Vehicles: {plan.limits.vehicleCount ?? "Unlimited"}</li>
+                        <li>Active vehicles: {plan.limits.activeVehicleCount ?? "Unlimited"}</li>
+                        <li>Driver accounts: {plan.limits.driverCount ?? "Included"}</li>
                         <li>{plan.features.fleetReporting ? "Fleet reporting enabled" : "Fleet reporting locked"}</li>
                       </ul>
                       <div className="mt-4">
@@ -547,7 +660,7 @@ export default function UserProfile() {
                           </Button>
                         ) : (
                           <Button className="w-full bg-blue-600 hover:bg-blue-700" onClick={() => handleUpgrade(plan.tier)}>
-                            Upgrade to {plan.label}
+                            {plan.tier === "fleet" ? "Request Fleet plan" : `Upgrade to ${plan.label}`}
                           </Button>
                         )}
                       </div>
@@ -563,6 +676,24 @@ export default function UserProfile() {
                 <p className="text-sm text-slate-500">
                   Restricted features explain why access is blocked and route back to checkout when needed.
                 </p>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">Need Fleet instead?</p>
+                    <p className="mt-1 text-sm text-slate-600">
+                      Fleet is best for larger or more operationally complex fleets. Send a quote request and our team will follow up.
+                    </p>
+                  </div>
+                  <Button
+                    className="bg-slate-900 hover:bg-slate-800"
+                    onClick={() => handleUpgrade("fleet")}
+                    disabled={requestFleetQuoteMutation.isPending}
+                  >
+                    {requestFleetQuoteMutation.isPending ? "Sending..." : "Request Fleet quote"}
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>

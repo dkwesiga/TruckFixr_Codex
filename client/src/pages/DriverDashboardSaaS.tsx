@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
+import AppLogo from "@/components/AppLogo";
 import { useAuthContext } from "@/hooks/useAuthContext";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -191,10 +192,13 @@ function DriverDashboardContent() {
     <div className="app-shell min-h-screen">
       <header className="border-b border-slate-200/80 bg-white/80 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
-          <div>
+          <div className="flex items-start gap-4">
+            <AppLogo imageClassName="h-10" frameClassName="p-1.5" href="/" />
+            <div>
             <p className="section-label">Driver dashboard</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">Daily readiness workflow</h1>
             <p className="mt-2 text-sm text-slate-600">See your current truck, complete today&apos;s inspection, and start diagnosis when something feels off.</p>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <Dialog open={isAddVehicleOpen} onOpenChange={setIsAddVehicleOpen}>

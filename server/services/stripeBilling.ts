@@ -1,6 +1,11 @@
 import crypto from "crypto";
 import { ENV } from "../_core/env";
-import { BillingStatus, SubscriptionTier } from "../../shared/subscription";
+import {
+  BillingCadence,
+  BillingStatus,
+  PRO_MINIMUM_BILLABLE_ACTIVE_VEHICLES,
+  SubscriptionTier,
+} from "../../shared/billing";
 
 type StripeCustomer = {
   id: string;
@@ -30,8 +35,12 @@ type StripeSubscription = {
   cancel_at_period_end?: boolean;
   current_period_start?: number;
   current_period_end?: number;
+  trial_start?: number | null;
+  trial_end?: number | null;
   items?: {
     data?: Array<{
+      id?: string;
+      quantity?: number | null;
       price?: {
         id?: string;
         lookup_key?: string | null;
@@ -107,11 +116,13 @@ async function stripeRequest<T>(
 }
 
 export function isStripeConfigured() {
-  return Boolean(ENV.stripeSecretKey);
+  return Boolean(ENV.stripeSecretKey && ENV.stripeWebhookSecret);
 }
 
-export function getPriceIdForTier(tier: SubscriptionTier) {
-  if (tier === "pro") return ENV.stripePriceProMonthly;
+export function getPriceIdForTier(tier: SubscriptionTier, cadence: BillingCadence = "monthly") {
+  if (tier === "pro") {
+    return cadence === "annual" ? ENV.stripePriceProAnnual : ENV.stripePriceProMonthly;
+  }
   if (tier === "fleet") return ENV.stripePriceFleetMonthly;
   return "";
 }
@@ -134,13 +145,20 @@ export async function createStripeCheckoutSession(input: {
   customerId: string;
   userId: number;
   tier: SubscriptionTier;
+  billingCadence: BillingCadence;
+  activeVehicleCount: number;
   successUrl: string;
   cancelUrl: string;
 }) {
-  const priceId = getPriceIdForTier(input.tier);
+  const priceId = getPriceIdForTier(input.tier, input.billingCadence);
   if (!priceId) {
     throw new Error(`Stripe price is not configured for the ${input.tier} plan.`);
   }
+
+  const quantity =
+    input.tier === "pro"
+      ? Math.max(PRO_MINIMUM_BILLABLE_ACTIVE_VEHICLES, Math.max(0, Math.floor(input.activeVehicleCount || 0)))
+      : 1;
 
   return stripeRequest<StripeCheckoutSession>("/v1/checkout/sessions", {
     form: {
@@ -150,9 +168,12 @@ export async function createStripeCheckoutSession(input: {
       cancel_url: input.cancelUrl,
       client_reference_id: input.userId,
       "line_items[0][price]": priceId,
-      "line_items[0][quantity]": 1,
+      "line_items[0][quantity]": quantity,
+      "subscription_data[trial_period_days]": input.tier === "pro" ? 14 : undefined,
       "metadata[userId]": input.userId,
       "metadata[tier]": input.tier,
+      "metadata[billingCadence]": input.billingCadence,
+      "metadata[quantity]": quantity,
       allow_promotion_codes: true,
     },
   });
@@ -173,6 +194,28 @@ export async function createStripePortalSession(input: {
 export async function retrieveStripeSubscription(subscriptionId: string) {
   return stripeRequest<StripeSubscription>(`/v1/subscriptions/${subscriptionId}`, {
     method: "GET",
+  });
+}
+
+export async function updateStripeSubscriptionQuantity(input: {
+  subscriptionId: string;
+  quantity: number;
+  priceId?: string | null;
+  prorationBehavior?: "create_prorations" | "always_invoice" | "none";
+}) {
+  const subscription = await retrieveStripeSubscription(input.subscriptionId);
+  const item = subscription.items?.data?.[0];
+  if (!item?.id) {
+    throw new Error("Stripe subscription item could not be resolved for quantity update.");
+  }
+
+  return stripeRequest<StripeSubscription>(`/v1/subscriptions/${input.subscriptionId}`, {
+    form: {
+      "items[0][id]": item.id,
+      "items[0][price]": input.priceId ?? item.price?.id ?? undefined,
+      "items[0][quantity]": input.quantity,
+      proration_behavior: input.prorationBehavior ?? "create_prorations",
+    },
   });
 }
 
@@ -238,27 +281,42 @@ export function verifyStripeWebhookSignature(rawBody: Buffer, signatureHeader: s
 
 export function getSubscriptionSnapshotFromStripeSubscription(subscription: StripeSubscription) {
   const priceId = subscription.items?.data?.[0]?.price?.id ?? "";
+  const quantity = subscription.items?.data?.[0]?.quantity ?? null;
   let tier: SubscriptionTier = "free";
+  let billingCadence: BillingCadence = "monthly";
   if (priceId && priceId === ENV.stripePriceFleetMonthly) {
     tier = "fleet";
+  } else if (priceId && priceId === ENV.stripePriceProAnnual) {
+    tier = "pro";
+    billingCadence = "annual";
   } else if (priceId && priceId === ENV.stripePriceProMonthly) {
     tier = "pro";
+    billingCadence = "monthly";
   } else if (subscription.metadata?.tier === "fleet" || subscription.metadata?.tier === "pro") {
     tier = subscription.metadata.tier;
   }
 
+  if (subscription.metadata?.billingCadence === "annual") {
+    billingCadence = "annual";
+  }
+
   return {
     tier,
+    billingCadence,
     billingStatus: (subscription.status as BillingStatus) ?? "active",
     stripeCustomerId: subscription.customer ?? null,
     stripeSubscriptionId: subscription.id,
+    stripePriceId: priceId || null,
     currentPeriodStart: subscription.current_period_start
       ? new Date(subscription.current_period_start * 1000)
       : null,
     currentPeriodEnd: subscription.current_period_end
       ? new Date(subscription.current_period_end * 1000)
       : null,
+    trialStart: subscription.trial_start ? new Date(subscription.trial_start * 1000) : null,
+    trialEnd: subscription.trial_end ? new Date(subscription.trial_end * 1000) : null,
     cancelAtPeriodEnd: subscription.cancel_at_period_end ?? false,
+    quantity,
   };
 }
 
