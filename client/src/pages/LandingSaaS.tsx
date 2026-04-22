@@ -291,7 +291,7 @@ export default function LandingSaaS() {
             />
             <div>
               <p className="text-sm font-semibold tracking-tight text-slate-950">TruckFixr</p>
-              <p className="text-xs text-slate-500">Fleet uptime software</p>
+              <p className="text-xs text-slate-500">Fleet AI</p>
             </div>
           </a>
 
@@ -311,7 +311,7 @@ export default function LandingSaaS() {
           </nav>
 
           <div className="flex items-center gap-3">
-            <Button asChild variant="ghost" className="hidden text-slate-700 sm:inline-flex">
+            <Button asChild variant="ghost" className="text-slate-700">
               <a href="/auth/email">Sign In</a>
             </Button>
             <Button
@@ -319,7 +319,7 @@ export default function LandingSaaS() {
               className="rounded-full bg-blue-600 px-5 text-white shadow-[0_14px_30px_-18px_rgba(37,99,235,0.8)] hover:bg-blue-700"
             >
               <a href="/signup">
-                Start Free Trial
+                Sign Up
                 <ArrowRight className="h-4 w-4" />
               </a>
             </Button>
@@ -640,7 +640,7 @@ export default function LandingSaaS() {
               FAQ
             </a>
           </div>
-          <p>2026 TruckFixr. Fleet uptime software for modern trucking teams.</p>
+          <p>2026 TruckFixr. Fleet AI for modern trucking teams.</p>
         </div>
       </footer>
     </div>

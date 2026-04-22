@@ -1,10 +1,14 @@
 import { useMemo, useState } from "react";
+import { useLocation } from "wouter";
+import AppLogo from "@/components/AppLogo";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useAuthContext } from "@/hooks/useAuthContext";
 import { toast } from "sonner";
-import { Check } from "lucide-react";
+import { Check, Info, LogOut, Menu } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import {
   calculateProPricing,
@@ -17,8 +21,12 @@ import {
 const orderedPlans = getPublicPlans();
 
 export default function Pricing() {
+  const { user, logout } = useAuthContext();
+  const [, navigate] = useLocation();
   const [billingCadence, setBillingCadence] = useState<BillingCadence>("monthly");
   const [activeVehicles, setActiveVehicles] = useState(5);
+  const [promoCode, setPromoCode] = useState("");
+  const [promoCompanyName, setPromoCompanyName] = useState("");
   const [fleetQuote, setFleetQuote] = useState({
     companyName: "",
     contactName: "",
@@ -30,6 +38,7 @@ export default function Pricing() {
     notes: "",
   });
   const quoteMutation = trpc.subscriptions.requestFleetQuote.useMutation();
+  const redeemPilotAccessMutation = trpc.subscriptions.redeemPilotAccess.useMutation();
 
   const calculator = useMemo(
     () => calculateProPricing({ activeVehicleCount: activeVehicles, cadence: billingCadence }),
@@ -46,10 +55,91 @@ export default function Pricing() {
     }
   };
 
+  const handlePromoCode = async () => {
+    const normalizedCode = promoCode.trim();
+    if (!normalizedCode) {
+      toast.error("Enter a promo code first.");
+      return;
+    }
+
+    if (!user) {
+      const params = new URLSearchParams();
+      params.set("pilotCode", normalizedCode);
+      if (promoCompanyName.trim()) {
+        params.set("companyName", promoCompanyName.trim());
+      }
+      window.location.href = `/signup?${params.toString()}`;
+      return;
+    }
+
+    try {
+      await redeemPilotAccessMutation.mutateAsync({
+        code: normalizedCode,
+        companyName: promoCompanyName.trim() || undefined,
+      });
+      toast.success("Promo code applied. Your subscription was updated.");
+      setPromoCode("");
+      setPromoCompanyName("");
+    } catch (error: any) {
+      toast.error(error?.message || "Unable to apply promo code");
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#eef3f8_100%)]">
       <header className="border-b border-slate-200 bg-white/90 backdrop-blur">
         <div className="mx-auto max-w-6xl px-4 py-14 sm:px-6 lg:px-8">
+          <div className="flex items-start justify-between gap-4">
+            <a href="/" className="inline-flex shrink-0 items-center">
+              <AppLogo variant="icon" imageClassName="h-full w-full" />
+            </a>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="h-10 rounded-full border-slate-200 bg-white px-3">
+                  <Menu className="h-4 w-4" />
+                  Menu
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56 rounded-2xl border-slate-200 p-2">
+                {user ? (
+                  <>
+                    <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate(user.role === "driver" ? "/driver" : "/manager")}>
+                      Dashboard
+                    </DropdownMenuItem>
+                    <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/profile")}>
+                      Profile & Settings
+                    </DropdownMenuItem>
+                    <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/")}>
+                      <Info className="mr-2 h-4 w-4" />
+                      About TruckFixr
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={logout} className="cursor-pointer rounded-xl text-destructive focus:text-destructive">
+                      <LogOut className="mr-2 h-4 w-4" />
+                      Sign out
+                    </DropdownMenuItem>
+                  </>
+                ) : (
+                  <>
+                    <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/")}>
+                      Home
+                    </DropdownMenuItem>
+                    <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/auth/email")}>
+                      Sign In
+                    </DropdownMenuItem>
+                    <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/signup")}>
+                      Sign Up
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/")}>
+                      <Info className="mr-2 h-4 w-4" />
+                      About TruckFixr
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
           <div className="max-w-3xl">
             <p className="text-sm font-semibold uppercase tracking-[0.18em] text-blue-700">
               Active-vehicle pricing
@@ -245,6 +335,55 @@ export default function Pricing() {
               <p>Pro is the self-serve plan for small fleets and includes a 14-day free trial.</p>
               <p>Fleet is the path for larger or more complex operations that need a guided rollout.</p>
               <p>Drivers are included. TruckFixr does not bill per seat.</p>
+            </CardContent>
+          </Card>
+        </section>
+
+        <section>
+          <Card className="border-slate-200 shadow-sm">
+            <CardHeader>
+              <CardTitle>Have a promo code?</CardTitle>
+              <CardDescription>
+                Apply a promo or Pilot Access code here to update your subscription path.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end">
+              <div>
+                <Label htmlFor="promo-code">Promo code</Label>
+                <Input
+                  id="promo-code"
+                  className="mt-2"
+                  value={promoCode}
+                  onChange={(event) => setPromoCode(event.target.value.toUpperCase())}
+                  placeholder="Enter your code"
+                />
+              </div>
+              <div>
+                <Label htmlFor="promo-company">Fleet or company name</Label>
+                <Input
+                  id="promo-company"
+                  className="mt-2"
+                  value={promoCompanyName}
+                  onChange={(event) => setPromoCompanyName(event.target.value)}
+                  placeholder="Optional"
+                />
+              </div>
+              <Button
+                className="bg-slate-950 hover:bg-slate-800"
+                onClick={handlePromoCode}
+                disabled={redeemPilotAccessMutation.isPending}
+              >
+                {user
+                  ? redeemPilotAccessMutation.isPending
+                    ? "Applying..."
+                    : "Apply code"
+                  : "Continue with code"}
+              </Button>
+              <p className="text-sm text-slate-500 md:col-span-3">
+                {user
+                  ? "If the code is valid, TruckFixr will update your plan immediately."
+                  : "We’ll carry the code into signup so you can continue with the right subscription flow."}
+              </p>
             </CardContent>
           </Card>
         </section>

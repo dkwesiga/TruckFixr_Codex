@@ -57,17 +57,18 @@ export default function EmailAuth() {
     const invitedPilotCode = params.get("pilotCode") ?? "";
     const companyName = params.get("companyName") ?? "";
 
+    if (invitedPilotCode) {
+      setUsePilotAccess(true);
+      setPilotCode(invitedPilotCode);
+    }
+    if (companyName) {
+      setPilotCompanyName(companyName);
+    }
+
     if (invite === "driver") {
       setIsSignup(true);
       if (inviteEmail) {
         setEmail(inviteEmail);
-      }
-      if (invitedPilotCode) {
-        setUsePilotAccess(true);
-        setPilotCode(invitedPilotCode);
-      }
-      if (companyName) {
-        setPilotCompanyName(companyName);
       }
       setInviteContext({
         managerName,

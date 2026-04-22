@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useMemo, useState } from "react";
+import { startTransition, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -121,6 +121,8 @@ function DriverInspectionContent() {
     getQueuedInspectionSubmissions(storage).length
   );
   const [submitMode, setSubmitMode] = useState<"send" | "download">("send");
+  const stepContentRef = useRef<HTMLDivElement | null>(null);
+  const hasScrolledBetweenStepsRef = useRef(false);
 
   const checklistQuery = trpc.inspections.getDailyChecklist.useQuery(
     { vehicleId },
@@ -336,6 +338,21 @@ function DriverInspectionContent() {
       window.removeEventListener("offline", handleOffline);
     };
   }, [storage, submitMutation]);
+
+  useEffect(() => {
+    if (!stepContentRef.current) return;
+
+    if (!hasScrolledBetweenStepsRef.current) {
+      hasScrolledBetweenStepsRef.current = true;
+      return;
+    }
+
+    const top = stepContentRef.current.getBoundingClientRect().top + window.scrollY - 92;
+    window.scrollTo({
+      top: Math.max(0, top),
+      behavior: "smooth",
+    });
+  }, [stepIndex]);
 
   const cancelPendingInspection = () => {
     clearInspectionDraft(storage, vehicleId);
@@ -672,24 +689,27 @@ function DriverInspectionContent() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/90 backdrop-blur-xl">
-        <div className="mx-auto max-w-4xl px-4 py-5 sm:px-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/95 backdrop-blur-xl">
+        <div className="mx-auto max-w-4xl px-4 py-4 sm:px-6 sm:py-5">
+          <div className="flex flex-col gap-3 sm:gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <p className="section-label">Daily inspection</p>
-              <h1 className="mt-2 text-2xl font-semibold text-slate-950">
+              <h1 className="mt-2 text-xl font-semibold leading-tight text-slate-950 sm:text-2xl">
                 {vehicleLabel} - {vehicle.licensePlate}
               </h1>
-              <p className="mt-2 text-sm text-slate-600">
-                Complete the required daily inspection. Each report is valid for {INSPECTION_VALIDITY_HOURS} hours per vehicle.
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">
+                Required every {INSPECTION_VALIDITY_HOURS} hours per vehicle.
+              </p>
+              <p className="mt-1 text-sm text-slate-500">
+                {vehicle.year ?? "Year n/a"} {vehicle.make} {vehicle.model}
               </p>
             </div>
-            <div className="flex flex-col gap-3 sm:items-end">
-              <div className="flex flex-col gap-3 sm:flex-row">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 lg:min-w-[360px]">
                 <Button
                   type="button"
                   variant="outline"
-                  className="rounded-xl border-slate-200 bg-white"
+                  className="h-10 min-w-0 flex-1 rounded-full border-slate-200 bg-white px-3 text-sm"
                   onClick={() => {
                     window.location.href = "/driver";
                   }}
@@ -700,40 +720,37 @@ function DriverInspectionContent() {
                 <Button
                   type="button"
                   variant="outline"
-                  className="rounded-xl border-red-200 bg-white text-red-700 hover:bg-red-50 hover:text-red-800"
+                  className="h-10 min-w-0 flex-1 rounded-full border-red-200 bg-white px-3 text-sm text-red-700 hover:bg-red-50 hover:text-red-800"
                   onClick={cancelPendingInspection}
                   disabled={!hasDraftData}
                 >
                   <XCircle className="h-4 w-4" />
-                  Cancel Pending Inspection
+                  Cancel Inspection
                 </Button>
               </div>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                <div className="flex items-center gap-2 font-medium text-slate-800">
-                  <Truck className="h-4 w-4 text-blue-600" />
-                  {vehicleLabel}
-                </div>
-                <p className="mt-1">{vehicle.year ?? "Year n/a"} {vehicle.make} {vehicle.model}</p>
+              <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
+                <Truck className="h-3.5 w-3.5 text-blue-600" />
+                <span>{vehicle.vin || "VIN unavailable"}</span>
               </div>
             </div>
           </div>
 
-          <div className="mt-5 space-y-3">
+          <div className="mt-3 space-y-2 sm:mt-4 sm:space-y-2.5">
             <div className="h-2 rounded-full bg-slate-200">
               <div
                 className="h-2 rounded-full bg-blue-600 transition-all"
                 style={{ width: `${((stepIndex + 1) / totalSteps) * 100}%` }}
               />
             </div>
-            <div className="flex items-center justify-between text-xs uppercase tracking-[0.18em] text-slate-400">
+            <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.16em] text-slate-400 sm:text-xs">
               <span>Step {stepIndex + 1} of {totalSteps}</span>
-              <span>{isMetadataStep ? "Inspection details" : isSummaryStep ? "Review and submit" : currentCategory?.label}</span>
+              <span className="truncate text-right">{isMetadataStep ? "Inspection details" : isSummaryStep ? "Review and submit" : currentCategory?.label}</span>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-4xl space-y-6 px-4 py-6 pb-28 sm:px-6">
+      <main className="mx-auto max-w-4xl space-y-4 px-4 py-4 pb-24 sm:space-y-6 sm:px-6 sm:py-6 sm:pb-28">
         {!isOnline ? (
           <Card className="rounded-3xl border-amber-200 bg-amber-50">
             <CardContent className="flex items-start gap-3 p-5 text-sm text-amber-900">
@@ -771,8 +788,8 @@ function DriverInspectionContent() {
         ) : null}
 
         {latestInspection ? (
-          <Card className={`rounded-3xl border-0 ${latestInspection.canOperate && latestInspection.isCurrent ? "bg-emerald-50" : "bg-amber-50"}`}>
-            <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <Card className={`rounded-[24px] border-0 sm:rounded-3xl ${latestInspection.canOperate && latestInspection.isCurrent ? "bg-emerald-50" : "bg-amber-50"}`}>
+            <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
               <div>
                 <div className="flex items-center gap-2 text-sm font-medium text-slate-900">
                   <Clock3 className="h-4 w-4" />
@@ -791,13 +808,15 @@ function DriverInspectionContent() {
           </Card>
         ) : null}
 
+        <div ref={stepContentRef} className="scroll-mt-24" />
+
         {isMetadataStep ? (
-          <Card className="rounded-3xl">
-            <CardHeader>
+          <Card className="rounded-[24px] sm:rounded-3xl">
+            <CardHeader className="space-y-2 px-4 py-5 sm:px-6">
               <CardTitle>Inspection details</CardTitle>
               <CardDescription>Record the basic report information before working through the checklist.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6">
+            <CardContent className="space-y-5 px-4 pb-5 sm:space-y-6 sm:px-6 sm:pb-6">
               <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-slate-700">
                 A failed item requires a major or minor classification and a comment before you can continue. Photo evidence is optional.
               </div>
@@ -819,12 +838,12 @@ function DriverInspectionContent() {
         ) : null}
 
         {currentCategory ? (
-          <Card className="rounded-3xl">
-            <CardHeader>
+          <Card className="rounded-[24px] sm:rounded-3xl">
+            <CardHeader className="space-y-2 px-4 py-5 sm:px-6">
               <CardTitle>{currentCategory.label}</CardTitle>
               <CardDescription>Every item must be marked pass or fail. Failed items need a classification and comment before you can move on.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-4 px-4 pb-5 sm:px-6 sm:pb-6">
               {currentCategory.items.map((item) => {
                 const response = responses[item.id] ?? { photoUrls: [] };
                 const isFail = response.status === "fail";
@@ -836,11 +855,11 @@ function DriverInspectionContent() {
                         <p className="font-semibold text-slate-950">{item.label}</p>
                         <p className="mt-1 text-sm text-slate-600">{item.guidance}</p>
                       </div>
-                      <div className="flex gap-2">
-                        <Button type="button" variant={response.status === "pass" ? "default" : "outline"} className="rounded-full" onClick={() => updateItemResponse(item.id, { status: "pass", classification: undefined, comment: "", photoUrls: [] })}>
+                      <div className="grid grid-cols-2 gap-2 sm:flex">
+                        <Button type="button" variant={response.status === "pass" ? "default" : "outline"} className="h-10 rounded-full px-4 text-sm sm:min-w-[88px]" onClick={() => updateItemResponse(item.id, { status: "pass", classification: undefined, comment: "", photoUrls: [] })}>
                           Pass
                         </Button>
-                        <Button type="button" variant={isFail ? "destructive" : "outline"} className="rounded-full" onClick={() => updateItemResponse(item.id, { status: "fail" })}>
+                        <Button type="button" variant={isFail ? "destructive" : "outline"} className="h-10 rounded-full px-4 text-sm sm:min-w-[88px]" onClick={() => updateItemResponse(item.id, { status: "fail" })}>
                           Fail
                         </Button>
                       </div>
@@ -910,13 +929,13 @@ function DriverInspectionContent() {
         ) : null}
 
         {isSummaryStep ? (
-          <Card className="rounded-3xl">
-            <CardHeader>
+          <Card className="rounded-[24px] sm:rounded-3xl">
+            <CardHeader className="space-y-2 px-4 py-5 sm:px-6">
               <CardTitle>Review and submit</CardTitle>
               <CardDescription>Confirm the report before submitting the inspection record.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid gap-4 sm:grid-cols-3">
+            <CardContent className="space-y-5 px-4 pb-5 sm:space-y-6 sm:px-6 sm:pb-6">
+              <div className="grid gap-3 sm:grid-cols-3 sm:gap-4">
                 <div className="rounded-2xl bg-slate-50 p-4">
                   <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Items checked</p>
                   <p className="mt-2 text-2xl font-semibold text-slate-950">{allChecklistItems.length}</p>
@@ -1053,20 +1072,20 @@ function DriverInspectionContent() {
       </main>
 
       <div className="fixed bottom-0 left-0 right-0 border-t border-slate-200 bg-white/95 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-4xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
-          <Button variant="outline" onClick={() => setStepIndex((current) => Math.max(0, current - 1))} disabled={stepIndex === 0} className="rounded-xl">
+        <div className="mx-auto grid max-w-4xl grid-cols-[auto_1fr] items-center gap-3 px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:flex sm:items-center sm:justify-between sm:gap-4 sm:px-6 sm:py-4">
+          <Button variant="outline" onClick={() => setStepIndex((current) => Math.max(0, current - 1))} disabled={stepIndex === 0} className="h-10 rounded-full px-4 text-sm sm:rounded-xl">
             <ChevronLeft className="h-4 w-4" />
             Back
           </Button>
 
           {isSummaryStep ? (
             isOnline ? (
-              <div className="flex flex-wrap justify-end gap-3">
+              <div className="col-span-1 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end sm:gap-3">
                 <Button
                   variant="outline"
                   onClick={() => void handleSubmit("send")}
                   disabled={!currentStepComplete || submitMutation.isPending}
-                  className="rounded-xl border-slate-300 bg-white"
+                  className="h-10 rounded-full border-slate-300 bg-white px-4 text-sm sm:rounded-xl"
                 >
                   {submitMutation.isPending && submitMode === "send" ? "Submitting..." : "Submit to Manager"}
                   <CheckCircle2 className="h-4 w-4" />
@@ -1074,7 +1093,7 @@ function DriverInspectionContent() {
                 <Button
                   onClick={() => void handleSubmit("download")}
                   disabled={!currentStepComplete || submitMutation.isPending}
-                  className="rounded-xl bg-green-600 text-white hover:bg-green-700"
+                  className="h-10 rounded-full bg-green-600 px-4 text-sm text-white hover:bg-green-700 sm:rounded-xl"
                 >
                   {submitMutation.isPending && submitMode === "download" ? "Submitting..." : "Download PDF & Submit"}
                   <Download className="h-4 w-4" />
@@ -1084,14 +1103,14 @@ function DriverInspectionContent() {
               <Button
                 onClick={() => void handleSubmit("send")}
                 disabled={!currentStepComplete || submitMutation.isPending}
-                className="rounded-xl bg-green-600 text-white hover:bg-green-700"
+                className="h-10 rounded-full bg-green-600 px-4 text-sm text-white hover:bg-green-700 sm:rounded-xl"
               >
                 {submitMutation.isPending ? "Saving..." : "Save Offline & Queue"}
                 <CheckCircle2 className="h-4 w-4" />
               </Button>
             )
           ) : (
-            <Button onClick={() => setStepIndex((current) => Math.min(totalSteps - 1, current + 1))} disabled={!currentStepComplete} className="rounded-xl">
+            <Button onClick={() => setStepIndex((current) => Math.min(totalSteps - 1, current + 1))} disabled={!currentStepComplete} className="h-10 w-full rounded-full px-4 text-sm sm:w-auto sm:rounded-xl">
               Next
               <ChevronRight className="h-4 w-4" />
             </Button>

@@ -273,14 +273,14 @@ export default function VehicleCaptureFlow({
   };
 
   return (
-    <Card className="rounded-3xl border-slate-200">
-      <CardHeader>
+    <Card className="h-full max-h-full overflow-hidden rounded-3xl border-slate-200 shadow-none">
+      <CardHeader className="flex-none">
         <CardTitle>{titleBySource}</CardTitle>
         <CardDescription>
           Capture the VIN manually or by photo, confirm it, review the decoded details, then save the vehicle before returning to your workflow.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-5">
+      <CardContent className="space-y-5 overflow-y-auto pb-2">
         {step === "entry" ? (
           <div className="grid gap-3 sm:grid-cols-2">
             <Button type="button" variant="outline" className="h-auto justify-start rounded-2xl border-slate-200 px-4 py-4" onClick={() => setStep("manual")}>

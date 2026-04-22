@@ -19,7 +19,7 @@ import {
   type DriverVehicleRecord,
 } from "@/lib/driverVehicles";
 import { formatDistanceKm } from "@/lib/vehicleDisplay";
-import { AlertCircle, CheckCircle2, Eye, Gauge, LogOut, Plus, SearchCode, ShieldCheck, Stethoscope, Truck } from "lucide-react";
+import { AlertCircle, CheckCircle2, Eye, Gauge, Info, LogOut, Menu, Plus, SearchCode, ShieldCheck, Stethoscope, Truck } from "lucide-react";
 
 type DriverVehicle = DriverVehicleRecord;
 
@@ -193,7 +193,7 @@ function DriverDashboardContent() {
       <header className="border-b border-slate-200/80 bg-white/80 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
           <div className="flex items-start gap-4">
-            <AppLogo imageClassName="h-10" frameClassName="p-1.5" href="/" />
+            <AppLogo variant="icon" imageClassName="h-full w-full" href="/" />
             <div>
             <p className="section-label">Driver dashboard</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">Daily readiness workflow</h1>
@@ -221,12 +221,42 @@ function DriverDashboardContent() {
             </Dialog>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="h-10 rounded-full border-slate-200 bg-white px-2">
+                <Button variant="outline" className="h-10 rounded-full border-slate-200 bg-white px-3 sm:hidden">
+                  <Menu className="h-4 w-4" />
+                  Menu
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-60 rounded-2xl border-slate-200 p-2 sm:hidden">
+                <div className="px-2 py-2">
+                  <p className="text-sm font-semibold text-slate-900">{user?.name || "Driver"}</p>
+                  <p className="text-xs text-slate-500">{user?.email || "Signed in"}</p>
+                </div>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/profile")}>
+                  Profile & Settings
+                </DropdownMenuItem>
+                <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/pricing")}>
+                  Subscription & Pricing
+                </DropdownMenuItem>
+                <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/")}>
+                  <Info className="mr-2 h-4 w-4" />
+                  About TruckFixr
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={logout} className="cursor-pointer rounded-xl text-destructive focus:text-destructive">
+                  <LogOut className="mr-2 h-4 w-4" />
+                  Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="hidden h-10 rounded-full border-slate-200 bg-white px-2 sm:flex">
                   <Avatar className="h-7 w-7 border border-slate-200"><AvatarFallback className="bg-slate-900 text-xs font-semibold text-white">{initials}</AvatarFallback></Avatar>
                   <div className="hidden text-left sm:block"><p className="text-sm font-medium text-slate-900">{user?.name || "Driver"}</p></div>
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56 rounded-2xl border-slate-200 p-2">
+              <DropdownMenuContent align="end" className="hidden w-56 rounded-2xl border-slate-200 p-2 sm:block">
                 <div className="px-2 py-2">
                   <p className="text-sm font-semibold text-slate-900">{user?.name || "Driver"}</p>
                   <p className="text-xs text-slate-500">{user?.email || "Signed in"}</p>
@@ -234,6 +264,13 @@ function DriverDashboardContent() {
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/profile")}>
                   Profile settings
+                </DropdownMenuItem>
+                <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/pricing")}>
+                  Subscription & Pricing
+                </DropdownMenuItem>
+                <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/")}>
+                  <Info className="mr-2 h-4 w-4" />
+                  About TruckFixr
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={logout} className="cursor-pointer rounded-xl text-destructive focus:text-destructive"><LogOut className="mr-2 h-4 w-4" />Sign out</DropdownMenuItem>

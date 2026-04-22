@@ -6,6 +6,7 @@ type AppLogoProps = {
   frameClassName?: string;
   href?: string;
   alt?: string;
+  variant?: "full" | "icon";
 };
 
 export default function AppLogo({
@@ -14,19 +15,27 @@ export default function AppLogo({
   frameClassName,
   href,
   alt = "TruckFixr",
+  variant = "full",
 }: AppLogoProps) {
   const content = (
-    <div className={cn("flex items-center", className)}>
+    <div className={cn("flex shrink-0 items-center", className)}>
       <div
         className={cn(
-          "rounded-2xl bg-white/95 p-2 shadow-[0_16px_40px_-28px_rgba(15,23,42,0.45)] ring-1 ring-slate-200/80",
+          "overflow-hidden rounded-2xl bg-white/95 p-2 shadow-[0_16px_40px_-28px_rgba(15,23,42,0.45)] ring-1 ring-slate-200/80",
+          variant === "icon" && "flex h-14 w-14 items-center justify-center p-0",
           frameClassName
         )}
       >
         <img
           src="/truckfixr-logo.png"
           alt={alt}
-          className={cn("h-12 w-auto", imageClassName)}
+          className={cn(
+            "block object-contain",
+            variant === "icon"
+              ? "h-full w-full object-cover object-top"
+              : "h-12 w-auto",
+            imageClassName
+          )}
         />
       </div>
     </div>
