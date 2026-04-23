@@ -125,6 +125,28 @@ function baseLlmReview(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+function baseIntakeInterpretation(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    normalized_symptoms: ["engine oil mixing with coolant"],
+    primary_symptoms: ["oil in coolant"],
+    secondary_symptoms: ["contaminated coolant"],
+    interpreted_fault_codes: [],
+    inferred_systems: ["engine", "cooling", "lubrication"],
+    likely_failure_modes: ["internal oil/coolant cross-contamination"],
+    maintenance_history_signals: [],
+    repair_history_signals: [],
+    recent_parts_signals: [],
+    recurrence_signals: [],
+    evidence_keywords: ["oil in coolant", "coolant in oil", "milky oil"],
+    candidate_cause_hints: ["engine oil cooler internal leak", "head gasket leak"],
+    risk_flags: ["do not operate with contaminated oil and coolant"],
+    missing_evidence: ["Need oil and coolant sample confirmation"],
+    ambiguity_drivers: ["Oil cooler, head gasket, EGR cooler, or liner failure still need separation"],
+    interpretation_rationale: ["Fluid contamination wording points to an internal leak path before rule scoring."],
+    ...overrides,
+  };
+}
+
 function stubFetchSequence(responses: Array<Record<string, unknown> | string | Error>) {
   let index = 0;
   vi.stubGlobal(
@@ -145,12 +167,15 @@ describe("TADIS Service Layer", () => {
     ENV.openRouterApiKey = "openrouter-test-key";
     ENV.openRouterModel = "openrouter/free";
     ENV.openRouterFallbackModel = "";
-    ENV.diagnosticConfidenceThreshold = "75";
+    ENV.diagnosticConfidenceThreshold = "85";
     ENV.diagnosticNewCauseMinConfidence = "62";
     ENV.diagnosticTimeoutMs = "4500";
+    process.env.DIAGNOSTIC_LLM_RETRY_COUNT = "2";
   });
 
   afterEach(() => {
+    delete process.env.DIAGNOSTIC_INTAKE_MAX_TOKENS;
+    delete process.env.DIAGNOSTIC_REVIEW_MAX_TOKENS;
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -177,6 +202,10 @@ describe("TADIS Service Layer", () => {
     expect(result.vehicle_id).toBe("42");
     expect(result.rule_engine_baseline.possible_causes.length).toBeGreaterThan(0);
     expect(result.final_llm_ranking.length).toBeGreaterThan(0);
+    expect(result.internal_engine_baseline).toEqual(result.rule_engine_baseline);
+    expect(result.llm_final_ranking).toEqual(result.final_llm_ranking);
+    expect(result.ranked_likely_causes).toEqual(result.final_llm_ranking);
+    expect(result.similar_confirmed_cases_used.length).toBeGreaterThan(0);
     expect(result.llm_status).toBe("ok");
     expect(result.fallback_used).toBe(false);
     expect(result.possible_causes.reduce((sum, item) => sum + item.probability, 0)).toBeGreaterThan(99);
@@ -414,7 +443,7 @@ describe("TADIS Service Layer", () => {
 
     expect(result.llm_status).toBe("invalid_schema");
     expect(result.fallback_used).toBe(true);
-    expect(result.confidence_score).toBeLessThan(75);
+    expect(result.confidence_score).toBeLessThan(85);
     expect(result.next_action).toBe("ask_question");
     expect(result.clarifying_question.trim().length).toBeGreaterThan(0);
     expect(result.final_llm_ranking[0]?.cause_name).toBe(result.rule_engine_baseline.possible_causes[0]?.cause);
@@ -486,9 +515,39 @@ describe("TADIS Service Layer", () => {
 
     expect(result.llm_status).toBe("invalid_schema");
     expect(result.fallback_used).toBe(true);
-    expect(result.confidence_score).toBeLessThan(75);
+    expect(result.confidence_score).toBeLessThan(85);
     expect(result.next_action).toBe("ask_question");
     expect(result.clarifying_question).toMatch(/coolant|thermostat|engine overheating/i);
+  });
+
+  it("forces a fallback clarifying question after parse failure even when prior clarification rounds exist", async () => {
+    stubFetchSequence(["not valid json"]);
+
+    const result = await analyzeDiagnostic({
+      vehicleId: 42,
+      vehicle: {
+        id: 42,
+        make: "Peterbilt",
+        model: "579",
+        year: 2022,
+      },
+      symptoms: ["Engine overheating"],
+      faultCodes: ["P0128"],
+      driverNotes: "Coolant smell after shutdown",
+      clarificationHistory: [
+        { question: "Does the cab heat stay weak when it overheats?", answer: "Yes" },
+        { question: "Do you see coolant around the radiator seams?", answer: "No" },
+        { question: "Does the fan clutch sound engaged when the gauge climbs?", answer: "Unsure" },
+        { question: "Is the issue worse under load than at idle?", answer: "Under load" },
+        { question: "Does the warning start immediately after startup?", answer: "No" },
+      ],
+    });
+
+    expect(result.llm_status).toBe("invalid_schema");
+    expect(result.fallback_used).toBe(true);
+    expect(result.confidence_score).toBeLessThan(85);
+    expect(result.next_action).toBe("ask_question");
+    expect(result.clarifying_question.trim().length).toBeGreaterThan(0);
   });
 
   it("accepts near-valid JSON with camelCase keys and proceed-style actions instead of falling back", async () => {
@@ -571,6 +630,176 @@ describe("TADIS Service Layer", () => {
     expect(result.final_llm_ranking[0]?.cause_name).toContain("Coolant leak");
   });
 
+  it("parses wrapped markdown JSON payloads from the LLM instead of falling back", async () => {
+    stubFetchSequence([
+      `Here is the structured diagnostic review:
+
+\`\`\`json
+{
+  "result": ${JSON.stringify(baseLlmReview(), null, 2)}
+}
+\`\`\`
+`,
+    ]);
+
+    const result = await analyzeDiagnostic({
+      vehicleId: 42,
+      vehicle: {
+        id: 42,
+        make: "Peterbilt",
+        model: "579",
+        year: 2022,
+      },
+      symptoms: ["Engine overheating"],
+      faultCodes: ["P0128"],
+      driverNotes: "Coolant smell after shutdown",
+    });
+
+    expect(result.llm_status).toBe("ok");
+    expect(result.fallback_used).toBe(false);
+    expect(result.confidence_score).toBeGreaterThanOrEqual(80);
+    expect(result.final_llm_ranking[0]?.cause_name).toContain("Coolant leak");
+  });
+
+  it("accepts alternate ranked cause and confidence field names from OpenRouter models", async () => {
+    stubFetchSequence([
+      {
+        nextAction: "proceed",
+        ranked_causes: [
+          {
+            id: "coolant_leak",
+            name: "Coolant leak or low coolant level",
+            probability_score: 74,
+            evidence: ["Driver reported coolant smell after shutdown and fault code P0128 is present"],
+            reasoning: ["Coolant loss better explains the odor than thermostat-only restriction"],
+            scores: {
+              symptoms: 86,
+              fault_codes: 78,
+              repair_history: 30,
+              maintenance_history: 20,
+              recent_parts: 10,
+              recurring_failure: 15,
+              library_fit: 88,
+            },
+          },
+          {
+            id: "thermostat_stuck",
+            name: "Thermostat stuck closed or opening late",
+            probability_score: 26,
+            evidence: ["P0128 can also support thermostat behavior"],
+            reasoning: ["Less likely than coolant loss because odor points to fluid escape"],
+            scores: {
+              symptoms: 62,
+              fault_codes: 70,
+              library_fit: 70,
+            },
+          },
+        ],
+        confidence_score: 81,
+        confidence_reasoning: ["The exact P0128 code and coolant smell point to a cooling-system fault."],
+        code_interpretations: [
+          {
+            code: "P0128",
+            interpretation: "Coolant temperature is not reaching expected range.",
+            role: "primary",
+            signalStrength: 80,
+          },
+        ],
+        driver_action: {
+          action: "drive_to_shop",
+          reason: "Cooling faults can worsen under load.",
+          riskSummary: "Temperature control may degrade if fluid loss continues.",
+          safetyNote: "Stop if the gauge rises quickly.",
+          complianceNote: "No confirmed out-of-service defect yet.",
+          monitoringInstructions: ["Watch the coolant temperature gauge"],
+          distanceOrTimeLimit: "Short distance only",
+        },
+        repair_guidance: {
+          cause: "Coolant leak or low coolant level",
+          confirmBeforeReplacement: true,
+          likelyReplacementParts: ["coolant hose", "hose clamp"],
+          inspectionRelatedParts: ["surge tank"],
+          adjacentPartsToCheck: ["water pump"],
+          recommendedTests: ["Pressure-test the cooling system"],
+          diagnosticVerificationLaborHours: { min: 1, max: 2 },
+          repairLaborHours: { min: 2, max: 4 },
+          totalEstimatedLaborHours: { min: 3, max: 6 },
+          laborTimeConfidence: 72,
+          laborTimeBasis: ["Cooling-system pressure test and hose access"],
+        },
+      },
+    ]);
+
+    const result = await analyzeDiagnostic({
+      vehicleId: 42,
+      vehicle: {
+        id: 42,
+        make: "Peterbilt",
+        model: "579",
+        year: 2022,
+      },
+      symptoms: ["Engine overheating"],
+      faultCodes: ["P0128"],
+      driverNotes: "Coolant smell after shutdown",
+    });
+
+    expect(result.llm_status).toBe("ok");
+    expect(result.fallback_used).toBe(false);
+    expect(result.confidence_score).toBeGreaterThanOrEqual(80);
+    expect(result.final_llm_ranking[0]?.cause_name).toContain("Coolant leak");
+  });
+
+  it("retries a timed-out OpenRouter review before falling back", async () => {
+    stubFetchSequence([baseIntakeInterpretation(), new Error("AI request timed out"), baseLlmReview()]);
+
+    const result = await analyzeDiagnostic({
+      vehicleId: 42,
+      vehicle: {
+        id: 42,
+        make: "Peterbilt",
+        model: "579",
+        year: 2022,
+      },
+      symptoms: ["Engine overheating"],
+      faultCodes: ["P0128"],
+      driverNotes: "Coolant smell after shutdown",
+    });
+
+    expect(result.llm_status).toBe("ok");
+    expect(result.fallback_used).toBe(true);
+    expect(result.fallback_reason).toContain("succeeded after retry");
+    expect(result.confidence_score).toBeGreaterThanOrEqual(80);
+  });
+
+  it("shrinks the OpenRouter completion budget and retries after a 402 credit-limit response", async () => {
+    process.env.DIAGNOSTIC_REVIEW_MAX_TOKENS = "1600";
+    stubFetchSequence([
+      baseIntakeInterpretation(),
+      new Error(
+        "OpenRouter request failed (402 Payment Required): This request requires more credits, or fewer max_tokens. You requested up to 1600 tokens, but can only afford 385."
+      ),
+      baseLlmReview(),
+    ]);
+
+    const result = await analyzeDiagnostic({
+      vehicleId: 42,
+      vehicle: {
+        id: 42,
+        make: "Peterbilt",
+        model: "579",
+        year: 2022,
+      },
+      symptoms: ["Engine overheating"],
+      faultCodes: ["P0128"],
+      driverNotes: "Coolant smell after shutdown",
+    });
+
+    expect(result.llm_status).toBe("ok");
+    expect(result.fallback_used).toBe(true);
+    expect(result.fallback_reason).toContain("succeeded after retry");
+    expect(result.confidence_score).toBeGreaterThanOrEqual(80);
+  });
+
   it("falls back cleanly when the LLM times out", async () => {
     stubFetchSequence([new Error("AI request timed out")]);
 
@@ -620,6 +849,37 @@ describe("TADIS Service Layer", () => {
     expect(result.next_action).toBe("ask_question");
     expect(result.clarifying_question).toContain("cabin heat");
     expect(result.question_rationale).toContain("thermostat");
+  });
+
+  it("finalizes when the LLM confidence reaches the configured threshold", async () => {
+    ENV.diagnosticConfidenceThreshold = "85";
+    stubFetchSequence([
+      baseLlmReview({
+        next_action: "finalize",
+        clarifying_question: null,
+        question_rationale: null,
+        overall_confidence_score: 85,
+        confidence_rationale: ["Evidence is strong enough to finalize at the configured threshold."],
+      }),
+    ]);
+
+    const result = await analyzeDiagnostic({
+      vehicleId: 42,
+      vehicle: {
+        id: 42,
+        make: "Peterbilt",
+        model: "579",
+        year: 2022,
+      },
+      symptoms: ["Engine overheating"],
+      faultCodes: ["P0128"],
+      driverNotes: "Coolant smell after shutdown",
+    });
+
+    expect(result.llm_status).toBe("ok");
+    expect(result.confidence_score).toBe(85);
+    expect(result.next_action).toBe("proceed");
+    expect(result.clarifying_question).toBe("");
   });
 
   it("applies the hardcoded safety override for brake-hold complaints", async () => {
@@ -776,6 +1036,143 @@ describe("TADIS Service Layer", () => {
     );
     expect(result.driver_action).toBeTruthy();
     expect(result.driver_action_reason.length).toBeGreaterThan(0);
+  });
+
+  it("treats engine oil mixing with coolant as internal cross-contamination even if the LLM ranks a generic cooling cause", async () => {
+    stubFetchSequence([
+      baseLlmReview({
+        top_ranked_causes: [
+          {
+            cause_id: "thermostat_stuck",
+            cause_name: "Thermostat stuck closed or opening late",
+            is_new_cause: false,
+            probability: 80,
+            evidence_summary: ["Cooling issue appears likely"],
+            ranking_rationale: ["Generic cooling fault ranked first"],
+            symptom_support_score: 70,
+            fault_code_support_score: 20,
+            repair_history_support_score: 0,
+            maintenance_history_support_score: 0,
+            recent_parts_support_score: 0,
+            recurring_failure_support_score: 0,
+            cause_library_fit_score: 65,
+            novel_cause_support_score: null,
+          },
+          {
+            cause_id: "coolant_leak",
+            cause_name: "Coolant leak or low coolant level",
+            is_new_cause: false,
+            probability: 20,
+            evidence_summary: ["Coolant is involved"],
+            ranking_rationale: ["Possible cooling system issue"],
+            symptom_support_score: 75,
+            fault_code_support_score: 10,
+            repair_history_support_score: 0,
+            maintenance_history_support_score: 0,
+            recent_parts_support_score: 0,
+            recurring_failure_support_score: 0,
+            cause_library_fit_score: 60,
+            novel_cause_support_score: null,
+          },
+        ],
+        overall_confidence_score: 64,
+        confidence_rationale: ["The model underweighted the contamination wording."],
+        top_cause_repair_guidance: {
+          ...baseLlmReview().top_cause_repair_guidance,
+          top_most_likely_cause: "Thermostat stuck closed or opening late",
+          likely_replacement_parts: ["thermostat"],
+          recommended_tests: ["Check thermostat opening temperature"],
+        },
+      }),
+    ]);
+
+    const result = await analyzeDiagnostic({
+      vehicleId: 42,
+      vehicle: {
+        id: 42,
+        make: "Peterbilt",
+        model: "579",
+        year: 2022,
+        engine: "Cummins X15",
+      },
+      symptoms: ["Engine is mixing engine oil with coolant"],
+      faultCodes: [],
+      driverNotes: "Coolant reservoir has oily sludge and engine oil looks milky.",
+    });
+
+    expect(result.final_llm_ranking[0]?.cause_id).toBe("oil_coolant_cross_contamination");
+    expect(result.top_most_likely_cause).toBe("Internal engine oil/coolant cross-contamination");
+    expect(result.driver_action).toBe("do_not_operate_until_repaired");
+    expect(result.possible_replacement_parts.join(" ")).toMatch(/oil cooler|head gasket|engine oil/i);
+    expect(result.llm_adjustments.join(" ")).toMatch(/cross-contamination/i);
+    expect(result.confidence_score).toBeGreaterThanOrEqual(82);
+  });
+
+  it("uses the LLM intake interpretation before the rules engine scores maintenance-history-driven candidates", async () => {
+    stubFetchSequence([
+      baseIntakeInterpretation(),
+      baseLlmReview({
+        top_ranked_causes: [
+          {
+            cause_id: "coolant_leak",
+            cause_name: "Coolant leak or low coolant level",
+            is_new_cause: false,
+            probability: 74,
+            evidence_summary: ["The maintenance history references a prior coolant hose repair"],
+            ranking_rationale: ["The history points to a known cooling repair"],
+            symptom_support_score: 55,
+            fault_code_support_score: 0,
+            repair_history_support_score: 80,
+            maintenance_history_support_score: 70,
+            recent_parts_support_score: 0,
+            recurring_failure_support_score: 20,
+            cause_library_fit_score: 70,
+            novel_cause_support_score: null,
+          },
+          {
+            cause_id: "thermostat_stuck",
+            cause_name: "Thermostat stuck closed or opening late",
+            is_new_cause: false,
+            probability: 26,
+            evidence_summary: ["Temperature control could still be involved"],
+            ranking_rationale: ["Secondary cooling candidate"],
+            symptom_support_score: 40,
+            fault_code_support_score: 0,
+            repair_history_support_score: 10,
+            maintenance_history_support_score: 10,
+            recent_parts_support_score: 0,
+            recurring_failure_support_score: 0,
+            cause_library_fit_score: 45,
+            novel_cause_support_score: null,
+          },
+        ],
+        overall_confidence_score: 68,
+      }),
+    ]);
+
+    const result = await analyzeDiagnostic({
+      vehicleId: 42,
+      vehicle: {
+        id: 42,
+        make: "Peterbilt",
+        model: "579",
+        year: 2022,
+        engine: "Cummins X15",
+      },
+      symptoms: ["Fluid contamination found during pre-trip"],
+      driverNotes: "Driver says the reservoir and dipstick fluid look wrong.",
+      issueHistory: {
+        repairHistory: [{ summary: "Replaced coolant hose last month", status: "closed" }],
+        maintenanceHistory: [{ summary: "Cooling system service completed recently", status: "closed" }],
+      },
+    });
+
+    expect(result.normalized_symptoms).toContain("oil in coolant");
+    expect(result.rule_engine_baseline.possible_causes[0]?.cause).toBe(
+      "Internal engine oil/coolant cross-contamination"
+    );
+    expect(result.final_llm_ranking[0]?.cause_id).toBe("oil_coolant_cross_contamination");
+    expect(result.llm_adjustments.join(" ")).toMatch(/interpreted raw symptoms/i);
   });
 
   it("parses a clarifying question from wrapped JSON model output", () => {

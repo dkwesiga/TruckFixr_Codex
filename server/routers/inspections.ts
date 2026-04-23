@@ -1,8 +1,9 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { defects, inspections, users, vehicles } from "../../drizzle/schema";
-import { desc, eq } from "drizzle-orm";
+import { defects, inspections, users, vehicles, fleets } from "../../drizzle/schema";
+import { desc, eq, and } from "drizzle-orm";
 import {
   INSPECTION_VALIDITY_HOURS,
   buildChecklistByCategory,
@@ -22,6 +23,24 @@ import {
   prepareInspectionSubmission,
 } from "../services/inspectionWorkflow";
 import { recordPilotMilestone } from "../services/pilotAccess";
+
+async function verifyFleetAccess(fleetId: number, userId: number, userRole: string): Promise<boolean> {
+  if (userRole !== "owner" && userRole !== "manager") {
+    return false;
+  }
+  
+  const db = await getDb();
+  if (!db) return false;
+  
+  const [fleet] = await db
+    .select()
+    .from(fleets)
+    .where(eq(fleets.id, fleetId))
+    .limit(1);
+  
+  if (!fleet) return false;
+  return fleet.ownerId === userId;
+}
 
 const fallbackVehicles = {
   42: {
@@ -383,25 +402,49 @@ export const inspectionsRouter = router({
   // Get inspection by ID
   getById: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) return null;
 
-      const result = await db
+      const [inspection] = await db
         .select()
         .from(inspections)
         .where(eq(inspections.id, input.id))
         .limit(1);
 
-      return result.length > 0 ? result[0] : null;
+      if (!inspection) return null;
+
+      const hasAccess = await verifyFleetAccess(inspection.fleetId, ctx.user.id, ctx.user.role);
+      if (!hasAccess && inspection.driverId !== ctx.user.id) {
+        const [vehicle] = await db.select().from(vehicles).where(eq(vehicles.id, inspection.vehicleId)).limit(1);
+        if (!vehicle || vehicle.assignedDriverId !== ctx.user.id) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "You do not have access to this inspection",
+          });
+        }
+      }
+
+      return inspection;
     }),
 
   // Get inspections for a vehicle
   getByVehicle: protectedProcedure
     .input(z.object({ vehicleId: z.number(), limit: z.number().default(10) }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) return [];
+
+      const [vehicle] = await db.select().from(vehicles).where(eq(vehicles.id, input.vehicleId)).limit(1);
+      if (!vehicle) return [];
+
+      const hasAccess = await verifyFleetAccess(vehicle.fleetId, ctx.user.id, ctx.user.role);
+      if (!hasAccess && vehicle.assignedDriverId !== ctx.user.id) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You do not have access to this vehicle",
+        });
+      }
 
       const result = await db
         .select()
@@ -416,7 +459,15 @@ export const inspectionsRouter = router({
   // Get recent inspections for a fleet
   getRecentByFleet: protectedProcedure
     .input(z.object({ fleetId: z.number(), limit: z.number().default(20) }))
-    .query(async ({ input }) => {
+    .query(async ({ input, ctx }) => {
+      const hasAccess = await verifyFleetAccess(input.fleetId, ctx.user.id, ctx.user.role);
+      if (!hasAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You do not have access to this fleet",
+        });
+      }
+
       const db = await getDb();
       if (!db) return [];
 

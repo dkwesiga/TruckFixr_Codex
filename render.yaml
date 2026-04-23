@@ -87,7 +87,7 @@ services:
       - key: OPENROUTER_MODEL
         value: xiaomi/mimo-v2-flash
       - key: OPENROUTER_FALLBACK_MODEL
-        sync: false
+        value: openrouter/free
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_MODEL
@@ -101,11 +101,15 @@ services:
       - key: GEMINI_MODEL
         sync: false
       - key: DIAGNOSTIC_CONFIDENCE_THRESHOLD
-        value: "75"
+        value: "85"
       - key: DIAGNOSTIC_NEW_CAUSE_MIN_CONFIDENCE
         value: "62"
       - key: DIAGNOSTIC_TIMEOUT_MS
         value: "35000"
+      - key: DIAGNOSTIC_INTAKE_MAX_TOKENS
+        value: "320"
+      - key: DIAGNOSTIC_REVIEW_MAX_TOKENS
+        value: "380"
       - key: STRIPE_SECRET_KEY
         sync: false
       - key: STRIPE_WEBHOOK_SECRET

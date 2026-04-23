@@ -132,6 +132,8 @@ Optional backend env vars:
 - `DIAGNOSTIC_CONFIDENCE_THRESHOLD`
 - `DIAGNOSTIC_NEW_CAUSE_MIN_CONFIDENCE`
 - `DIAGNOSTIC_TIMEOUT_MS`
+- `DIAGNOSTIC_INTAKE_MAX_TOKENS`
+- `DIAGNOSTIC_REVIEW_MAX_TOKENS`
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
 - `STRIPE_PRICE_PRO_MONTHLY`
@@ -139,6 +141,15 @@ Optional backend env vars:
 - `STRIPE_PRICE_FLEET_MONTHLY`
 - `ADMIN_EMAILS`
 - `SALES_NOTIFICATION_EMAIL`
+
+Diagnostic OpenRouter defaults:
+
+- primary model: `xiaomi/mimo-v2-flash`
+- fallback model: `openrouter/free`
+- clarification confidence threshold: `85`
+- intake completion cap: `320`
+- review completion cap: `380`
+- OpenRouter 402 credit-limit responses automatically retry with a smaller affordable `max_tokens` budget when possible
 
 ## Render Checklist
 

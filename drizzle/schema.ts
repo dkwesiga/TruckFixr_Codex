@@ -358,3 +358,12 @@ export const diagnosticReviewQueue = pgTable("diagnosticReviewQueue", {
   createdAt: dateTimestamp().defaultNow().notNull(),
   updatedAt: dateTimestamp().defaultNow().notNull(),
 });
+
+export const passwordResetTokens = pgTable("passwordResetTokens", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
+  token: varchar("token", { length: 255 }).notNull(),
+  expiresAt: dateTimestamp().notNull(),
+  usedAt: dateTimestamp(),
+  createdAt: dateTimestamp().defaultNow().notNull(),
+});

@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { getDiagnosticRuntimeConfig } from "./diagnosticConfig";
-import { reviewDiagnosticWithLlm } from "./diagnosticLlmReview";
+import {
+  interpretDiagnosticIntakeWithLlm,
+  reviewDiagnosticWithLlm,
+  type DiagnosticIntakeInterpretation,
+  type DiagnosticIntakeInterpretationResult,
+} from "./diagnosticLlmReview";
 import { queueDiagnosticReviewRecords } from "./diagnosticReviewQueue";
 
 const MAX_CLARIFICATION_ROUNDS = 5;
@@ -163,6 +168,18 @@ const candidateUniverseSchema = z.object({
   reasons: z.array(z.string()).default([]),
 });
 
+const similarConfirmedCaseEvidenceSchema = z.object({
+  id: z.string(),
+  source: z.enum(["library", "historical"]),
+  cause_id: z.string(),
+  cause_name: z.string(),
+  similarity: z.number().min(0).max(1),
+  matched_signals: z.array(z.string()).default([]),
+  summary: z.string(),
+  confirmed_fix: z.string().nullable().default(null),
+  resolution_success: z.boolean().nullable().default(null),
+});
+
 const ruleEngineBaselineSchema = z.object({
   systems_affected: z.array(z.string()),
   possible_causes: z.array(
@@ -187,7 +204,10 @@ export const TadisOutputSchema = z.object({
   vehicle_id: z.string().min(1),
   systems_affected: z.array(z.string()),
   rule_engine_baseline: ruleEngineBaselineSchema,
+  internal_engine_baseline: ruleEngineBaselineSchema,
   final_llm_ranking: z.array(rankedCauseSchema).min(1),
+  llm_final_ranking: z.array(rankedCauseSchema).min(1),
+  ranked_likely_causes: z.array(rankedCauseSchema).min(1),
   possible_causes: z.array(
     z.object({
       cause: z.string(),
@@ -203,6 +223,7 @@ export const TadisOutputSchema = z.object({
   }),
   confidence_delta: z.number(),
   llm_adjustments: z.array(z.string()).default([]),
+  evidence_summary: z.array(z.string()).default([]),
   normalized_symptoms: z.array(z.string()).default([]),
   primary_symptoms: z.array(z.string()).default([]),
   secondary_symptoms: z.array(z.string()).default([]),
@@ -255,6 +276,7 @@ export const TadisOutputSchema = z.object({
   question_rationale: z.string().nullable().default(null),
   missing_evidence: z.array(z.string()).default([]),
   ambiguity_drivers: z.array(z.string()).default([]),
+  similar_confirmed_cases_used: z.array(similarConfirmedCaseEvidenceSchema).default([]),
   recommended_tests: z.array(z.string()).default([]),
   recommended_fix: z.string(),
   risk_level: riskLevelSchema,
@@ -262,6 +284,9 @@ export const TadisOutputSchema = z.object({
   compliance_impact: z.enum(["none", "warning", "critical"]),
   top_most_likely_cause: z.string(),
   possible_replacement_parts: z.array(z.string()).default([]),
+  likely_replacement_parts: z.array(z.string()).default([]),
+  inspection_related_parts: z.array(z.string()).default([]),
+  adjacent_parts_to_check: z.array(z.string()).default([]),
   confirm_before_replacement: z.boolean(),
   diagnostic_verification_labor_hours: laborRangeSchema,
   repair_labor_hours: laborRangeSchema,
@@ -323,9 +348,68 @@ type DiagnosticContext = {
   similarCases: SimilarCase[];
   matchedSignals: number;
   complaintDomains: string[];
+  llmIntakeInterpretation: DiagnosticIntakeInterpretation | null;
+  llmInterpretationText: string;
 };
 
 const CAUSE_LIBRARY: CauseDefinition[] = [
+  {
+    id: "oil_coolant_cross_contamination",
+    cause: "Internal engine oil/coolant cross-contamination",
+    systems: ["engine", "cooling", "lubrication"],
+    risk: "high",
+    symptomKeywords: [
+      "oil mixing with coolant",
+      "engine oil mixing with coolant",
+      "mixing engine oil with coolant",
+      "oil with coolant",
+      "oil in coolant",
+      "coolant in oil",
+      "coolant mixing with oil",
+      "milky oil",
+      "milky coolant",
+      "chocolate milk",
+      "cross contamination",
+      "contaminated coolant",
+    ],
+    noteKeywords: [
+      "oil mixing with coolant",
+      "engine oil with coolant",
+      "oil in coolant",
+      "coolant in oil",
+      "milky oil",
+      "milky coolant",
+      "chocolate milk",
+      "cross contamination",
+      "contaminated coolant",
+    ],
+    faultCodes: [],
+    historyKeywords: ["head gasket", "oil cooler", "egr cooler", "coolant contamination", "engine oil cooler"],
+    recommendedTests: [
+      "Do not operate until the coolant and oil are inspected for cross-contamination",
+      "Pressure-test the cooling system and inspect the engine oil cooler for internal leakage",
+      "Check engine oil condition, coolant reservoir contamination, and combustion gas presence in coolant",
+      "Inspect for head gasket, cylinder liner, or EGR/oil cooler failure before replacing parts",
+    ],
+    recommendedFix:
+      "Keep the truck out of service, isolate the internal leak path, repair the failed cooler, gasket, liner, or related component, then flush contaminated oil and coolant circuits before returning to service.",
+    questions: [
+      {
+        text: "Is the coolant reservoir showing an oily film or sludge, or does the engine oil look milky on the dipstick or fill cap?",
+        positiveFor: ["oil_coolant_cross_contamination"],
+        negativeFor: ["coolant_leak", "thermostat_stuck", "fan_clutch_failure"],
+        positiveKeywords: ["yes", "oily", "oil film", "sludge", "milky", "milk", "chocolate", "contaminated"],
+        negativeKeywords: ["no", "clean", "normal", "clear"],
+      },
+      {
+        text: "Did the oil/coolant mixing appear suddenly after overheating, a recent cooler repair, or a recent head gasket or EGR cooler repair?",
+        positiveFor: ["oil_coolant_cross_contamination"],
+        negativeFor: ["radiator_airflow_restriction", "fan_clutch_failure"],
+        positiveKeywords: ["yes", "after overheating", "recent", "cooler", "head gasket", "egr", "suddenly"],
+        negativeKeywords: ["no", "no repair", "gradual", "unknown"],
+      },
+    ],
+  },
   {
     id: "coolant_leak",
     cause: "Coolant leak or low coolant level",
@@ -716,6 +800,19 @@ const CAUSE_LIBRARY: CauseDefinition[] = [
 
 const BUILT_IN_CASES: SimilarCase[] = [
   {
+    id: "case-cooling-contamination-01",
+    source: "library",
+    causeId: "oil_coolant_cross_contamination",
+    cause: "Internal engine oil/coolant cross-contamination",
+    systems_affected: ["engine", "cooling", "lubrication"],
+    symptomSignals: ["oil in coolant", "coolant in oil", "milky oil", "contaminated coolant"],
+    faultCodes: [],
+    summary: "Driver found oily sludge in the coolant reservoir and milky engine oil after an overheating complaint.",
+    resolution: "Removed the unit from service, pressure-tested the cooling system, confirmed internal oil cooler leakage, repaired the cooler, and flushed both circuits.",
+    risk_level: "high",
+    similarity: 0,
+  },
+  {
     id: "case-coolant-01",
     source: "library",
     causeId: "coolant_leak",
@@ -1052,6 +1149,11 @@ function inferComplaintDomains(text: string, faultCodes: string[]) {
   if (/(overheat|overheating|coolant|temperature|radiator|fan clutch|steam|hot engine)/.test(text)) {
     domains.add("cooling");
   }
+  if (/(oil.*coolant|coolant.*oil|milky oil|milky coolant|chocolate milk|cross contamination|contaminated coolant)/.test(text)) {
+    domains.add("lubrication");
+    domains.add("engine");
+    domains.add("cooling");
+  }
   if (/(steering|wander|wandering|pull|free play|tie rod|drag link)/.test(text)) {
     domains.add("steering");
   }
@@ -1089,6 +1191,10 @@ function getCauseComplaintDomains(cause: CauseDefinition) {
   if (cause.systems.includes("cooling")) {
     domains.add("cooling");
   }
+  if (cause.systems.includes("lubrication")) {
+    domains.add("lubrication");
+    domains.add("engine");
+  }
   if (cause.systems.includes("steering") || cause.systems.includes("suspension")) {
     domains.add("steering");
   }
@@ -1109,6 +1215,11 @@ const KNOWN_PART_KEYWORDS = [
   "hose",
   "radiator",
   "thermostat",
+  "head gasket",
+  "engine oil cooler",
+  "oil cooler",
+  "egr cooler",
+  "cylinder liner",
   "fan clutch",
   "fan",
   "parking brake chamber",
@@ -1149,7 +1260,13 @@ const FAULT_CODE_METADATA: Record<
   P0128: {
     interpretation: "Coolant temperature is not reaching or maintaining the expected operating range.",
     systems: ["cooling", "engine"],
-    likelyCauseIds: ["coolant_leak", "thermostat_stuck", "fan_clutch_failure", "radiator_airflow_restriction"],
+    likelyCauseIds: [
+      "coolant_leak",
+      "thermostat_stuck",
+      "fan_clutch_failure",
+      "radiator_airflow_restriction",
+      "oil_coolant_cross_contamination",
+    ],
     defaultRole: "primary",
   },
   C0035: {
@@ -1202,6 +1319,25 @@ const BASELINE_PARTS_GUIDANCE: Record<
     laborTimeBasis: string[];
   }
 > = {
+  oil_coolant_cross_contamination: {
+    likelyReplacementParts: [
+      "engine oil cooler",
+      "oil cooler gasket set",
+      "head gasket set",
+      "EGR cooler",
+      "coolant",
+      "engine oil and filters",
+    ],
+    inspectionRelatedParts: ["coolant reservoir", "engine oil sample", "cooling system pressure tester", "combustion leak tester"],
+    adjacentPartsToCheck: ["cylinder liners", "water pump", "thermostat housing", "EGR cooler plumbing"],
+    diagnosticVerificationLaborHours: { min: 2, max: 5 },
+    repairLaborHours: { min: 6, max: 18 },
+    laborTimeConfidence: 62,
+    laborTimeBasis: [
+      "Internal oil/coolant leak path must be isolated before replacement",
+      "Labor varies widely between oil cooler, EGR cooler, head gasket, and liner failure",
+    ],
+  },
   coolant_leak: {
     likelyReplacementParts: ["coolant hose", "hose clamp", "radiator", "surge tank cap"],
     inspectionRelatedParts: ["pressure tester", "coolant level sensor", "hose junctions"],
@@ -1388,33 +1524,121 @@ function buildHistoryText(input: DiagnosticInput) {
     .join(" ");
 }
 
-function scoreCaseSimilarity(context: DiagnosticContext, item: SimilarCase) {
+function buildSimilarCaseMatchEvidence(context: DiagnosticContext, item: SimilarCase) {
   const symptomMatches = item.symptomSignals.filter((signal) =>
     context.normalizedSymptoms.some((symptom) => symptom.includes(normalizeText(signal)))
-  ).length;
+  );
   const faultCodeMatches = item.faultCodes.filter((code) =>
     context.normalizedFaultCodes.includes(code.toUpperCase())
-  ).length;
+  );
+  const caseSystems = item.systems_affected.map((system) => normalizeText(system));
+  const subsystemMatches = caseSystems.filter((system) => context.complaintDomains.includes(system));
+  const complaintText = `${context.normalizedSymptoms.join(" ")} ${context.notes} ${context.llmInterpretationText}`;
+  const componentMatches = KNOWN_PART_KEYWORDS.filter(
+    (part) =>
+      complaintText.includes(part) &&
+      `${normalizeText(item.summary)} ${normalizeText(item.resolution)} ${normalizeText(item.confirmedFix)}`.includes(part)
+  );
+  const vehicleMatches = [context.input.vehicle?.make, context.input.vehicle?.model, context.input.vehicle?.engine]
+    .filter((value): value is string => Boolean(value))
+    .filter((value) => normalizeText(item.summary).includes(normalizeText(value)));
+  const fixText = normalizeText(`${item.confirmedFix ?? ""} ${item.resolution}`);
+  const confirmedFixMatches = uniqueStrings([...context.complaintDomains, ...componentMatches]).filter(
+    (signal) => signal && fixText.includes(signal)
+  );
+  const matchedSignals = uniqueStrings([
+    ...symptomMatches.map((signal) => `symptom:${signal}`),
+    ...faultCodeMatches.map((code) => `fault_code:${code}`),
+    ...subsystemMatches.map((system) => `subsystem:${system}`),
+    ...componentMatches.map((part) => `component:${part}`),
+    ...vehicleMatches.map((value) => `vehicle:${value}`),
+    ...confirmedFixMatches.map((signal) => `confirmed_fix:${signal}`),
+    item.resolutionSuccess === true ? "resolution_success:true" : "",
+  ]).filter(Boolean);
 
-  let score = symptomMatches * 2.4 + faultCodeMatches * 2.8;
+  const score =
+    symptomMatches.length * 2.4 +
+    faultCodeMatches.length * 2.8 +
+    subsystemMatches.length * 1.5 +
+    componentMatches.length * 1.2 +
+    vehicleMatches.length * 0.8 +
+    confirmedFixMatches.length * 1.4 +
+    (item.resolutionSuccess === true ? 0.8 : 0) +
+    (item.confirmedFix ? 0.4 : 0);
 
-  if (context.notes && normalizeText(item.summary).includes(context.notes.split(" ")[0] ?? "")) {
-    score += 0.8;
-  }
-
-  if (context.input.vehicle?.make && item.summary.toLowerCase().includes(context.input.vehicle.make.toLowerCase())) {
-    score += 0.6;
-  }
-
-  return score;
+  return { score, matchedSignals };
 }
 
-export function buildDiagnosticContext(rawInput: DiagnosticInputRequest) {
+function scoreCaseSimilarity(context: DiagnosticContext, item: SimilarCase) {
+  const { score } = buildSimilarCaseMatchEvidence(context, item);
+
+  if (score > 0) {
+    return score;
+  }
+
+  if (context.notes && normalizeText(item.summary).includes(context.notes.split(" ")[0] ?? "")) {
+    return 0.8;
+  }
+
+  return 0;
+}
+
+function normalizeInterpretedSignals(interpretation: DiagnosticIntakeInterpretation | null) {
+  if (!interpretation) {
+    return {
+      symptoms: [] as string[],
+      domains: [] as string[],
+      text: "",
+    };
+  }
+
+  const symptoms = uniqueStrings([
+    ...interpretation.normalized_symptoms,
+    ...interpretation.primary_symptoms,
+    ...interpretation.secondary_symptoms,
+    ...interpretation.likely_failure_modes,
+    ...interpretation.candidate_cause_hints,
+    ...interpretation.risk_flags,
+    ...interpretation.evidence_keywords,
+  ].map((item) => normalizeText(item)));
+  const domains = uniqueStrings(interpretation.inferred_systems.map((item) => normalizeText(item)));
+  const text = uniqueStrings([
+    ...symptoms,
+    ...domains,
+    ...interpretation.maintenance_history_signals.map((item) => normalizeText(item)),
+    ...interpretation.repair_history_signals.map((item) => normalizeText(item)),
+    ...interpretation.recent_parts_signals.map((item) => normalizeText(item)),
+    ...interpretation.recurrence_signals.map((item) => normalizeText(item)),
+    ...interpretation.interpretation_rationale.map((item) => normalizeText(item)),
+  ])
+    .filter(Boolean)
+    .join(" ");
+
+  return { symptoms, domains, text };
+}
+
+export function buildDiagnosticContext(
+  rawInput: DiagnosticInputRequest,
+  llmIntakeInterpretation: DiagnosticIntakeInterpretation | null = null
+) {
   const input = DiagnosticInputSchema.parse(rawInput);
-  const normalizedSymptoms = uniqueStrings(input.symptoms.map((symptom) => normalizeText(symptom)));
+  const interpretedSignals = normalizeInterpretedSignals(llmIntakeInterpretation);
+  const normalizedSymptoms = uniqueStrings([
+    ...input.symptoms.map((symptom) => normalizeText(symptom)),
+    ...interpretedSignals.symptoms,
+  ]);
   const normalizedFaultCodes = uniqueStrings(input.faultCodes.map((code) => code.trim().toUpperCase()));
   const notes = normalizeText(input.driverNotes);
-  const historyText = buildHistoryText(input);
+  const historyText = uniqueStrings([buildHistoryText(input), interpretedSignals.text])
+    .filter(Boolean)
+    .join(" ");
+  const complaintDomains = uniqueStrings([
+    ...inferComplaintDomains(
+      `${normalizedSymptoms.join(" ")} ${notes} ${interpretedSignals.text}`.trim(),
+      normalizedFaultCodes
+    ),
+    ...interpretedSignals.domains,
+  ]);
 
   const allCases = [...BUILT_IN_CASES, ...input.similarCases];
   const baseContext = {
@@ -1425,10 +1649,9 @@ export function buildDiagnosticContext(rawInput: DiagnosticInputRequest) {
     historyText,
     similarCases: allCases,
     matchedSignals: 0,
-    complaintDomains: inferComplaintDomains(
-      `${normalizedSymptoms.join(" ")} ${notes}`.trim(),
-      normalizedFaultCodes
-    ),
+    complaintDomains,
+    llmIntakeInterpretation,
+    llmInterpretationText: interpretedSignals.text,
   } satisfies DiagnosticContext;
 
   return {
@@ -1451,12 +1674,37 @@ export function retrieveSimilarCases(context: DiagnosticContext, limit: number =
     .filter((item, index) => item.similarity > 0 || index < Math.min(5, rankedCases.length));
 }
 
+function buildSimilarConfirmedCaseEvidence(context: DiagnosticContext) {
+  return context.similarCases
+    .slice(0, DEFAULT_SIMILAR_CASE_LIMIT)
+    .map((item) => ({
+      id: item.id,
+      source: item.source,
+      cause_id: item.causeId,
+      cause_name: item.cause,
+      similarity: item.similarity,
+      matched_signals: buildSimilarCaseMatchEvidence(context, item).matchedSignals,
+      summary: item.summary,
+      confirmed_fix: item.confirmedFix ?? item.resolution ?? null,
+      resolution_success: item.resolutionSuccess ?? null,
+    }))
+    .filter((item, index) => item.similarity > 0 || index < 3)
+    .map((item) => similarConfirmedCaseEvidenceSchema.parse(item));
+}
+
 function evaluateCause(context: DiagnosticContext, cause: CauseDefinition) {
   let score = 1;
   let evidenceMatches = 0;
   const evidenceSummary: string[] = [];
-  const fullText = `${context.normalizedSymptoms.join(" ")} ${context.notes}`;
+  const fullText = `${context.normalizedSymptoms.join(" ")} ${context.notes} ${context.llmInterpretationText}`;
   const causeDomains = getCauseComplaintDomains(cause);
+  const hasCrossContaminationSignal = hasOilCoolantCrossContaminationSignal(context);
+
+  if (cause.id === "oil_coolant_cross_contamination" && hasCrossContaminationSignal) {
+    score += 8.5;
+    evidenceMatches += 3;
+    evidenceSummary.push("Oil/coolant cross-contamination was explicitly reported");
+  }
 
   cause.symptomKeywords.forEach((keyword) => {
     if (fullText.includes(keyword)) {
@@ -1489,6 +1737,35 @@ function evaluateCause(context: DiagnosticContext, cause: CauseDefinition) {
       evidenceSummary.push(`History references ${keyword}`);
     }
   });
+
+  const interpretation = context.llmIntakeInterpretation;
+  if (interpretation) {
+    const hints = [
+      ...interpretation.likely_failure_modes,
+      ...interpretation.candidate_cause_hints,
+      ...interpretation.risk_flags,
+      ...interpretation.evidence_keywords,
+    ].map((item) => normalizeText(item));
+    const causeText = normalizeText(`${cause.cause} ${cause.systems.join(" ")} ${cause.symptomKeywords.join(" ")}`);
+    const hintMatches = hints.filter(
+      (hint) => hint.length >= 3 && (causeText.includes(hint) || hint.split(" ").some((part) => part.length >= 5 && causeText.includes(part)))
+    );
+    const systemMatches = interpretation.inferred_systems
+      .map((item) => normalizeText(item))
+      .filter((system) => cause.systems.includes(system));
+
+    if (hintMatches.length > 0) {
+      score += Math.min(4.2, hintMatches.length * 1.4);
+      evidenceMatches += 1;
+      evidenceSummary.push(`LLM intake interpretation highlighted ${hintMatches.slice(0, 2).join(", ")}`);
+    }
+
+    if (systemMatches.length > 0) {
+      score += Math.min(2.4, systemMatches.length * 0.8);
+      evidenceMatches += 1;
+      evidenceSummary.push(`LLM intake interpretation mapped this into ${systemMatches.join(", ")}`);
+    }
+  }
 
   if (context.complaintDomains.length > 0) {
     const hasDomainOverlap = causeDomains.some((domain) => context.complaintDomains.includes(domain));
@@ -1557,6 +1834,13 @@ function evaluateCause(context: DiagnosticContext, cause: CauseDefinition) {
     evidenceMatches,
     evidenceSummary: uniqueStrings(evidenceSummary),
   };
+}
+
+function hasOilCoolantCrossContaminationSignal(context: DiagnosticContext) {
+  const fullText = `${context.normalizedSymptoms.join(" ")} ${context.notes} ${context.historyText}`.trim();
+  return /(?:oil.*coolant|coolant.*oil|milky oil|milky coolant|chocolate milk|cross contamination|contaminated coolant|oil film.*coolant|sludge.*coolant)/.test(
+    fullText
+  );
 }
 
 function calculateConfidence(scores: Array<{ score: number; evidenceMatches: number }>, clarificationCount: number) {
@@ -2032,8 +2316,12 @@ function getBaselineGuidance(causeDef: CauseDefinition | null, causeName: string
   };
 }
 
-function buildBaselineStage(rawInput: DiagnosticInputRequest, config: ReturnType<typeof getDiagnosticRuntimeConfig>): BaselineStage {
-  const context = buildDiagnosticContext(rawInput);
+function buildBaselineStage(
+  rawInput: DiagnosticInputRequest,
+  config: ReturnType<typeof getDiagnosticRuntimeConfig>,
+  intakeInterpretation: DiagnosticIntakeInterpretation | null = null
+): BaselineStage {
+  const context = buildDiagnosticContext(rawInput, intakeInterpretation);
   const evidence = buildEvidenceStage(context);
   const evaluated = CAUSE_LIBRARY.map((cause) => evaluateCause(context, cause));
   const totalScore = evaluated.reduce((sum, item) => sum + item.score, 0) || 1;
@@ -2130,10 +2418,18 @@ function buildEvidencePackage(
     systems: item.cause.systems,
     evidence_summary: item.evidenceSummary.slice(0, 3).map((reason) => truncate(reason, 120)),
   }));
+  const similarConfirmedCases = buildSimilarConfirmedCaseEvidence(context).map((item) => ({
+    ...item,
+    summary: truncate(item.summary, 180),
+    confirmed_fix: truncate(item.confirmed_fix, 180) || null,
+    matched_signals: item.matched_signals.slice(0, 6),
+  }));
 
   return {
     vehicle_id: context.input.vehicleId,
     fleet_id: context.input.fleetId ?? null,
+    confidence_threshold: config.confidenceThreshold,
+    llm_intake_interpretation: context.llmIntakeInterpretation,
     normalized_symptoms: evidence.normalizedSymptoms,
     raw_symptoms: context.input.symptoms.slice(0, 4).map((item) => truncate(item, 160)),
     primary_symptoms: evidence.primarySymptoms,
@@ -2181,6 +2477,7 @@ function buildEvidencePackage(
       suspected_unresolved_root_cause: evidence.suspectedUnresolvedRootCause,
     },
     cause_library_candidates: compactCandidates,
+    similar_confirmed_cases: similarConfirmedCases,
     rules_engine_baseline: baseline,
     baseline_ranked_candidates: compactBaselineRanking,
     confidence_signals: {
@@ -2487,6 +2784,59 @@ function enrichLlmRanking(
   );
 }
 
+function applyCriticalEvidenceRankingOverride(
+  stage: BaselineStage,
+  ranking: z.infer<typeof rankedCauseSchema>[]
+) {
+  if (!hasOilCoolantCrossContaminationSignal(stage.context)) {
+    return { ranking, applied: false, reason: null as string | null };
+  }
+
+  const crossContaminationCause = CAUSE_LIBRARY.find((cause) => cause.id === "oil_coolant_cross_contamination");
+  const baselineMatch = stage.ranked.find((item) => item.cause.id === "oil_coolant_cross_contamination");
+  if (!crossContaminationCause || !baselineMatch) {
+    return { ranking, applied: false, reason: null as string | null };
+  }
+
+  const existing = ranking.find((item) => item.cause_id === crossContaminationCause.id);
+  const promoted = rankedCauseSchema.parse({
+    ...(existing ?? toRankedCause(baselineMatch, stage.candidateUniverse, stage.evidence)),
+    cause_id: crossContaminationCause.id,
+    cause_name: crossContaminationCause.cause,
+    is_new_cause: false,
+    probability: Math.max(existing?.probability ?? 0, 82),
+    evidence_summary: uniqueStrings([
+      "Oil/coolant cross-contamination was explicitly reported",
+      "This pattern points to an internal leak path rather than a simple external coolant leak",
+      ...(existing?.evidence_summary ?? baselineMatch.evidenceSummary),
+    ]).slice(0, 5),
+    ranking_rationale: uniqueStrings([
+      "Oil in coolant or coolant in oil is a high-specificity internal engine/cooling-system failure signal",
+      "Generic thermostat, fan, or external coolant-leak causes should not outrank confirmed fluid cross-contamination",
+      ...(existing?.ranking_rationale ?? baselineMatch.evidenceSummary),
+    ]).slice(0, 5),
+    symptom_support_score: Math.max(existing?.symptom_support_score ?? 0, 96),
+    cause_library_fit_score: Math.max(existing?.cause_library_fit_score ?? 0, 95),
+  });
+
+  const remaining = ranking
+    .filter((item) => item.cause_id !== crossContaminationCause.id)
+    .map((item) => ({
+      ...item,
+      probability: Math.min(item.probability, 18),
+      ranking_rationale: uniqueStrings([
+        ...item.ranking_rationale,
+        "Demoted because explicit oil/coolant cross-contamination is more specific than this competing cause",
+      ]).slice(0, 5),
+    }));
+
+  return {
+    ranking: normalizeTopRankingProbabilities([promoted, ...remaining]).slice(0, Math.max(4, ranking.length)),
+    applied: true,
+    reason: "Deterministic critical-evidence correction promoted internal oil/coolant cross-contamination.",
+  };
+}
+
 function buildRankingDelta(
   baseline: z.infer<typeof ruleEngineBaselineSchema>,
   finalRanking: z.infer<typeof rankedCauseSchema>[]
@@ -2529,6 +2879,14 @@ function detectSafetyOverride(args: {
   proposedDriverAction: z.infer<typeof driverActionSchema>;
 }) {
   const complaintText = `${args.normalizedSymptoms.join(" ")} ${args.topCause}`.toLowerCase();
+  if (/(oil.*coolant|coolant.*oil|milky oil|milky coolant|chocolate milk|cross-contamination|cross contamination|contaminated coolant)/.test(complaintText)) {
+    return {
+      applied: true,
+      driverAction: "do_not_operate_until_repaired" as const,
+      reason: "Oil/coolant cross-contamination can rapidly damage bearings, cooling passages, and engine internals; do not operate until the leak path is isolated and repaired.",
+    };
+  }
+
   if (/(parking brake|brake|low air|air leak|roll|creep)/.test(complaintText) || args.systemsAffected.includes("brakes")) {
     return {
       applied: true,
@@ -2599,9 +2957,73 @@ function synthesizeClarifyingQuestion(stage: BaselineStage, ranking: z.infer<typ
   return `To separate ${topCause} from ${runnerUp} for ${primarySymptom.toLowerCase()}, does the symptom happen mainly at idle, under load, or all the time?`;
 }
 
+function buildGuaranteedClarifyingQuestion(
+  stage: BaselineStage,
+  ranking: z.infer<typeof rankedCauseSchema>[]
+) {
+  const synthesized = synthesizeClarifyingQuestion(stage, ranking).trim();
+  if (synthesized) {
+    return synthesized;
+  }
+
+  const primarySymptom =
+    stage.evidence.primarySymptoms[0] ?? stage.context.input.symptoms[0] ?? "the reported issue";
+  return `What operating condition makes ${primarySymptom.toLowerCase()} most repeatable right now: idle, load, braking, startup, or steady cruising?`;
+}
+
+function compactHistoryEntries(entries: Array<{ summary: string; status?: string; outcome?: string; occurredAt?: unknown }>) {
+  return entries.slice(0, 6).map((entry) => ({
+    summary: entry.summary,
+    status: entry.status ?? null,
+    outcome: entry.outcome ?? null,
+    occurredAt: entry.occurredAt ?? null,
+  }));
+}
+
+function buildIntakeInterpretationPackage(rawInput: DiagnosticInputRequest) {
+  const input = DiagnosticInputSchema.parse(rawInput);
+  return {
+    vehicle_id: input.vehicleId,
+    fleet_id: input.fleetId ?? null,
+    symptoms: input.symptoms,
+    fault_codes: input.faultCodes,
+    driver_notes: input.driverNotes ?? null,
+    operating_conditions: input.operatingConditions ?? null,
+    vehicle_context: {
+      vin: input.vehicle?.vin ?? null,
+      make: input.vehicle?.make ?? null,
+      model: input.vehicle?.model ?? null,
+      year: input.vehicle?.year ?? null,
+      engine: input.vehicle?.engine ?? null,
+      mileage: input.vehicle?.mileage ?? null,
+      engine_hours: input.vehicle?.engineHours ?? null,
+      status: input.vehicle?.status ?? null,
+      configuration: input.vehicle?.configuration ?? null,
+      trailer_configuration: input.vehicle?.trailerConfiguration ?? null,
+      brake_configuration: input.vehicle?.brakeConfiguration ?? null,
+      emissions_configuration: input.vehicle?.emissionsConfiguration ?? null,
+    },
+    repair_history: compactHistoryEntries(
+      input.issueHistory.repairHistory.length > 0
+        ? input.issueHistory.repairHistory
+        : input.issueHistory.recentRepairs
+    ),
+    maintenance_history: compactHistoryEntries(input.issueHistory.maintenanceHistory),
+    prior_diagnostics: compactHistoryEntries(input.issueHistory.priorDiagnostics),
+    prior_defects: compactHistoryEntries(input.issueHistory.priorDefects),
+    recent_inspections: compactHistoryEntries(input.issueHistory.recentInspections),
+    recent_parts_replaced: input.issueHistory.recentPartsReplaced,
+    clarification_history: input.clarificationHistory,
+  };
+}
+
 async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
   const config = getDiagnosticRuntimeConfig();
-  const baselineStage = buildBaselineStage(input, config);
+  const intakeInterpretation = await interpretDiagnosticIntakeWithLlm(
+    { intakePackage: buildIntakeInterpretationPackage(input) },
+    config
+  );
+  const baselineStage = buildBaselineStage(input, config, intakeInterpretation.parsed);
   const baselineRanking = baselineStage.ranked.slice(0, 4).map((item) =>
     toRankedCause(item, baselineStage.candidateUniverse, baselineStage.evidence)
   );
@@ -2610,15 +3032,17 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
     config
   );
 
-  const finalRanking =
+  let finalRanking =
     llmReview.status === "ok"
       ? enrichLlmRanking(baselineStage, llmReview.parsed.top_ranked_causes)
       : normalizeTopRankingProbabilities(baselineRanking);
+  const criticalEvidenceOverride = applyCriticalEvidenceRankingOverride(baselineStage, finalRanking);
+  finalRanking = criticalEvidenceOverride.ranking;
   const topCause = finalRanking[0];
   const topCauseDef = topCause ? getCauseDefinitionByName(topCause.cause_name) : null;
   const fallbackGuidance = getBaselineGuidance(topCauseDef ?? baselineStage.ranked[0]?.cause ?? null, topCause?.cause_name ?? baselineStage.baseline.possible_causes[0]?.cause ?? "Unknown cause");
   const llmRepairGuidance =
-    llmReview.status === "ok"
+    llmReview.status === "ok" && !criticalEvidenceOverride.applied
       ? llmReview.parsed.top_cause_repair_guidance
       : null;
   const systemsAffected = uniqueStrings([
@@ -2653,15 +3077,25 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
   );
   const confidenceScore =
     llmReview.status === "ok"
-      ? Math.round(llmReview.parsed.overall_confidence_score)
+      ? criticalEvidenceOverride.applied
+        ? Math.max(82, Math.round(llmReview.parsed.overall_confidence_score))
+        : Math.round(llmReview.parsed.overall_confidence_score)
       : fallbackConfidenceScore;
-  const fallbackQuestion = synthesizeClarifyingQuestion(baselineStage, finalRanking);
+  const shouldForceFallbackClarification =
+    llmReview.status !== "ok" && confidenceScore < config.confidenceThreshold;
+  const fallbackQuestion = shouldForceFallbackClarification
+    ? buildGuaranteedClarifyingQuestion(baselineStage, finalRanking)
+    : synthesizeClarifyingQuestion(baselineStage, finalRanking);
   const llmQuestion =
     llmReview.status === "ok" ? (llmReview.parsed.clarifying_question ?? "").trim() : "";
   const clarifyingQuestion = llmQuestion || fallbackQuestion;
   const nextAction =
-    llmReview.status === "ok"
-      ? llmReview.parsed.next_action === "ask_question" || (confidenceScore < config.confidenceThreshold && Boolean(clarifyingQuestion))
+    shouldForceFallbackClarification
+      ? "ask_question"
+      : llmReview.status === "ok"
+      ? confidenceScore >= config.confidenceThreshold
+        ? "proceed"
+        : llmReview.parsed.next_action === "ask_question" || Boolean(clarifyingQuestion)
         ? "ask_question"
         : "proceed"
       : confidenceScore < config.confidenceThreshold && Boolean(clarifyingQuestion)
@@ -2686,16 +3120,29 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
       : false);
   const rankingDelta = buildRankingDelta(baselineStage.baseline, finalRanking);
   const confidenceDelta = confidenceScore - baselineStage.baseline.confidence_score;
-  const llmAdjustments = buildLlmAdjustments(
-    baselineStage.baseline,
-    finalRanking,
-    llmReview.status,
-    llmReview.fallbackReason
-  );
+  const llmAdjustments = [
+    intakeInterpretation.status === "ok"
+      ? "LLM interpreted raw symptoms, codes, notes, operating conditions, and history before rule-engine scoring"
+      : `LLM intake interpretation unavailable before scoring: ${intakeInterpretation.fallbackReason}`,
+    ...buildLlmAdjustments(
+      baselineStage.baseline,
+      finalRanking,
+      llmReview.status,
+      llmReview.fallbackReason
+    ),
+    ...(criticalEvidenceOverride.applied && criticalEvidenceOverride.reason
+      ? [criticalEvidenceOverride.reason]
+      : []),
+  ];
   const confidenceRationale =
     llmReview.status === "ok"
       ? mergeSpecificBullets(
-          llmReview.parsed.confidence_rationale,
+          [
+            ...(criticalEvidenceOverride.applied
+              ? ["Confidence was anchored by the explicit oil/coolant cross-contamination report."]
+              : []),
+            ...llmReview.parsed.confidence_rationale,
+          ],
           buildConfidenceFallbackRationale(baselineStage, finalRanking, confidenceScore),
           4
         )
@@ -2703,6 +3150,10 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
           `Fallback to rule-engine baseline because ${llmReview.fallbackReason ?? "the OpenRouter review was unavailable"}`,
           `Confidence was reduced to ${fallbackConfidenceScore}% because the AI review layer did not return usable structured output`,
         ];
+  const combinedFallbackReasons = uniqueStrings([
+    intakeInterpretation.fallbackReason ?? "",
+    llmReview.fallbackReason ?? "",
+  ]).filter(Boolean);
   const recommendedTests =
     llmRepairGuidance?.recommended_tests?.length
       ? llmRepairGuidance.recommended_tests
@@ -2711,6 +3162,14 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
     llmRepairGuidance?.likely_replacement_parts?.length
       ? llmRepairGuidance.likely_replacement_parts
       : fallbackGuidance.likelyReplacementParts;
+  const inspectionRelatedParts =
+    llmRepairGuidance?.inspection_related_parts?.length
+      ? llmRepairGuidance.inspection_related_parts
+      : fallbackGuidance.inspectionRelatedParts;
+  const adjacentPartsToCheck =
+    llmRepairGuidance?.adjacent_parts_to_check?.length
+      ? llmRepairGuidance.adjacent_parts_to_check
+      : fallbackGuidance.adjacentPartsToCheck;
   const diagnosticVerificationLaborHours =
     llmRepairGuidance?.diagnostic_verification_labor_hours ?? fallbackGuidance.diagnosticVerificationLaborHours;
   const repairLaborHours = llmRepairGuidance?.repair_labor_hours ?? fallbackGuidance.repairLaborHours;
@@ -2737,7 +3196,9 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
         )
       : `Top risk is ${finalRiskLevel} based on ${topCause?.cause_name ?? "the leading cause"}.`;
   const safetyNote =
-    llmReview.status === "ok"
+    criticalEvidenceOverride.applied
+      ? "Do not run the engine with suspected oil/coolant cross-contamination; contaminated oil can rapidly damage bearings and contaminated coolant can damage cooling-system components."
+      : llmReview.status === "ok"
       ? llmReview.parsed.driver_action_recommendation.safety_note
       : "Use normal fleet safety escalation if symptoms worsen during inspection.";
   const complianceNote =
@@ -2747,13 +3208,17 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
         ? "Potential out-of-service exposure exists until repair verification is complete."
         : "No immediate compliance-critical finding is confirmed yet.";
   const monitoringInstructions =
-    llmReview.status === "ok"
+    criticalEvidenceOverride.applied
+      ? ["Do not continue driving or idling the engine", "Capture oil and coolant condition photos/samples for the shop", "Tow or service on-site after confirming contamination"]
+      : llmReview.status === "ok"
       ? llmReview.parsed.driver_action_recommendation.monitoring_instructions
       : nextAction === "ask_question"
         ? ["Capture the clarifying symptom detail before finalizing the repair path."]
         : ["Monitor temperature, pressure, and warning lamp behavior during verification."];
   const distanceOrTimeLimit =
-    llmReview.status === "ok"
+    criticalEvidenceOverride.applied
+      ? "Do not operate until repaired and fluids are flushed"
+      : llmReview.status === "ok"
       ? llmReview.parsed.driver_action_recommendation.distance_or_time_limit
       : null;
   const fallbackRecommendedFix = topCauseDef?.recommendedFix
@@ -2766,16 +3231,30 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
     llmRepairGuidance?.confirm_before_replacement ?? true,
     fallbackRecommendedFix
   );
+  const similarConfirmedCasesUsed = buildSimilarConfirmedCaseEvidence(baselineStage.context);
+  const overallEvidenceSummary = uniqueStrings([
+    ...(topCause?.evidence_summary ?? []),
+    ...similarConfirmedCasesUsed.slice(0, 2).map((item) =>
+      `Similar confirmed case ${item.id} supports ${item.cause_name} with signals ${item.matched_signals.join(", ") || "related repair evidence"}`
+    ),
+    baselineStage.context.llmIntakeInterpretation
+      ? "LLM intake interpretation normalized the raw report before internal evidence scoring"
+      : "",
+  ]).slice(0, 6);
 
   const parsed = TadisOutputSchema.parse({
     vehicle_id: String(baselineStage.context.input.vehicleId),
     systems_affected: systemsAffected.length > 0 ? systemsAffected : baselineStage.baseline.systems_affected,
     rule_engine_baseline: baselineStage.baseline,
+    internal_engine_baseline: baselineStage.baseline,
     final_llm_ranking: finalRanking,
+    llm_final_ranking: finalRanking,
+    ranked_likely_causes: finalRanking,
     possible_causes: possibleCauses,
     ranking_delta: rankingDelta,
     confidence_delta: confidenceDelta,
     llm_adjustments: llmAdjustments,
+    evidence_summary: overallEvidenceSummary,
     normalized_symptoms: baselineStage.evidence.normalizedSymptoms,
     primary_symptoms: baselineStage.evidence.primarySymptoms,
     secondary_symptoms: baselineStage.evidence.secondarySymptoms,
@@ -2824,7 +3303,14 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
     next_action: nextAction,
     clarifying_question: nextAction === "ask_question" ? clarifyingQuestion : "",
     question_rationale:
-      llmReview.status === "ok" ? llmReview.parsed.question_rationale : nextAction === "ask_question" ? "Baseline clarification path used because the LLM review did not supply a valid question." : null,
+      llmReview.status === "ok"
+        ? llmReview.parsed.question_rationale ??
+          (nextAction === "ask_question"
+            ? "Confidence is below the configured threshold, so this question is required before finalizing the diagnosis."
+            : null)
+        : nextAction === "ask_question"
+          ? "Baseline clarification path used because the LLM review did not supply a valid question."
+          : null,
     missing_evidence:
       llmReview.status === "ok"
         ? uniqueStrings([...llmReview.parsed.missing_evidence, ...baselineStage.evidence.vehicleDataGaps])
@@ -2835,6 +3321,7 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
         : confidenceScore < config.confidenceThreshold
           ? ["Baseline confidence remained below the configured threshold"]
           : [],
+    similar_confirmed_cases_used: similarConfirmedCasesUsed,
     recommended_tests: recommendedTests,
     recommended_fix: recommendedFix,
     risk_level: finalRiskLevel,
@@ -2843,6 +3330,9 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
     top_most_likely_cause:
       llmRepairGuidance?.top_most_likely_cause ?? topCause?.cause_name ?? baselineStage.baseline.possible_causes[0]?.cause ?? "Unknown cause",
     possible_replacement_parts: possibleReplacementParts,
+    likely_replacement_parts: possibleReplacementParts,
+    inspection_related_parts: inspectionRelatedParts,
+    adjacent_parts_to_check: adjacentPartsToCheck,
     confirm_before_replacement: llmRepairGuidance?.confirm_before_replacement ?? true,
     diagnostic_verification_labor_hours: diagnosticVerificationLaborHours,
     repair_labor_hours: repairLaborHours,
@@ -2859,8 +3349,8 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
     llm_status: llmReview.status,
     llm_provider: llmReview.provider,
     llm_model: llmReview.model,
-    fallback_used: llmReview.fallbackUsed,
-    fallback_reason: llmReview.fallbackReason,
+    fallback_used: intakeInterpretation.fallbackUsed || llmReview.fallbackUsed,
+    fallback_reason: combinedFallbackReasons.length > 0 ? combinedFallbackReasons.join("; ") : null,
     safety_override_applied: safetyOverride.applied,
     safety_override_reason: safetyOverride.reason,
     review_queue_record_ids: [],
