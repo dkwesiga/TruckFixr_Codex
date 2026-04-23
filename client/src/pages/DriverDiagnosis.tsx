@@ -523,9 +523,34 @@ function DriverDiagnosisContent() {
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Confidence score</p>
                     <p className="mt-1 text-2xl font-bold text-slate-900">{diagnosis.confidence_score}%</p>
                   </div>
+                  {diagnosis.confidence_rationale?.length ? (
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Confidence rationale</p>
+                      <div className="mt-2 space-y-2">
+                        {diagnosis.confidence_rationale.map((item) => (
+                          <div key={item} className="rounded-lg bg-slate-100 p-3 text-sm text-slate-700">
+                            {item}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Compliance impact</p>
                     <p className="mt-1 text-sm font-semibold text-slate-900">{diagnosis.compliance_impact}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Top most likely cause</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">{diagnosis.top_most_likely_cause}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Driver action</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">{diagnosis.driver_action}</p>
+                    <p className="mt-2 text-sm text-slate-700">{diagnosis.driver_action_reason}</p>
+                    <p className="mt-2 text-sm text-slate-600">{diagnosis.risk_summary}</p>
+                    {diagnosis.distance_or_time_limit ? (
+                      <p className="mt-2 text-sm text-slate-600">Limit: {diagnosis.distance_or_time_limit}</p>
+                    ) : null}
                   </div>
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Systems affected</p>
@@ -547,6 +572,42 @@ function DriverDiagnosisContent() {
                     </div>
                   </div>
                   <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Likely replacement parts</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {diagnosis.possible_replacement_parts.length > 0 ? (
+                        diagnosis.possible_replacement_parts.map((item) => (
+                          <span key={item} className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-700">
+                            {item}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-sm text-slate-500">No specific replacement parts suggested yet.</span>
+                      )}
+                    </div>
+                    <p className="mt-2 text-sm text-slate-600">
+                      {diagnosis.confirm_before_replacement
+                        ? "Confirm the fault before replacing parts."
+                        : "Replacement can proceed without additional confirmation."}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Labor estimate</p>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                      <div className="rounded-lg bg-slate-100 p-3 text-sm text-slate-700">
+                        <p className="font-medium text-slate-900">Verification</p>
+                        <p>{diagnosis.diagnostic_verification_labor_hours.min}-{diagnosis.diagnostic_verification_labor_hours.max} hrs</p>
+                      </div>
+                      <div className="rounded-lg bg-slate-100 p-3 text-sm text-slate-700">
+                        <p className="font-medium text-slate-900">Repair</p>
+                        <p>{diagnosis.repair_labor_hours.min}-{diagnosis.repair_labor_hours.max} hrs</p>
+                      </div>
+                      <div className="rounded-lg bg-slate-100 p-3 text-sm text-slate-700">
+                        <p className="font-medium text-slate-900">Total</p>
+                        <p>{diagnosis.total_estimated_labor_hours.min}-{diagnosis.total_estimated_labor_hours.max} hrs</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Possible causes</p>
                     <div className="mt-2 space-y-2">
                       {diagnosis.possible_causes.map((item) => (
@@ -559,6 +620,61 @@ function DriverDiagnosisContent() {
                       ))}
                     </div>
                   </div>
+                  {diagnosis.final_llm_ranking?.length ? (
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Evidence by cause</p>
+                      <div className="mt-2 space-y-3">
+                        {diagnosis.final_llm_ranking.slice(0, 3).map((item) => (
+                          <div key={`${item.cause_id ?? item.cause_name}-${item.probability}`} className="rounded-xl border border-slate-200 bg-white p-4">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-semibold text-slate-900">{item.cause_name}</p>
+                                <p className="mt-1 text-xs uppercase tracking-wide text-slate-500">
+                                  {Math.round(item.probability)}% likelihood
+                                  {item.is_new_cause ? " | New AI-proposed cause" : ""}
+                                </p>
+                              </div>
+                              <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
+                                Fit {Math.round(item.cause_library_fit_score)}%
+                              </div>
+                            </div>
+                            {item.evidence_summary?.length ? (
+                              <div className="mt-3">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Evidence</p>
+                                <div className="mt-2 space-y-2">
+                                  {item.evidence_summary.map((reason) => (
+                                    <div key={reason} className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
+                                      {reason}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                            {item.ranking_rationale?.length ? (
+                              <div className="mt-3">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Why it ranks here</p>
+                                <div className="mt-2 space-y-2">
+                                  {item.ranking_rationale.map((reason) => (
+                                    <div key={reason} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                                      {reason}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  {diagnosis.fallback_used || diagnosis.llm_status !== "ok" ? (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">AI fallback used</p>
+                      <p className="mt-2 text-sm text-slate-700">
+                        {diagnosis.fallback_reason || "The AI review layer was unavailable, so the rules-engine baseline was used."}
+                      </p>
+                    </div>
+                  ) : null}
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Maintenance recommendations</p>
                     <div className="mt-2 space-y-2">
@@ -580,6 +696,12 @@ function DriverDiagnosisContent() {
                           </div>
                         ))}
                       </div>
+                    </div>
+                  ) : null}
+                  {diagnosis.next_action === "ask_question" && diagnosis.question_rationale ? (
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Why this question matters</p>
+                      <p className="mt-2 text-sm text-slate-700">{diagnosis.question_rationale}</p>
                     </div>
                   ) : null}
                 </>

@@ -69,7 +69,7 @@ describe("buildInspectionReport", () => {
       canOperate: true,
     });
 
-    expect(report.fileName).toBe("inspection-101.pdf");
+    expect(report.fileName).toBe("canada-daily-inspection-101.pdf");
     expect(report.summary.complianceStatus).toBe("yellow");
     expect(report.failedItems).toHaveLength(1);
     expect(report.pdfBase64.length).toBeGreaterThan(50);

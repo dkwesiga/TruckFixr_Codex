@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import superjson from "superjson";
 import App from "./App";
 import { getLoginUrl } from "./const";
+import { getApiUrl } from "./lib/api";
 import { initializeAnalytics } from "./lib/analytics";
 import "./index.css";
 
@@ -64,7 +65,7 @@ try {
   const trpcClient = trpc.createClient({
     links: [
       httpBatchLink({
-        url: "/api/trpc",
+        url: getApiUrl("/api/trpc"),
         transformer: superjson,
         fetch(input, init) {
           return globalThis.fetch(input, {

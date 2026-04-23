@@ -235,6 +235,16 @@ async function ensureAuthSchema(pool: Pool) {
     await pool.query(`
       DO $$
       BEGIN
+        CREATE TYPE maintenance_type AS ENUM ('repair', 'preventive', 'inspection');
+      EXCEPTION
+        WHEN duplicate_object THEN NULL;
+      END
+      $$;
+    `);
+
+    await pool.query(`
+      DO $$
+      BEGIN
         CREATE TYPE compliance_status AS ENUM ('green', 'yellow', 'red');
       EXCEPTION
         WHEN duplicate_object THEN NULL;
@@ -1146,6 +1156,198 @@ async function ensureAuthSchema(pool: Pool) {
     await pool.query(`
       ALTER TABLE "defects"
       ADD COLUMN IF NOT EXISTS "complianceStatus" compliance_status NOT NULL DEFAULT 'green';
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "activityLogs" (
+        "id" serial PRIMARY KEY,
+        "fleetId" integer NOT NULL,
+        "userId" integer NOT NULL,
+        "action" varchar(255) NOT NULL,
+        "entityType" varchar(100),
+        "entityId" integer,
+        "details" jsonb,
+        "createdAt" timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    await pool.query(`
+      ALTER TABLE "activityLogs"
+      ADD COLUMN IF NOT EXISTS "fleetId" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "activityLogs"
+      ADD COLUMN IF NOT EXISTS "userId" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "activityLogs"
+      ADD COLUMN IF NOT EXISTS "action" varchar(255);
+    `);
+
+    await pool.query(`
+      ALTER TABLE "activityLogs"
+      ADD COLUMN IF NOT EXISTS "entityType" varchar(100);
+    `);
+
+    await pool.query(`
+      ALTER TABLE "activityLogs"
+      ADD COLUMN IF NOT EXISTS "entityId" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "activityLogs"
+      ADD COLUMN IF NOT EXISTS "details" jsonb;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "activityLogs"
+      ADD COLUMN IF NOT EXISTS "createdAt" timestamp NOT NULL DEFAULT now();
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "maintenanceLogs" (
+        "id" serial PRIMARY KEY,
+        "fleetId" integer NOT NULL,
+        "vehicleId" integer NOT NULL,
+        "defectId" integer,
+        "type" maintenance_type NOT NULL,
+        "description" text,
+        "cost" numeric(10, 2),
+        "completedAt" timestamp,
+        "createdAt" timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    await pool.query(`
+      ALTER TABLE "maintenanceLogs"
+      ADD COLUMN IF NOT EXISTS "fleetId" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "maintenanceLogs"
+      ADD COLUMN IF NOT EXISTS "vehicleId" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "maintenanceLogs"
+      ADD COLUMN IF NOT EXISTS "defectId" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "maintenanceLogs"
+      ADD COLUMN IF NOT EXISTS "type" maintenance_type;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "maintenanceLogs"
+      ADD COLUMN IF NOT EXISTS "description" text;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "maintenanceLogs"
+      ADD COLUMN IF NOT EXISTS "cost" numeric(10, 2);
+    `);
+
+    await pool.query(`
+      ALTER TABLE "maintenanceLogs"
+      ADD COLUMN IF NOT EXISTS "completedAt" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "maintenanceLogs"
+      ADD COLUMN IF NOT EXISTS "createdAt" timestamp NOT NULL DEFAULT now();
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "diagnosticReviewQueue" (
+        "id" serial PRIMARY KEY,
+        "fleetId" integer,
+        "vehicleId" integer NOT NULL,
+        "reviewType" varchar(64) NOT NULL,
+        "status" varchar(64) NOT NULL DEFAULT 'review_pending',
+        "summary" text,
+        "baselineTopCause" varchar(255),
+        "finalTopCause" varchar(255),
+        "confidenceDelta" numeric(8, 2),
+        "evidenceSnapshot" jsonb,
+        "baselineRanking" jsonb,
+        "finalRanking" jsonb,
+        "rationale" jsonb,
+        "createdAt" timestamp NOT NULL DEFAULT now(),
+        "updatedAt" timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    await pool.query(`
+      ALTER TABLE "diagnosticReviewQueue"
+      ADD COLUMN IF NOT EXISTS "fleetId" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "diagnosticReviewQueue"
+      ADD COLUMN IF NOT EXISTS "vehicleId" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "diagnosticReviewQueue"
+      ADD COLUMN IF NOT EXISTS "reviewType" varchar(64);
+    `);
+
+    await pool.query(`
+      ALTER TABLE "diagnosticReviewQueue"
+      ADD COLUMN IF NOT EXISTS "status" varchar(64) NOT NULL DEFAULT 'review_pending';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "diagnosticReviewQueue"
+      ADD COLUMN IF NOT EXISTS "summary" text;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "diagnosticReviewQueue"
+      ADD COLUMN IF NOT EXISTS "baselineTopCause" varchar(255);
+    `);
+
+    await pool.query(`
+      ALTER TABLE "diagnosticReviewQueue"
+      ADD COLUMN IF NOT EXISTS "finalTopCause" varchar(255);
+    `);
+
+    await pool.query(`
+      ALTER TABLE "diagnosticReviewQueue"
+      ADD COLUMN IF NOT EXISTS "confidenceDelta" numeric(8, 2);
+    `);
+
+    await pool.query(`
+      ALTER TABLE "diagnosticReviewQueue"
+      ADD COLUMN IF NOT EXISTS "evidenceSnapshot" jsonb;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "diagnosticReviewQueue"
+      ADD COLUMN IF NOT EXISTS "baselineRanking" jsonb;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "diagnosticReviewQueue"
+      ADD COLUMN IF NOT EXISTS "finalRanking" jsonb;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "diagnosticReviewQueue"
+      ADD COLUMN IF NOT EXISTS "rationale" jsonb;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "diagnosticReviewQueue"
+      ADD COLUMN IF NOT EXISTS "createdAt" timestamp NOT NULL DEFAULT now();
+    `);
+
+    await pool.query(`
+      ALTER TABLE "diagnosticReviewQueue"
+      ADD COLUMN IF NOT EXISTS "updatedAt" timestamp NOT NULL DEFAULT now();
     `);
 
     await pool.query(`

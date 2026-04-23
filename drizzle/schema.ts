@@ -340,3 +340,21 @@ export const aiUsageLogs = pgTable("aiUsageLogs", {
   metadata: jsonb("metadata"),
   createdAt: dateTimestamp().defaultNow().notNull(),
 });
+
+export const diagnosticReviewQueue = pgTable("diagnosticReviewQueue", {
+  id: serial("id").primaryKey(),
+  fleetId: integer("fleetId"),
+  vehicleId: integer("vehicleId").notNull(),
+  reviewType: varchar("reviewType", { length: 64 }).notNull(),
+  status: varchar("status", { length: 64 }).default("review_pending").notNull(),
+  summary: text("summary"),
+  baselineTopCause: varchar("baselineTopCause", { length: 255 }),
+  finalTopCause: varchar("finalTopCause", { length: 255 }),
+  confidenceDelta: numeric("confidenceDelta", { precision: 8, scale: 2 }),
+  evidenceSnapshot: jsonb("evidenceSnapshot"),
+  baselineRanking: jsonb("baselineRanking"),
+  finalRanking: jsonb("finalRanking"),
+  rationale: jsonb("rationale"),
+  createdAt: dateTimestamp().defaultNow().notNull(),
+  updatedAt: dateTimestamp().defaultNow().notNull(),
+});

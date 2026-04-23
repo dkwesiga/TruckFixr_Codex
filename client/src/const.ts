@@ -1,4 +1,5 @@
 export { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import { getApiBaseUrl } from "./lib/api";
 
 // Generate login URL at runtime so redirect URI reflects the current origin.
 export const getLoginUrl = () => {
@@ -8,7 +9,7 @@ export const getLoginUrl = () => {
     return "/auth/email";
   }
 
-  const redirectUri = `${window.location.origin}/api/oauth/callback`;
+  const redirectUri = `${getApiBaseUrl()}/api/oauth/callback`;
 
   if (!oauthPortalUrl || !appId) {
     return "/auth/email";

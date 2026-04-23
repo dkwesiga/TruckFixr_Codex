@@ -200,4 +200,80 @@ describe("aiOrchestrator", () => {
       success: true,
     });
   });
+
+  it("honors an explicit empty fallback list and does not spill into other configured providers", async () => {
+    let invocationCount = 0;
+
+    await expect(
+      invokeWithOrchestration(
+        {
+          preferredProvider: "openrouter",
+          fallbackProviders: [],
+          messages: [{ role: "user", content: "Return diagnostic JSON." }],
+          responseFormat: { type: "json_object" },
+          maxTokens: 120,
+        },
+        {
+          fetcher: async (url) => {
+            invocationCount += 1;
+            expect(String(url)).toContain("openrouter.ai/api/v1/chat/completions");
+            throw new Error("AI request timed out");
+          },
+        }
+      )
+    ).rejects.toThrow(/openrouter/i);
+
+    expect(invocationCount).toBe(1);
+  });
+
+  it("uses provider-native fallback models when the preferred provider model should not carry across", async () => {
+    let openRouterCalled = false;
+
+    const result = await invokeWithOrchestration(
+      {
+        preferredProvider: "openrouter",
+        fallbackProviders: ["gemini"],
+        model: "openrouter/free",
+        messages: [{ role: "user", content: "Return diagnostic JSON." }],
+        responseFormat: { type: "json_object" },
+        maxTokens: 120,
+      },
+      {
+        fetcher: async (url) => {
+          const urlString = String(url);
+
+          if (urlString.includes("openrouter.ai")) {
+            openRouterCalled = true;
+            throw new Error("AI request timed out");
+          }
+
+          expect(openRouterCalled).toBe(true);
+          expect(urlString).toContain("generativelanguage.googleapis.com");
+          expect(urlString).toContain("models/gemini-2.5-flash:generateContent");
+          expect(urlString).not.toContain("openrouter/free");
+
+          return createJsonResponse({
+            responseId: "gemini-fallback-response",
+            modelVersion: "gemini-2.5-flash",
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: "Provider-native fallback succeeded" }],
+                },
+                finishReason: "STOP",
+              },
+            ],
+            usageMetadata: {
+              promptTokenCount: 80,
+              candidatesTokenCount: 30,
+              totalTokenCount: 110,
+            },
+          });
+        },
+      }
+    );
+
+    expect(result.choices[0]?.message.content).toBe("Provider-native fallback succeeded");
+    expect(result.orchestration?.provider).toBe("gemini");
+  });
 });

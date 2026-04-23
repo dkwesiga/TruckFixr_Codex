@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import { trackEvent, trackInspectionStarted, trackVehicleAdded } from "@/lib/analytics";
 import { saveLastDriverVehicleContext } from "@/lib/driverVehicleContext";
+import { getApiUrl } from "@/lib/api";
 import { createTemporaryDriverVehicleId } from "@/lib/driverVehicles";
 import { formatDistanceKm, getFallbackUnitNumber, getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
 import { toast } from "sonner";
@@ -160,7 +161,7 @@ function DriverDashboardContent() {
     setIsDecodingVin(true);
 
     try {
-      const response = await fetch(`/api/vehicles/decode-vin/${encodeURIComponent(vin)}`);
+      const response = await fetch(getApiUrl(`/api/vehicles/decode-vin/${encodeURIComponent(vin)}`));
       const payload = await response.json();
 
       if (!response.ok) {

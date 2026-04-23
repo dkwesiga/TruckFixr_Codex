@@ -74,6 +74,7 @@ export type OrchestratorInput = {
   tools?: Tool[];
   toolChoice?: ToolChoice;
   maxTokens?: number;
+  temperature?: number;
   responseFormat?: ResponseFormat;
   preferredProvider?: AiProvider;
   fallbackProviders?: AiProvider[];
@@ -266,13 +267,16 @@ function getProviderOrder(input: OrchestratorInput) {
     );
   }
 
-  const requested = [
+  const explicitlyRequested = [
     input.preferredProvider,
     ...(input.fallbackProviders ?? []),
-    ...configuredProviders,
   ].filter((value): value is AiProvider => Boolean(value));
 
-  return requested.filter((provider, index) => requested.indexOf(provider) === index);
+  if (input.preferredProvider || input.fallbackProviders) {
+    return explicitlyRequested.filter((provider, index) => explicitlyRequested.indexOf(provider) === index);
+  }
+
+  return configuredProviders;
 }
 
 function getPriceCard(provider: AiProvider) {
@@ -372,6 +376,10 @@ function buildOpenAiPayload(input: OrchestratorInput, model: string) {
     payload.max_tokens = input.maxTokens;
   }
 
+  if (typeof input.temperature === "number") {
+    payload.temperature = input.temperature;
+  }
+
   if (input.tools?.length) {
     payload.tools = input.tools;
     const toolChoice = normalizeToolChoice(input.toolChoice, input.tools);
@@ -416,6 +424,7 @@ function buildAnthropicPayload(input: OrchestratorInput, model: string) {
   return {
     model: input.model || model,
     max_tokens: input.maxTokens ?? 1024,
+    ...(typeof input.temperature === "number" ? { temperature: input.temperature } : {}),
     ...(systemMessages ? { system: systemMessages } : {}),
     messages,
   };
@@ -450,6 +459,7 @@ function buildGeminiPayload(input: OrchestratorInput) {
     contents,
     generationConfig: {
       ...(input.maxTokens ? { maxOutputTokens: input.maxTokens } : {}),
+      ...(typeof input.temperature === "number" ? { temperature: input.temperature } : {}),
       ...(input.responseFormat?.type === "json_object" || input.responseFormat?.type === "json_schema"
         ? { responseMimeType: "application/json" }
         : {}),
@@ -850,7 +860,11 @@ export async function invokeWithOrchestration(
   for (const provider of providers) {
     const incompatibility = validateProviderCompatibility(provider, input);
     const config = resolveProviderConfig(provider);
-    const model = input.model || config.model;
+    const providerSpecificInput =
+      input.model && input.preferredProvider && provider !== input.preferredProvider
+        ? { ...input, model: undefined }
+        : input;
+    const model = providerSpecificInput.model || config.model;
 
     if (incompatibility) {
       const skippedAttempt: ProviderAttempt = {
@@ -870,14 +884,14 @@ export async function invokeWithOrchestration(
     try {
       const response =
         provider === "groq"
-          ? await invokeGroq(input, config, fetcher, timeoutMs)
+          ? await invokeGroq(providerSpecificInput, config, fetcher, timeoutMs)
           : provider === "openrouter"
-          ? await invokeOpenRouter(input, config, fetcher, timeoutMs)
+          ? await invokeOpenRouter(providerSpecificInput, config, fetcher, timeoutMs)
           : provider === "openai"
-          ? await invokeOpenAi(input, config, fetcher, timeoutMs)
+          ? await invokeOpenAi(providerSpecificInput, config, fetcher, timeoutMs)
           : provider === "anthropic"
-            ? await invokeAnthropic(input, config, fetcher, timeoutMs)
-            : await invokeGemini(input, config, fetcher, timeoutMs);
+            ? await invokeAnthropic(providerSpecificInput, config, fetcher, timeoutMs)
+            : await invokeGemini(providerSpecificInput, config, fetcher, timeoutMs);
 
       const latencyMs = Date.now() - startedAt;
       const estimatedCostUsd = estimateCostUsd(provider, response.usage);

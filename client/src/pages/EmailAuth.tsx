@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { trpc } from "@/lib/trpc";
+import { getApiUrl } from "@/lib/api";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { trackSignup, trackLogin } from "@/lib/analytics";
@@ -94,7 +95,7 @@ export default function EmailAuth() {
 
   // Use fetch for API endpoints that set cookies
   const handleSignup = async (email: string, password: string, name: string) => {
-    const response = await fetch('/api/email/signup', {
+    const response = await fetch(getApiUrl('/api/email/signup'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -108,7 +109,7 @@ export default function EmailAuth() {
   };
 
   const handleSignin = async (email: string, password: string) => {
-    const response = await fetch('/api/email/signin', {
+    const response = await fetch(getApiUrl('/api/email/signin'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -122,7 +123,7 @@ export default function EmailAuth() {
   };
 
   const handleForgotPassword = async (email: string) => {
-    const response = await fetch('/api/email/forgot-password', {
+    const response = await fetch(getApiUrl('/api/email/forgot-password'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email }),
@@ -135,7 +136,7 @@ export default function EmailAuth() {
   };
 
   const handleResetPassword = async (accessToken: string, password: string) => {
-    const response = await fetch('/api/email/reset-password', {
+    const response = await fetch(getApiUrl('/api/email/reset-password'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ accessToken, password }),
@@ -545,7 +546,7 @@ export default function EmailAuth() {
                   toast.error("Google sign-in is not configured for this environment");
                   return;
                 }
-                window.location.href = "/api/oauth/login";
+                window.location.href = getApiUrl("/api/oauth/login");
               }}
             >
               {isGoogleAuthEnabled ? "Google" : "Google Unavailable"}

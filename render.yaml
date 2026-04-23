@@ -1,32 +1,64 @@
 services:
   - type: web
-    name: truckfixr-fleet-ai
-    runtime: node
-    plan: free
+    name: truckfixr-web
+    runtime: static
+    rootDir: .
     autoDeploy: true
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
-    startCommand: corepack enable && pnpm start
-    healthCheckPath: /
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build:client
+    staticPublishPath: dist/public
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_BASE_URL
+        sync: false
+      - key: VITE_APP_ID
+        value: truckfixr-render
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: VITE_OAUTH_PORTAL_URL
+        sync: false
+      - key: VITE_OAUTH_SERVER_URL
+        sync: false
+      - key: VITE_POSTHOG_API_KEY
+        sync: false
+      - key: VITE_POSTHOG_API_HOST
+        sync: false
+      - key: VITE_ANALYTICS_ENDPOINT
+        sync: false
+      - key: VITE_ANALYTICS_WEBSITE_ID
+        sync: false
+      - key: VITE_FRONTEND_FORGE_API_URL
+        sync: false
+      - key: VITE_FRONTEND_FORGE_API_KEY
+        sync: false
+
+  - type: web
+    name: truckfixr-api
+    runtime: node
+    plan: starter
+    rootDir: .
+    autoDeploy: true
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build:server
+    startCommand: corepack enable && pnpm start:server
+    healthCheckPath: /healthz
     envVars:
       - key: NODE_ENV
         value: production
       - key: VITE_APP_ID
         value: truckfixr-render
-      - key: JWT_SECRET
-        generateValue: true
       - key: APP_BASE_URL
         sync: false
+      - key: JWT_SECRET
+        generateValue: true
       - key: DATABASE_URL
-        sync: false
-      - key: DIRECT_DATABASE_URL
         sync: false
       - key: SUPABASE_URL
         sync: false
-      - key: VITE_SUPABASE_URL
-        sync: false
       - key: SUPABASE_ANON_KEY
-        sync: false
-      - key: VITE_SUPABASE_ANON_KEY
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
@@ -53,7 +85,9 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_MODEL
-        value: openrouter/free
+        value: xiaomi/mimo-v2-flash
+      - key: OPENROUTER_FALLBACK_MODEL
+        sync: false
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_MODEL
@@ -66,11 +100,23 @@ services:
         sync: false
       - key: GEMINI_MODEL
         sync: false
+      - key: DIAGNOSTIC_CONFIDENCE_THRESHOLD
+        value: "75"
+      - key: DIAGNOSTIC_NEW_CAUSE_MIN_CONFIDENCE
+        value: "62"
+      - key: DIAGNOSTIC_TIMEOUT_MS
+        value: "35000"
       - key: STRIPE_SECRET_KEY
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
       - key: STRIPE_PRICE_PRO_MONTHLY
         sync: false
+      - key: STRIPE_PRICE_PRO_ANNUAL
+        sync: false
       - key: STRIPE_PRICE_FLEET_MONTHLY
+        sync: false
+      - key: ADMIN_EMAILS
+        sync: false
+      - key: SALES_NOTIFICATION_EMAIL
         sync: false

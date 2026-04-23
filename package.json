@@ -5,8 +5,11 @@
   "license": "MIT",
   "scripts": {
     "dev": "cross-env NODE_ENV=development tsx watch server/_core/index.ts",
-    "build": "cross-env NODE_ENV=production vite build && esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
-    "start": "cross-env NODE_ENV=production node dist/index.js",
+    "build:client": "cross-env NODE_ENV=production vite build",
+    "build:server": "cross-env NODE_ENV=production esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
+    "build": "pnpm build:client && pnpm build:server",
+    "start:server": "cross-env NODE_ENV=production node dist/index.js",
+    "start": "pnpm start:server",
     "check": "tsc --noEmit",
     "format": "prettier --write .",
     "test": "vitest run",

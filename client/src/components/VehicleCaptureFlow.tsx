@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { trpc } from "@/lib/trpc";
+import { getApiUrl } from "@/lib/api";
 import { saveLastDriverVehicleContext } from "@/lib/driverVehicleContext";
 import { loadDriverVehicles, saveDriverVehicles, type DriverVehicleRecord } from "@/lib/driverVehicles";
 import { getFallbackUnitNumber, getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
@@ -157,7 +158,7 @@ export default function VehicleCaptureFlow({
       setImagePreview(imageDataUrl);
       setStep("ocr_processing");
 
-      const response = await fetch("/api/vehicles/extract-vin", {
+      const response = await fetch(getApiUrl("/api/vehicles/extract-vin"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageDataUrl }),
@@ -195,7 +196,7 @@ export default function VehicleCaptureFlow({
     setStep("decoding");
 
     try {
-      const response = await fetch(`/api/vehicles/decode-vin/${encodeURIComponent(vin)}`);
+      const response = await fetch(getApiUrl(`/api/vehicles/decode-vin/${encodeURIComponent(vin)}`));
       const payload = await response.json().catch(() => ({}));
 
       setVehicleForm((current) => ({

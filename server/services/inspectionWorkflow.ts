@@ -334,7 +334,7 @@ export async function createInspectionReportDelivery(args: {
   }
 
   const fallbackReport = {
-    fileName: reportData?.fileName ?? `inspection-${args.inspectionId}.pdf`,
+    fileName: reportData?.fileName ?? `canada-daily-inspection-${args.inspectionId}.pdf`,
     mimeType: "application/pdf" as const,
     generatedAt: args.prepared.submittedAt,
     ...(reportData?.pdfBase64 ? { pdfBase64: reportData.pdfBase64 } : {}),

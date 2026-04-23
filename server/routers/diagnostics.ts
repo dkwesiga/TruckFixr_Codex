@@ -32,6 +32,37 @@ const fallbackDiagnosticVehicles = {
   },
 };
 
+const recentPartKeywords = [
+  "hose",
+  "radiator",
+  "thermostat",
+  "fan clutch",
+  "brake chamber",
+  "parking brake valve",
+  "brake pad",
+  "rotor",
+  "drum",
+  "abs sensor",
+  "tone ring",
+  "air line",
+  "tie rod",
+  "drag link",
+  "tire",
+  "wheel",
+  "hub",
+  "bearing",
+  "fuel filter",
+  "injector",
+  "battery cable",
+  "battery",
+  "alternator",
+];
+
+function extractRecentParts(description: string | null | undefined) {
+  const normalized = description?.toLowerCase() ?? "";
+  return recentPartKeywords.filter((part) => normalized.includes(part));
+}
+
 function getVehicleLifecycleStatus(complianceStatus: "green" | "yellow" | "red") {
   return complianceStatus === "red" ? "maintenance" : "active";
 }
@@ -234,6 +265,9 @@ async function loadDiagnosticSupportData(fleetId: number, vehicleId: number) {
       priorDefects: [],
       recentInspections: [],
       recentRepairs: [],
+      repairHistory: [],
+      maintenanceHistory: [],
+      recentPartsReplaced: [],
       complianceHistory: [],
       similarCases: [],
     };
@@ -314,6 +348,45 @@ async function loadDiagnosticSupportData(fleetId: number, vehicleId: number) {
     occurredAt: row.completedAt?.toISOString?.() ?? row.createdAt?.toISOString?.() ?? undefined,
     outcome: row.completedAt ? "repair completed" : "repair pending",
   }));
+
+  const repairHistory = repairRows
+    .filter((row) => row.type === "repair")
+    .map((row) => ({
+      summary: row.description ?? "Repair record",
+      category: row.type ?? undefined,
+      status: row.completedAt ? "completed" : "open",
+      occurredAt: row.completedAt?.toISOString?.() ?? row.createdAt?.toISOString?.() ?? undefined,
+      outcome: row.completedAt ? "repair completed" : "repair pending",
+    }));
+
+  const maintenanceHistory = repairRows
+    .filter((row) => row.type !== "repair")
+    .map((row) => ({
+      summary: row.description ?? `${row.type} maintenance recorded`,
+      category: row.type ?? undefined,
+      status: row.completedAt ? "completed" : "open",
+      occurredAt: row.completedAt?.toISOString?.() ?? row.createdAt?.toISOString?.() ?? undefined,
+      outcome: row.completedAt ? "maintenance completed" : "maintenance pending",
+    }));
+
+  const recentPartsReplaced = repairRows.flatMap((row) => {
+    const occurredAt = row.completedAt ?? row.createdAt ?? null;
+    const daysSinceReplacement = occurredAt
+      ? Math.max(0, Math.round((Date.now() - occurredAt.getTime()) / 86_400_000))
+      : null;
+
+    return extractRecentParts(row.description).map((part) => ({
+      part,
+      replacedAt: occurredAt?.toISOString?.() ?? null,
+      days_since_replacement: daysSinceReplacement,
+      replacement_effect_direction: "unknown" as const,
+      replacement_decay_weight:
+        daysSinceReplacement == null
+          ? 0.45
+          : Math.max(0.15, Math.min(1, 1 - daysSinceReplacement / 180)),
+      relevance_score: 55,
+    }));
+  });
 
   const priorDiagnostics = feedbackRows
     .filter((row) => row.entityType === "vehicle" && row.entityId === vehicleId && row.action === "diagnostic_feedback")
@@ -408,6 +481,9 @@ async function loadDiagnosticSupportData(fleetId: number, vehicleId: number) {
     priorDefects,
     recentInspections,
     recentRepairs,
+    repairHistory,
+    maintenanceHistory,
+    recentPartsReplaced,
     complianceHistory,
     similarCases,
   };
@@ -457,6 +533,7 @@ export const diagnosticsRouter = router({
         .join("\n");
 
       const analysis = await analyzeDiagnosticWithAi({
+        fleetId: input.fleetId,
         vehicleId: input.vehicleId,
         symptoms: input.symptoms,
         faultCodes: input.faultCodes,
@@ -468,6 +545,9 @@ export const diagnosticsRouter = router({
           priorDefects: supportData.priorDefects,
           recentInspections: supportData.recentInspections,
           recentRepairs: supportData.recentRepairs,
+          repairHistory: supportData.repairHistory,
+          maintenanceHistory: supportData.maintenanceHistory,
+          recentPartsReplaced: supportData.recentPartsReplaced,
           complianceHistory: supportData.complianceHistory,
         },
         similarCases: supportData.similarCases,
