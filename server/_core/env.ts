@@ -1,0 +1,46 @@
+const readEnv = (name: string) => process.env[name]?.trim() ?? "";
+
+// Centralized env access for both local development and deployed runtime.
+export const ENV = {
+  appId: readEnv("VITE_APP_ID"),
+  cookieSecret: readEnv("JWT_SECRET"),
+  databaseUrl: readEnv("DATABASE_URL"),
+  oAuthServerUrl: readEnv("OAUTH_SERVER_URL"),
+  supabaseUrl: readEnv("SUPABASE_URL") || readEnv("VITE_SUPABASE_URL"),
+  supabaseAnonKey: readEnv("SUPABASE_ANON_KEY") || readEnv("VITE_SUPABASE_ANON_KEY"),
+  supabaseServiceRoleKey: readEnv("SUPABASE_SERVICE_ROLE_KEY"),
+  nhtsaApiKey: readEnv("NHTSA_API_KEY"),
+  resendApiKey: readEnv("RESEND_API_KEY"),
+  emailFrom: readEnv("EMAIL_FROM"),
+  fleetManagerEmail: readEnv("FLEET_MANAGER_EMAIL"),
+  stripeSecretKey: readEnv("STRIPE_SECRET_KEY"),
+  stripeWebhookSecret: readEnv("STRIPE_WEBHOOK_SECRET"),
+  stripePriceProMonthly: readEnv("STRIPE_PRICE_PRO_MONTHLY"),
+  stripePriceProAnnual: readEnv("STRIPE_PRICE_PRO_ANNUAL"),
+  stripePriceFleetMonthly: readEnv("STRIPE_PRICE_FLEET_MONTHLY"),
+  adminEmails: readEnv("ADMIN_EMAILS"),
+  salesNotificationEmail: readEnv("SALES_NOTIFICATION_EMAIL"),
+  appBaseUrl:
+    readEnv("APP_BASE_URL") ||
+    readEnv("VITE_APP_BASE_URL") ||
+    readEnv("PUBLIC_APP_URL") ||
+    "http://localhost:3000",
+  ownerOpenId: readEnv("OWNER_OPEN_ID"),
+  isProduction: process.env.NODE_ENV === "production",
+  forgeApiUrl: readEnv("BUILT_IN_FORGE_API_URL"),
+  forgeApiKey: readEnv("BUILT_IN_FORGE_API_KEY"),
+  openAiApiKey: readEnv("OPENAI_API_KEY"),
+  openAiModel: readEnv("OPENAI_MODEL"),
+  openRouterApiKey: readEnv("OPENROUTER_API_KEY"),
+  openRouterModel: readEnv("OPENROUTER_MODEL"),
+  openRouterFallbackModel: readEnv("OPENROUTER_FALLBACK_MODEL"),
+  groqApiKey: readEnv("GROQ_API_KEY"),
+  groqModel: readEnv("GROQ_MODEL"),
+  anthropicApiKey: readEnv("ANTHROPIC_API_KEY"),
+  anthropicModel: readEnv("ANTHROPIC_MODEL"),
+  geminiApiKey: readEnv("GEMINI_API_KEY"),
+  geminiModel: readEnv("GEMINI_MODEL"),
+  diagnosticConfidenceThreshold: readEnv("DIAGNOSTIC_CONFIDENCE_THRESHOLD"),
+  diagnosticNewCauseMinConfidence: readEnv("DIAGNOSTIC_NEW_CAUSE_MIN_CONFIDENCE"),
+  diagnosticTimeoutMs: readEnv("DIAGNOSTIC_TIMEOUT_MS"),
+};

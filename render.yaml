@@ -1,0 +1,125 @@
+services:
+  - type: web
+    name: truckfixr-web
+    runtime: static
+    rootDir: .
+    domains:
+      - truckfixr.com
+      - www.truckfixr.com
+    autoDeploy: true
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build:client
+    staticPublishPath: dist/public
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_BASE_URL
+        sync: false
+      - key: VITE_APP_ID
+        value: truckfixr-render
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+      - key: VITE_OAUTH_PORTAL_URL
+        sync: false
+      - key: VITE_OAUTH_SERVER_URL
+        sync: false
+      - key: VITE_POSTHOG_API_KEY
+        sync: false
+      - key: VITE_POSTHOG_API_HOST
+        sync: false
+      - key: VITE_ANALYTICS_ENDPOINT
+        sync: false
+      - key: VITE_ANALYTICS_WEBSITE_ID
+        sync: false
+      - key: VITE_FRONTEND_FORGE_API_URL
+        sync: false
+      - key: VITE_FRONTEND_FORGE_API_KEY
+        sync: false
+
+  - type: web
+    name: truckfixr-api
+    runtime: node
+    plan: starter
+    rootDir: .
+    autoDeploy: true
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build:server
+    startCommand: corepack enable && pnpm start:server
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: VITE_APP_ID
+        value: truckfixr-render
+      - key: APP_BASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: OAUTH_SERVER_URL
+        sync: false
+      - key: NHTSA_API_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: FLEET_MANAGER_EMAIL
+        sync: false
+      - key: OWNER_OPEN_ID
+        sync: false
+      - key: BUILT_IN_FORGE_API_URL
+        sync: false
+      - key: BUILT_IN_FORGE_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: openrouter/free
+      - key: OPENROUTER_FALLBACK_MODEL
+        value: openrouter/free
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        sync: false
+      - key: DIAGNOSTIC_CONFIDENCE_THRESHOLD
+        value: "85"
+      - key: DIAGNOSTIC_NEW_CAUSE_MIN_CONFIDENCE
+        value: "62"
+      - key: DIAGNOSTIC_TIMEOUT_MS
+        value: "35000"
+      - key: DIAGNOSTIC_INTAKE_MAX_TOKENS
+        value: "320"
+      - key: DIAGNOSTIC_REVIEW_MAX_TOKENS
+        value: "380"
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_PRO_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_PRO_ANNUAL
+        sync: false
+      - key: STRIPE_PRICE_FLEET_MONTHLY
+        sync: false
+      - key: ADMIN_EMAILS
+        sync: false
+      - key: SALES_NOTIFICATION_EMAIL
+        sync: false

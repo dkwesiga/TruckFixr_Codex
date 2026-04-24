@@ -1,0 +1,282 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800;900&family=Manrope:wght@500;600;700;800&family=Work+Sans:wght@400;600;700;800;900&display=swap");
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+  --fleet-surface: #f8f9ff;
+  --fleet-surface-low: #eff4ff;
+  --fleet-surface-container: #e5eeff;
+  --fleet-surface-high: #d3e4fe;
+  --fleet-ink: #0b1c30;
+  --fleet-muted: #42474e;
+  --fleet-primary: #00263f;
+  --fleet-primary-container: #0b3c5d;
+  --fleet-primary-soft: #7fa7cd;
+  --fleet-secondary: #a04100;
+  --fleet-secondary-container: #fc7728;
+  --fleet-secondary-soft: #ffdbcb;
+  --fleet-outline: #c2c7ce;
+  --fleet-shadow: 0px 4px 20px rgba(11, 60, 93, 0.05);
+  --primary: #00263f;
+  --primary-foreground: #ffffff;
+  --sidebar-primary: #00263f;
+  --sidebar-primary-foreground: #ffffff;
+  --accent: #e5eeff;
+  --accent-foreground: #00263f;
+  --chart-1: oklch(0.62 0.12 240);
+  --chart-2: oklch(0.72 0.16 85);
+  --chart-3: oklch(0.67 0.18 28);
+  --chart-4: oklch(0.58 0.1 196);
+  --chart-5: oklch(0.45 0.06 255);
+  --radius: 1rem;
+  --background: #f8f9ff;
+  --foreground: #0b1c30;
+  --card: #ffffff;
+  --card-foreground: #0b1c30;
+  --popover: #ffffff;
+  --popover-foreground: #0b1c30;
+  --secondary: #eff4ff;
+  --secondary-foreground: #00263f;
+  --muted: #eff4ff;
+  --muted-foreground: #42474e;
+  --destructive: oklch(0.59 0.2 24);
+  --destructive-foreground: oklch(0.99 0.003 260);
+  --border: #d3e4fe;
+  --input: #ffffff;
+  --ring: #7fa7cd;
+  --sidebar: #00263f;
+  --sidebar-foreground: #ffffff;
+  --sidebar-accent: #fc7728;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #1f4a6c;
+  --sidebar-ring: #a3cbf2;
+}
+
+.dark {
+  --primary: oklch(0.7 0.15 40); /* Orange for dark mode */
+  --primary-foreground: oklch(0.2 0.02 250); /* Navy */
+  --sidebar-primary: oklch(0.25 0.15 250); /* Navy Blue */
+  --sidebar-primary-foreground: oklch(0.98 0 0); /* White */
+  --background: oklch(0.15 0.02 250); /* Very dark Navy */
+  --foreground: oklch(0.92 0.01 0); /* Off-white text */
+  --card: oklch(0.22 0.03 250); /* Dark Navy */
+  --card-foreground: oklch(0.92 0.01 0); /* Off-white */
+  --popover: oklch(0.22 0.03 250); /* Dark Navy */
+  --popover-foreground: oklch(0.92 0.01 0); /* Off-white */
+  --secondary: oklch(0.3 0.08 250); /* Navy */
+  --secondary-foreground: oklch(0.92 0.01 0); /* Off-white */
+  --muted: oklch(0.35 0.05 250); /* Navy-tinted */
+  --muted-foreground: oklch(0.7 0.02 0); /* Light gray */
+  --accent: oklch(0.7 0.25 40); /* Bright Orange */
+  --accent-foreground: oklch(0.2 0.02 250); /* Navy */
+  --destructive: oklch(0.65 0.22 20); /* Red */
+  --destructive-foreground: oklch(0.98 0 0); /* White */
+  --border: oklch(0.3 0.05 250); /* Navy-tinted */
+  --input: oklch(0.25 0.03 250); /* Dark Navy */
+  --ring: oklch(0.7 0.25 40); /* Orange */
+  --chart-1: oklch(0.7 0.25 40); /* Orange */
+  --chart-2: oklch(0.6 0.2 45); /* Orange-tinted */
+  --chart-3: oklch(0.25 0.15 250); /* Navy */
+  --chart-4: oklch(0.35 0.12 260); /* Navy-tinted */
+  --chart-5: oklch(0.45 0.18 255); /* Navy-light */
+  --sidebar: oklch(0.2 0.03 250); /* Very dark Navy */
+  --sidebar-foreground: oklch(0.92 0.01 0); /* Off-white */
+  --sidebar-accent: oklch(0.7 0.25 40); /* Orange */
+  --sidebar-accent-foreground: oklch(0.2 0.02 250); /* Navy */
+  --sidebar-border: oklch(0.3 0.05 250); /* Navy-tinted */
+  --sidebar-ring: oklch(0.7 0.25 40); /* Orange */
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Inter", sans-serif;
+    background-image: linear-gradient(180deg, #f8f9ff 0%, #eff4ff 100%);
+    min-height: 100vh;
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: "Manrope", sans-serif;
+    letter-spacing: -0.03em;
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [type="button"]:not(:disabled),
+  [type="submit"]:not(:disabled),
+  [type="reset"]:not(:disabled),
+  a[href],
+  select:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled) {
+    @apply cursor-pointer;
+  }
+}
+
+@layer components {
+  /**
+   * Custom container utility that centers content and adds responsive padding.
+   *
+   * This overrides Tailwind's default container behavior to:
+   * - Auto-center content (mx-auto)
+   * - Add responsive horizontal padding
+   * - Set max-width for large screens
+   *
+   * Usage: <div className="container">...</div>
+   *
+   * For custom widths, use max-w-* utilities directly:
+   * <div className="max-w-6xl mx-auto px-4">...</div>
+   */
+  .container {
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 1rem; /* 16px - mobile padding */
+    padding-right: 1rem;
+  }
+
+  .flex {
+    min-height: 0;
+    min-width: 0;
+  }
+
+  @media (min-width: 640px) {
+    .container {
+      padding-left: 1.5rem; /* 24px - tablet padding */
+      padding-right: 1.5rem;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .container {
+      padding-left: 2rem; /* 32px - desktop padding */
+      padding-right: 2rem;
+      max-width: 1280px; /* Standard content width */
+    }
+  }
+
+  .app-shell {
+    background:
+      radial-gradient(circle at top right, rgba(127, 167, 205, 0.16), transparent 28%),
+      linear-gradient(180deg, #f8f9ff 0%, #eff4ff 100%);
+    color: var(--fleet-ink);
+  }
+
+  .saas-card {
+    border: 1px solid var(--fleet-outline);
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 1rem;
+    box-shadow: var(--fleet-shadow);
+  }
+
+  .metric-card {
+    border: 1px solid var(--fleet-outline);
+    background: rgba(255, 255, 255, 0.96);
+    border-radius: 1rem;
+    box-shadow: var(--fleet-shadow);
+    padding: 1.25rem;
+  }
+
+  .section-label {
+    color: var(--fleet-secondary);
+    font-family: "Inter", sans-serif;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+
+  .status-badge {
+    @apply inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-semibold;
+  }
+
+  .fleet-primary-btn {
+    background: var(--fleet-secondary-container);
+    color: #fff;
+    border-radius: 0.75rem;
+    font-family: "Manrope", sans-serif;
+    font-weight: 700;
+    box-shadow: 0 12px 24px rgba(160, 65, 0, 0.14);
+    transition: transform 160ms ease, filter 160ms ease, box-shadow 160ms ease;
+  }
+
+  .fleet-primary-btn:hover {
+    filter: brightness(1.03);
+    transform: translateY(-1px);
+  }
+
+  .fleet-secondary-btn {
+    border: 1px solid var(--fleet-outline);
+    background: #fff;
+    color: var(--fleet-primary);
+    border-radius: 0.75rem;
+    font-family: "Manrope", sans-serif;
+    font-weight: 700;
+    transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+  }
+
+  .fleet-secondary-btn:hover {
+    background: var(--fleet-surface-low);
+    border-color: var(--fleet-primary-soft);
+  }
+
+  .fleet-panel {
+    border: 1px solid var(--fleet-outline);
+    border-radius: 1rem;
+    background: rgba(255, 255, 255, 0.94);
+    box-shadow: var(--fleet-shadow);
+  }
+
+  .fleet-page-title {
+    font-family: "Manrope", sans-serif;
+    letter-spacing: -0.03em;
+    color: var(--fleet-primary);
+  }
+}
