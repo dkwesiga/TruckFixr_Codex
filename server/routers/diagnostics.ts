@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { desc, eq, inArray } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
@@ -114,7 +114,7 @@ function buildDiagnosticManagerSummary(input: {
     compliance_impact?: string;
   };
   vehicleContext: {
-    id: number;
+    id: string;
     make?: string;
     model?: string;
     year?: number | null;
@@ -201,8 +201,12 @@ const vehicleSnapshotSchema = DiagnosticVehicleSchema.extend({
   complianceStatus: z.enum(["green", "yellow", "red"]).optional(),
 });
 
+const vehicleIdInputSchema = z
+  .union([z.string().trim().min(1), z.number().int()])
+  .transform((value) => String(value));
+
 async function resolveVehicleContext(
-  vehicleId: number,
+  vehicleId: string,
   snapshot?: z.infer<typeof vehicleSnapshotSchema>
 ) {
   const db = await getDb();
@@ -212,7 +216,7 @@ async function resolveVehicleContext(
       const [vehicle] = await db
         .select()
         .from(vehicles)
-        .where(eq(vehicles.id, vehicleId))
+        .where(sql`CAST(${vehicles.id} AS text) = ${vehicleId}`)
         .limit(1);
 
       if (vehicle) {
@@ -249,7 +253,10 @@ async function resolveVehicleContext(
     };
   }
 
-  const fallback = fallbackDiagnosticVehicles[vehicleId as keyof typeof fallbackDiagnosticVehicles];
+  const numericVehicleId = Number(vehicleId);
+  const fallback = Number.isFinite(numericVehicleId)
+    ? fallbackDiagnosticVehicles[numericVehicleId as keyof typeof fallbackDiagnosticVehicles]
+    : undefined;
   if (fallback) return fallback;
 
   throw new TRPCError({
@@ -258,7 +265,7 @@ async function resolveVehicleContext(
   });
 }
 
-async function loadDiagnosticSupportData(fleetId: number, vehicleId: number) {
+async function loadDiagnosticSupportData(fleetId: number, vehicleId: string) {
   const db = await getDb();
   if (!db) {
     return {
@@ -273,6 +280,9 @@ async function loadDiagnosticSupportData(fleetId: number, vehicleId: number) {
       similarCases: [],
     };
   }
+
+  const numericVehicleId = Number(vehicleId);
+  const hasNumericVehicleId = Number.isFinite(numericVehicleId);
 
   const safeQuery = async <T,>(label: string, query: Promise<T>, fallback: T): Promise<T> => {
     try {
@@ -296,22 +306,26 @@ async function loadDiagnosticSupportData(fleetId: number, vehicleId: number) {
     ),
     safeQuery(
       "inspection history",
-      db
-        .select()
-        .from(inspections)
-        .where(eq(inspections.vehicleId, vehicleId))
-        .orderBy(desc(inspections.submittedAt))
-        .limit(6),
+      hasNumericVehicleId
+        ? db
+            .select()
+            .from(inspections)
+            .where(eq(inspections.vehicleId, numericVehicleId))
+            .orderBy(desc(inspections.submittedAt))
+            .limit(6)
+        : Promise.resolve([]),
       []
     ),
     safeQuery(
       "maintenance history",
-      db
-        .select()
-        .from(maintenanceLogs)
-        .where(eq(maintenanceLogs.vehicleId, vehicleId))
-        .orderBy(desc(maintenanceLogs.createdAt))
-        .limit(8),
+      hasNumericVehicleId
+        ? db
+            .select()
+            .from(maintenanceLogs)
+            .where(eq(maintenanceLogs.vehicleId, numericVehicleId))
+            .orderBy(desc(maintenanceLogs.createdAt))
+            .limit(8)
+        : Promise.resolve([]),
       []
     ),
     safeQuery(
@@ -327,7 +341,7 @@ async function loadDiagnosticSupportData(fleetId: number, vehicleId: number) {
   ]);
 
   const priorDefects = defectRows
-    .filter((row) => row.vehicleId === vehicleId)
+    .filter((row) => String(row.vehicleId) === vehicleId)
     .map((row) => ({
       summary: [row.title, row.description].filter(Boolean).join(" - "),
       category: row.category ?? undefined,
@@ -390,7 +404,7 @@ async function loadDiagnosticSupportData(fleetId: number, vehicleId: number) {
   });
 
   const priorDiagnostics = feedbackRows
-    .filter((row) => row.entityType === "vehicle" && row.entityId === vehicleId && row.action === "diagnostic_feedback")
+    .filter((row) => String(row.entityType) === "vehicle" && String(row.entityId) === vehicleId && row.action === "diagnostic_feedback")
     .map((row) => {
       const details =
         row.details && typeof row.details === "object" ? (row.details as Record<string, unknown>) : {};
@@ -434,7 +448,7 @@ async function loadDiagnosticSupportData(fleetId: number, vehicleId: number) {
   );
 
   feedbackRows
-    .filter((row) => row.entityType === "vehicle" && row.entityId === vehicleId && row.action === "diagnostic_feedback")
+    .filter((row) => String(row.entityType) === "vehicle" && String(row.entityId) === vehicleId && row.action === "diagnostic_feedback")
     .forEach((row, index) => {
       const details =
         row.details && typeof row.details === "object" ? (row.details as Record<string, unknown>) : {};
@@ -495,7 +509,7 @@ export const diagnosticsRouter = router({
     .input(
       z.object({
         fleetId: z.number(),
-        vehicleId: z.number(),
+        vehicleId: vehicleIdInputSchema,
         vehicleContext: DiagnosticVehicleSchema.optional(),
         symptoms: z.array(z.string().trim().min(1)).min(1, "At least one symptom is required"),
         faultCodes: z.array(z.string().trim().min(1)).default([]),
@@ -567,16 +581,20 @@ export const diagnosticsRouter = router({
         clarificationHistory: input.clarificationHistory,
       });
 
-      await recordDiagnosticUsage({
-        userId: ctx.user.id,
-        fleetId: input.fleetId,
-        vehicleId: input.vehicleId,
-        metadata: {
-          confidenceScore: analysis.confidence_score,
-          nextAction: analysis.next_action,
-          systemsAffected: analysis.systems_affected,
-        },
-      });
+      const numericVehicleId = Number(input.vehicleId);
+
+      if (Number.isFinite(numericVehicleId)) {
+        await recordDiagnosticUsage({
+          userId: ctx.user.id,
+          fleetId: input.fleetId,
+          vehicleId: numericVehicleId,
+          metadata: {
+            confidenceScore: analysis.confidence_score,
+            nextAction: analysis.next_action,
+            systemsAffected: analysis.systems_affected,
+          },
+        });
+      }
       await recordPilotMilestone({
         userId: ctx.user.id,
         fleetId: input.fleetId,
@@ -598,27 +616,29 @@ export const diagnosticsRouter = router({
 
       if (db) {
         try {
-          const [defect] = await db
-            .insert(defects)
-            .values({
-              fleetId: input.fleetId,
-              vehicleId: input.vehicleId,
-              driverId: ctx.user.id,
-              title: analysis.possible_causes[0]?.cause || input.symptoms[0] || "Driver diagnostic intake",
-              description: JSON.stringify({
-                driverNotes: input.driverNotes ?? "",
-                symptoms: input.symptoms,
-                faultCodes: input.faultCodes,
-                output: analysis,
-              }),
-              category: "diagnostic",
-              severity: complianceStatus === "red" ? "critical" : complianceStatus === "yellow" ? "high" : "medium",
-              complianceStatus,
-              status: "open",
-              photoUrls: input.photoUrls,
-              updatedAt: new Date(),
-            })
-            .returning({ id: defects.id });
+          const [defect] = Number.isFinite(numericVehicleId)
+            ? await db
+                .insert(defects)
+                .values({
+                  fleetId: input.fleetId,
+                  vehicleId: numericVehicleId,
+                  driverId: ctx.user.id,
+                  title: analysis.possible_causes[0]?.cause || input.symptoms[0] || "Driver diagnostic intake",
+                  description: JSON.stringify({
+                    driverNotes: input.driverNotes ?? "",
+                    symptoms: input.symptoms,
+                    faultCodes: input.faultCodes,
+                    output: analysis,
+                  }),
+                  category: "diagnostic",
+                  severity: complianceStatus === "red" ? "critical" : complianceStatus === "yellow" ? "high" : "medium",
+                  complianceStatus,
+                  status: "open",
+                  photoUrls: input.photoUrls,
+                  updatedAt: new Date(),
+                })
+                .returning({ id: defects.id })
+            : [undefined as { id: number } | undefined];
 
           persistedDefectId = defect?.id ?? null;
 
@@ -637,7 +657,7 @@ export const diagnosticsRouter = router({
             const [existingVehicle] = await db
               .select()
               .from(vehicles)
-              .where(eq(vehicles.id, input.vehicleId))
+              .where(sql`CAST(${vehicles.id} AS text) = ${input.vehicleId}`)
               .limit(1);
 
             if (existingVehicle) {
@@ -653,7 +673,7 @@ export const diagnosticsRouter = router({
                   status: getVehicleLifecycleStatus(mergedComplianceStatus),
                   updatedAt: new Date(),
                 })
-                .where(eq(vehicles.id, input.vehicleId));
+                .where(sql`CAST(${vehicles.id} AS text) = ${input.vehicleId}`);
             }
           } catch (vehicleError) {
             console.warn("[Diagnostics] Skipping vehicle compliance update due to legacy schema mismatch:", vehicleError);
@@ -684,7 +704,7 @@ export const diagnosticsRouter = router({
             userId: managerContact.managerUserId,
             action: "diagnostic_summary_shared",
             entityType: "defect",
-            entityId: persistedDefectId ?? input.vehicleId,
+            entityId: persistedDefectId ?? (Number.isFinite(numericVehicleId) ? numericVehicleId : null),
             details: {
               vehicleId: input.vehicleId,
               defectId: persistedDefectId,

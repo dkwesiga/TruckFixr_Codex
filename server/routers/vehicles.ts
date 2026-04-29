@@ -1,8 +1,8 @@
 import { protectedProcedure, router } from "../_core/trpc";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { eq } from "drizzle-orm";
-import { vehicleAssignments, vehicles } from "../../drizzle/schema";
+import { and, eq, gt, or } from "drizzle-orm";
+import { driverInvitations, vehicleAssignments, vehicles } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { vehicleInspectionConfigSchema } from "../../shared/inspection";
 import {
@@ -14,8 +14,10 @@ import {
   canManageVehicleAccess,
   canViewVehicle,
   listDriverAccessibleVehicles,
+  listDriverAccessibleVehiclesAcrossFleets,
   verifyDriverBelongsToFleet,
 } from "../services/vehicleAccess";
+import { assignDriver } from "../../vehicle.controller";
 
 export const vehiclesRouter = router({
   /**
@@ -26,7 +28,10 @@ export const vehiclesRouter = router({
       z.object({
         fleetId: z.number(),
         assignedDriverId: z.number().nullable().optional(),
-        assetType: z.enum(["tractor", "straight_truck", "trailer", "other"]).optional(),
+        assetType: z.enum([
+          "tractor", "straight_truck", "trailer", "truck", "bus", 
+          "van", "reefer_trailer", "flatbed_trailer", "dry_van_trailer", "other"
+        ]).optional(),
         unitNumber: z.string().trim().min(1).max(50).optional(),
         vin: z.string().length(17, "VIN must be 17 characters"),
         licensePlate: z.string().trim().min(1).max(20).optional(),
@@ -236,8 +241,16 @@ export const vehiclesRouter = router({
         return db.select().from(vehicles).where(eq(vehicles.fleetId, input.fleetId));
       }
 
-      return listDriverAccessibleVehicles({
+      const scopedVehicles = await listDriverAccessibleVehicles({
         fleetId: input.fleetId,
+        driverUserId: ctx.user.id,
+      });
+
+      if (scopedVehicles.length > 0) {
+        return scopedVehicles;
+      }
+
+      return listDriverAccessibleVehiclesAcrossFleets({
         driverUserId: ctx.user.id,
       });
     }),
@@ -257,7 +270,10 @@ export const vehiclesRouter = router({
         status: z.enum(["active", "maintenance", "retired"]).optional(),
         assetRecordStatus: z.enum(["active", "inactive", "draft", "archived"]).optional(),
         configuration: vehicleInspectionConfigSchema.partial().optional(),
-        assetType: z.enum(["tractor", "straight_truck", "trailer", "other"]).optional(),
+        assetType: z.enum([
+          "tractor", "straight_truck", "trailer", "truck", "bus", 
+          "van", "reefer_trailer", "flatbed_trailer", "dry_van_trailer", "other"
+        ]).optional(),
       })
     )
     .mutation(async ({ input, ctx }) => {
@@ -344,5 +360,23 @@ export const vehiclesRouter = router({
       }
 
       return vehicle ?? null;
+    }),
+
+  assignDriver: protectedProcedure
+    .input(z.object({
+      fleetId: z.number(),
+      vehicleId: z.union([z.coerce.number(), z.string().trim().min(1)]),
+      driverUserId: z.union([z.coerce.number(), z.string().trim().min(1)]).nullable().optional(),
+      accessType: z.enum(['permanent', 'temporary']),
+      expiresAt: z.string().nullable().optional(),
+      notes: z.string().nullable().optional(),
+      driverMode: z.enum(['existing', 'invite']),
+      inviteFirstName: z.string().optional(),
+      inviteLastName: z.string().optional(),
+      inviteEmail: z.string().optional(),
+      confirmReassign: z.boolean().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      return await assignDriver({ input, ctx });
     }),
 });

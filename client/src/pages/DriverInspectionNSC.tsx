@@ -85,6 +85,7 @@ function DriverInspectionContent() {
   const vehicleId = hasVehicleSelection ? Number(rawVehicleId) : -1;
   const fleetId = Number(searchParams.get("fleet") ?? (storedVehicle?.fleetId ? String(storedVehicle.fleetId) : "1"));
   const driverName = user?.name?.trim() || user?.email?.trim() || "Driver";
+  const isOwnerOperator = user?.role === "owner_operator" || user?.role === "owner" || user?.role === "manager";
   const storage = useMemo(() => getBrowserStorage(), []);
   const [vehicleChoices, setVehicleChoices] = useState<DriverVehicleRecord[]>(() => loadDriverVehicles());
   const [showVehicleCapture, setShowVehicleCapture] = useState(false);
@@ -130,7 +131,16 @@ function DriverInspectionContent() {
   );
   const submitMutation = trpc.inspections.create.useMutation();
 
-  const checklistData = checklistQuery.data ?? offlineChecklist ?? null;
+  const checklistData = useMemo(() => {
+    if (!checklistQuery.data) return offlineChecklist ?? null;
+    return {
+      ...checklistQuery.data,
+      vehicle: {
+        ...checklistQuery.data.vehicle,
+        id: vehicleId,
+      },
+    };
+  }, [checklistQuery.data, offlineChecklist, vehicleId]);
   const categories = checklistData?.categories ?? [];
   const totalSteps = categories.length + 2;
   const isMetadataStep = stepIndex === 0;
@@ -263,10 +273,10 @@ function DriverInspectionContent() {
   };
 
   useEffect(() => {
-    if (!checklistQuery.data) return;
-    saveChecklistSnapshot(storage, vehicleId, checklistQuery.data);
-    setOfflineChecklist(checklistQuery.data);
-  }, [checklistQuery.data, storage, vehicleId]);
+    if (!checklistQuery.data || !checklistData) return;
+    saveChecklistSnapshot(storage, vehicleId, checklistData);
+    setOfflineChecklist(checklistData);
+  }, [checklistQuery.data, checklistData, storage, vehicleId]);
 
   useEffect(() => {
     if (!hasDraftData) {
@@ -552,15 +562,17 @@ function DriverInspectionContent() {
                   </div>
                 )}
                 <div className="flex flex-wrap gap-3">
-                  <Button
-                    type="button"
-                    onClick={() => {
-                      setVehicleCaptureInitialStep("entry");
-                      setShowVehicleCapture(true);
-                    }}
-                  >
-                    Add Vehicle
-                  </Button>
+                  {isOwnerOperator && (
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        setVehicleCaptureInitialStep("entry");
+                        setShowVehicleCapture(true);
+                      }}
+                    >
+                      Add Vehicle
+                    </Button>
+                  )}
                   <Button
                     type="button"
                     variant="outline"
@@ -1087,7 +1099,7 @@ function DriverInspectionContent() {
                   disabled={!currentStepComplete || submitMutation.isPending}
                   className="h-10 rounded-full border-slate-300 bg-white px-4 text-sm sm:rounded-xl"
                 >
-                  {submitMutation.isPending && submitMode === "send" ? "Submitting..." : "Submit to Manager"}
+                  {submitMutation.isPending && submitMode === "send" ? "Submitting..." : (isOwnerOperator ? "Submit Report" : "Submit to Manager")}
                   <CheckCircle2 className="h-4 w-4" />
                 </Button>
                 <Button
@@ -1123,7 +1135,7 @@ function DriverInspectionContent() {
 
 export default function DriverInspectionNSC() {
   return (
-    <RoleBasedRoute requiredRoles={["driver"]}>
+    <RoleBasedRoute requiredRoles={["driver", "owner_operator", "owner", "manager"]}>
       <DriverInspectionContent />
     </RoleBasedRoute>
   );

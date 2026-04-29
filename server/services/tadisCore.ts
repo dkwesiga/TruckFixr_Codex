@@ -1,23 +1,33 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { getDiagnosticRuntimeConfig } from "./diagnosticConfig";
 import {
   interpretDiagnosticIntakeWithLlm,
+  classifyDiagnosticIssueWithLlm,
+  diagnoseDiagnosticIssueWithLlm,
+  buildSimpleClassificationPrompt,
+  buildSimpleDiagnosisPromptMessage,
   reviewDiagnosticWithLlm,
   type DiagnosticIntakeInterpretation,
   type DiagnosticIntakeInterpretationResult,
+  type DiagnosticSimpleClassificationResult,
 } from "./diagnosticLlmReview";
+import { insertDiagnosticAiRequestLog, updateDiagnosticAiRequestLog } from "./diagnosticAiRequestLogs";
 import { queueDiagnosticReviewRecords } from "./diagnosticReviewQueue";
 
 const MAX_CLARIFICATION_ROUNDS = 5;
 const DEFAULT_SIMILAR_CASE_LIMIT = 7;
 
-const riskLevelSchema = z.enum(["low", "medium", "high"]);
+const riskLevelSchema = z.enum(["low", "medium", "high", "critical"]);
 const nonZeroIntegerSchema = z.number().int().refine((value) => value !== 0, {
   message: "Expected non-zero vehicle id",
 });
+const vehicleIdentifierSchema = z
+  .union([z.string().trim().min(1), nonZeroIntegerSchema])
+  .transform((value) => String(value));
 
 export const DiagnosticVehicleSchema = z.object({
-  id: nonZeroIntegerSchema,
+  id: vehicleIdentifierSchema,
   vin: z.string().trim().optional(),
   make: z.string().optional(),
   model: z.string().optional(),
@@ -61,6 +71,8 @@ export const ClarificationTurnSchema = z.object({
   answer: z.string().min(1),
 });
 
+type SimpleDiagnosticClassification = NonNullable<DiagnosticSimpleClassificationResult["parsed"]>;
+
 const RecentPartReplacementSchema = z.object({
   part: z.string(),
   replacedAt: z.string().nullable().default(null),
@@ -79,7 +91,7 @@ const RecentPartReplacementSchema = z.object({
 
 export const DiagnosticInputSchema = z.object({
   fleetId: z.number().int().positive().optional(),
-  vehicleId: nonZeroIntegerSchema,
+  vehicleId: vehicleIdentifierSchema,
   symptoms: z.array(z.string().trim().min(1)).min(1),
   faultCodes: z.array(z.string().trim().min(1)).default([]),
   driverNotes: z.string().trim().optional(),
@@ -351,6 +363,218 @@ type DiagnosticContext = {
   llmIntakeInterpretation: DiagnosticIntakeInterpretation | null;
   llmInterpretationText: string;
 };
+
+const SIMPLE_TADIS_CONFIDENCE_THRESHOLD = 85;
+const SIMPLE_TADIS_CLASSIFIER_MAX_CHARS = 1400;
+const SIMPLE_TADIS_CLASSIFIER_TARGET_CHARS = 520;
+const SIMPLE_TADIS_DIAGNOSIS_MAX_CHARS = 1800;
+const SIMPLE_TADIS_DIAGNOSIS_TARGET_CHARS = 720;
+const SIMPLE_TADIS_CLASSIFIER_MAX_TOKENS = 80;
+const SIMPLE_TADIS_DIAGNOSIS_MAX_TOKENS = 120;
+
+const SIMPLE_CATEGORY_TO_SYSTEMS: Record<string, string[]> = {
+  critical_engine_internal: ["engine", "cooling", "lubrication"],
+  engine_performance: ["engine", "air_intake", "fuel"],
+  oil_lubrication_system: ["lubrication", "engine"],
+  cooling_system: ["cooling", "engine"],
+  aftertreatment_dpf_def_scr: ["aftertreatment", "emissions"],
+  electrical_battery_alternator: ["electrical", "battery", "charging"],
+  starting_charging: ["electrical", "starting", "charging"],
+  air_brake_system: ["brakes", "air_system"],
+  fuel_system: ["fuel", "engine"],
+  transmission_driveline: ["transmission", "driveline"],
+  hydraulics_pto: ["hydraulics", "pto"],
+  suspension_steering: ["suspension", "steering"],
+  trailer_lighting: ["trailer", "lighting"],
+  abs_wheel_end: ["brakes", "wheel_end"],
+  tires_wheels: ["tires", "wheels"],
+  unknown_triage: ["unknown"],
+};
+
+function truncateForSimpleMode(value: unknown, maxLength: number) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) return null;
+  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}…`;
+}
+
+function trimStringArrayForSimpleMode(value: unknown, limit: number, maxLength: number) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => truncateForSimpleMode(item, maxLength))
+    .filter((item): item is string => Boolean(item))
+    .slice(0, limit);
+}
+
+function removeUndefinedDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => removeUndefinedDeep(item)) as T;
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .map(([key, entry]) => [key, removeUndefinedDeep(entry)])
+    ) as T;
+  }
+
+  return value;
+}
+
+function estimatePromptCharacterCount(messages: Array<{ role: string; content: string }>) {
+  return JSON.stringify(messages).length;
+}
+
+function estimatePromptTokenCount(characters: number) {
+  return Math.max(1, Math.ceil(characters / 4));
+}
+
+function buildSimpleCategoryInput(input: DiagnosticInputRequest) {
+  const rawSymptoms = (input.symptoms ?? [])
+    .slice(0, 3)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const symptomDescription =
+    truncateForSimpleMode(
+      [
+        rawSymptoms.join("; "),
+        input.driverNotes ? `Driver notes: ${input.driverNotes}` : "",
+        input.operatingConditions ? `Operating conditions: ${input.operatingConditions}` : "",
+      ]
+        .filter(Boolean)
+        .join(" | "),
+      SIMPLE_TADIS_CLASSIFIER_TARGET_CHARS
+    ) ?? "";
+  const assetType =
+    input.vehicle?.trailerConfiguration ? "trailer" : "tractor";
+
+  return removeUndefinedDeep({
+    asset_type: assetType,
+    year: input.vehicle?.year ?? null,
+    make: input.vehicle?.make ?? null,
+      model: input.vehicle?.model ?? null,
+      engine: input.vehicle?.engine ?? null,
+      driver_selected_category: "",
+      symptom_description: symptomDescription,
+      fault_codes: (input.faultCodes ?? []).slice(0, 4),
+      warning_lights: [] as string[],
+    });
+}
+
+function buildSimpleDiagnosisInput(
+  input: DiagnosticInputRequest,
+  classifier: SimpleDiagnosticClassification
+) {
+  const symptomDescription = truncateForSimpleMode(
+    [
+      (input.symptoms ?? []).slice(0, 3).join("; "),
+      input.driverNotes ? `Driver notes: ${input.driverNotes}` : "",
+      input.operatingConditions ? `Operating conditions: ${input.operatingConditions}` : "",
+    ]
+      .filter(Boolean)
+      .join(" | "),
+    SIMPLE_TADIS_DIAGNOSIS_TARGET_CHARS
+  );
+  const severity =
+    classifier.risk_level === "critical"
+      ? "critical"
+      : classifier.risk_level === "high"
+        ? "high"
+        : classifier.risk_level === "medium"
+          ? "moderate"
+          : "minor";
+
+  return removeUndefinedDeep({
+        vehicle: {
+          asset_type: input.vehicle?.trailerConfiguration ? "trailer" : "tractor",
+          year: input.vehicle?.year ?? null,
+          make: input.vehicle?.make ?? null,
+          model: input.vehicle?.model ?? null,
+          engine: input.vehicle?.engine ?? null,
+          mileage: input.vehicle?.mileage ?? null,
+        },
+        current_issue: {
+          symptom_description: symptomDescription,
+        fault_codes: (input.faultCodes ?? []).slice(0, 4),
+          warning_lights: [] as string[],
+        when_it_happens: truncateForSimpleMode(input.operatingConditions, 100),
+          can_vehicle_move: null,
+          severity,
+        },
+    classifier: {
+      primary_category: classifier.primary_category,
+      secondary_category: classifier.secondary_category,
+      risk_level: classifier.risk_level,
+    },
+  });
+}
+
+function buildSimpleFallbackClassification(input: DiagnosticInputRequest): SimpleDiagnosticClassification {
+  const text = `${(input.symptoms ?? []).slice(0, 3).join(" ")} ${input.driverNotes ?? ""} ${input.operatingConditions ?? ""}`.toLowerCase();
+  const faults = (input.faultCodes ?? []).map((code) => code.toUpperCase());
+
+  if (
+    /(oil.*coolant|coolant.*oil|milky oil|milky coolant|coolant in oil|oil in coolant|cross contamination|contaminated coolant)/i.test(
+      text
+    )
+  ) {
+    return {
+      primary_category: "critical_engine_internal",
+      secondary_category: "cooling_system",
+      risk_level: "critical",
+      classification_confidence: 97,
+      clarifying_question: null,
+    };
+  }
+
+  if (/overheat|temperature|coolant|thermostat|radiator|fan/.test(text) || faults.includes("P0128")) {
+    return {
+      primary_category: "cooling_system",
+      secondary_category: "engine_performance",
+      risk_level: "high",
+      classification_confidence: 88,
+      clarifying_question: null,
+    };
+  }
+
+  if (/oil pressure|low oil|lubrication|oil leak|oil light/.test(text)) {
+    return {
+      primary_category: "oil_lubrication_system",
+      secondary_category: "critical_engine_internal",
+      risk_level: "high",
+      classification_confidence: 86,
+      clarifying_question: null,
+    };
+  }
+
+  if (/battery|alternator|charging|start|crank|no start|won't start|won.t start/.test(text)) {
+    return {
+      primary_category: "starting_charging",
+      secondary_category: "electrical_battery_alternator",
+      risk_level: "medium",
+      classification_confidence: 84,
+      clarifying_question: "When you try to start it, does the engine crank normally or is it slow/no-crank?",
+    };
+  }
+
+  if (/air brake|low air|parking brake|brake chamber|air leak|air pressure/.test(text)) {
+    return {
+      primary_category: "air_brake_system",
+      secondary_category: "abs_wheel_end",
+      risk_level: "critical",
+      classification_confidence: 86,
+      clarifying_question: null,
+    };
+  }
+
+  return {
+    primary_category: "unknown_triage",
+    secondary_category: null,
+    risk_level: "medium",
+    classification_confidence: 58,
+    clarifying_question: "What is the one symptom that is most repeatable right now?",
+  };
+}
 
 const CAUSE_LIBRARY: CauseDefinition[] = [
   {
@@ -1512,13 +1736,13 @@ function average(values: number[]) {
 
 function buildHistoryText(input: DiagnosticInput) {
   return [
-    ...input.issueHistory.priorDiagnostics.map((item) => item.summary),
-    ...input.issueHistory.priorDefects.map((item) => item.summary),
-    ...input.issueHistory.recentInspections.map((item) => item.summary),
-    ...input.issueHistory.recentRepairs.map((item) => item.summary),
-    ...input.issueHistory.repairHistory.map((item) => item.summary),
-    ...input.issueHistory.maintenanceHistory.map((item) => item.summary),
-    ...input.issueHistory.complianceHistory.map((item) => item.summary),
+    ...(input.issueHistory.priorDiagnostics ?? []).map((item) => item.summary),
+    ...(input.issueHistory.priorDefects ?? []).map((item) => item.summary),
+    ...(input.issueHistory.recentInspections ?? []).map((item) => item.summary),
+    ...(input.issueHistory.recentRepairs ?? []).map((item) => item.summary),
+    ...(input.issueHistory.repairHistory ?? []).map((item) => item.summary),
+    ...(input.issueHistory.maintenanceHistory ?? []).map((item) => item.summary),
+    ...(input.issueHistory.complianceHistory ?? []).map((item) => item.summary),
   ]
     .map((item) => normalizeText(item))
     .join(" ");
@@ -1867,7 +2091,6 @@ function selectClarifyingQuestion(
   scoredCauses: Array<{ cause: CauseDefinition; probability: number }>,
   clarificationHistory: ClarificationTurn[]
 ) {
-  const askedQuestions = clarificationHistory.map((turn) => turn.question);
   const topCauseIds = scoredCauses.slice(0, 4).map((item) => item.cause.id);
   const candidates = scoredCauses.slice(0, 4).flatMap((item) =>
     item.cause.questions.map((question) => ({
@@ -1880,13 +2103,7 @@ function selectClarifyingQuestion(
   );
 
   const next = candidates
-    .filter(
-      (candidate) =>
-        !askedQuestions.some(
-          (askedQuestion) =>
-            askedQuestion === candidate.text || askedQuestion.endsWith(candidate.text)
-        )
-    )
+    .filter((candidate) => !hasAskedSimilarQuestion(clarificationHistory, candidate.text))
     .sort((left, right) => right.score - left.score)[0];
 
   if (!next?.text) {
@@ -1910,6 +2127,176 @@ function selectClarifyingQuestion(
   ];
 
   return `${prefixParts.join(" ")} ${next.text}`;
+}
+
+function normalizeQuestionForComparison(value: string | null | undefined) {
+  const normalizedSource = String(value ?? "");
+  const suffix = normalizedSource.includes(":")
+    ? normalizedSource.slice(normalizedSource.lastIndexOf(":") + 1)
+    : normalizedSource;
+
+  return suffix
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\b(to separate|from|on this|for|truck|vehicle|does|is|are|the|a|an|this|that|right|now|mainly)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function questionSimilarityScore(left: string, right: string) {
+  const leftTokens = new Set(left.split(" ").filter(Boolean));
+  const rightTokens = new Set(right.split(" ").filter(Boolean));
+  if (leftTokens.size === 0 || rightTokens.size === 0) return 0;
+
+  let overlap = 0;
+  for (const token of Array.from(leftTokens)) {
+    if (rightTokens.has(token)) overlap += 1;
+  }
+
+  return overlap / Math.max(leftTokens.size, rightTokens.size);
+}
+
+function hasAskedSimilarQuestion(history: ClarificationTurn[], question: string) {
+  const normalizedQuestion = normalizeQuestionForComparison(question);
+  if (!normalizedQuestion) return true;
+
+  return history.some((turn) => {
+    const asked = normalizeQuestionForComparison(turn.question);
+    if (!asked) return false;
+    return (
+      asked === normalizedQuestion ||
+      asked.includes(normalizedQuestion) ||
+      normalizedQuestion.includes(asked) ||
+      questionSimilarityScore(asked, normalizedQuestion) >= 0.72
+    );
+  });
+}
+
+function isGenericClarifyingQuestion(question: string) {
+  const normalized = question.toLowerCase();
+  return [
+    /what symptom is most repeatable/,
+    /idle,?\s*under load,?\s*or all the time/,
+    /what operating condition makes/,
+    /what exact dashboard warning lights/,
+    /getting better, worse, or staying the same/,
+  ].some((pattern) => pattern.test(normalized));
+}
+
+function buildSymptomClarifyingQuestionCandidates(
+  stage: BaselineStage,
+  ranking: z.infer<typeof rankedCauseSchema>[]
+) {
+  const input = stage.context.input;
+  const symptomText = [
+    ...input.symptoms,
+    input.driverNotes ?? "",
+    input.operatingConditions ?? "",
+    ...input.faultCodes,
+  ]
+    .join(" ")
+    .toLowerCase();
+  const primarySymptom =
+    stage.evidence.primarySymptoms[0] ?? input.symptoms[0] ?? "the reported issue";
+  const topCause = ranking[0]?.cause_name ?? stage.baseline.possible_causes[0]?.cause ?? "the leading cause";
+  const runnerUp = ranking[1]?.cause_name ?? stage.baseline.possible_causes[1]?.cause ?? "the next likely cause";
+  const questions: string[] = [];
+  const add = (question: string) => {
+    const trimmed = question.trim();
+    if (trimmed && !questions.some((existing) => normalizeQuestionForComparison(existing) === normalizeQuestionForComparison(trimmed))) {
+      questions.push(trimmed);
+    }
+  };
+
+  if (/(oil.*coolant|coolant.*oil|milky oil|milky coolant|oil in coolant|coolant in oil|cross contamination|white smoke.*coolant|combustion gas)/.test(symptomText)) {
+    add("For the oil/coolant contamination, where is it visible right now: milky engine oil, oil in the coolant reservoir, both, or white exhaust smoke with coolant loss?");
+    add("Has the engine overheated, lost coolant, or built pressure in the coolant reservoir since the oil and coolant started mixing?");
+  }
+
+  if (/(coolant|overheat|temperature|radiator|hose|water pump|thermostat|heater)/.test(symptomText)) {
+    add("For the cooling complaint, is coolant level dropping, temperature rising, pressure building in the reservoir, or an external leak visible?");
+  }
+
+  if (/(oil pressure|low oil|knock|rod|bearing|metal|lubrication)/.test(symptomText)) {
+    add("For the oil system complaint, is the oil pressure warning active at idle, under load, or immediately after startup?");
+  }
+
+  if (/(no start|won.t start|crank|click|starter|battery|alternator|charging|voltage)/.test(symptomText)) {
+    add("When trying to start it, does the engine crank normally, crank slowly, click once, or have no electrical power?");
+  }
+
+  if (/(brake|air pressure|air leak|compressor|chamber|slack|abs)/.test(symptomText)) {
+    add("For the brake or air issue, does air pressure fail to build, drop after shutdown, or leak audibly from a wheel end, valve, or air line?");
+  }
+
+  if (/(tire|wheel|vibration|shake|hub|bearing|rim|lug)/.test(symptomText)) {
+    add("For the tire or wheel-end issue, which position is affected and is there heat, vibration, wobble, noise, or visible damage?");
+  }
+
+  if (/(def|dpf|scr|regen|aftertreatment|derate|nox|emissions)/.test(symptomText)) {
+    add("For the aftertreatment issue, what message is on the dash and is the truck currently derated, requesting regen, or showing a DEF level warning?");
+  }
+
+  if (/(transmission|gear|shift|clutch|driveline|u-joint|slip)/.test(symptomText)) {
+    add("For the driveline complaint, does it happen during shifting, acceleration under load, deceleration, or while parked in gear?");
+  }
+
+  if (/(steering|suspension|pull|wander|clunk|leaf|shock|spring)/.test(symptomText)) {
+    add("For the steering or suspension complaint, is the issue a pull, looseness, clunk, uneven ride height, or loss of steering control?");
+  }
+
+  if (/(fuel|power loss|low power|stall|surge|smoke|misfire|rough idle)/.test(symptomText)) {
+    add("For the power or fuel complaint, does it occur at idle, under load, during acceleration, or after the engine warms up?");
+  }
+
+  if (input.faultCodes.length > 0) {
+    add(`With fault code ${input.faultCodes[0]}, what warning light or dash message appeared first, and did it appear before or after ${primarySymptom.toLowerCase()}?`);
+  }
+
+  add(`What single observation best separates ${topCause} from ${runnerUp} for ${primarySymptom.toLowerCase()}?`);
+  return questions;
+}
+
+function chooseFreshClarifyingQuestion(
+  stage: BaselineStage,
+  ranking: z.infer<typeof rankedCauseSchema>[],
+  proposedQuestion: string | null | undefined
+) {
+  const history = stage.context.input.clarificationHistory;
+  const proposed = (proposedQuestion ?? "").trim();
+  if (proposed && !isGenericClarifyingQuestion(proposed) && !hasAskedSimilarQuestion(history, proposed)) {
+    return proposed;
+  }
+
+  const symptomQuestions = buildSymptomClarifyingQuestionCandidates(stage, ranking);
+  const symptomQuestion = symptomQuestions.find((question) => !hasAskedSimilarQuestion(history, question));
+  if (symptomQuestion) {
+    return symptomQuestion;
+  }
+
+  const synthesized = synthesizeClarifyingQuestion(stage, ranking).trim();
+  if (synthesized && !isGenericClarifyingQuestion(synthesized) && !hasAskedSimilarQuestion(history, synthesized)) {
+    return synthesized;
+  }
+
+  const primarySymptom =
+    stage.evidence.primarySymptoms[0] ?? stage.context.input.symptoms[0] ?? "the reported issue";
+  const topCause = ranking[0]?.cause_name ?? stage.baseline.possible_causes[0]?.cause ?? "the leading cause";
+  const runnerUp = ranking[1]?.cause_name ?? stage.baseline.possible_causes[1]?.cause ?? "the competing cause";
+  const fallbackQuestions = [
+    `What changed since this issue first appeared: temperature, load, speed, warning lights, or fluid level?`,
+    `For ${primarySymptom.toLowerCase()}, is it currently getting better, worse, or staying the same?`,
+    `Which detail best separates ${topCause} from ${runnerUp}: fluid contamination, pressure loss, electrical warning, noise, or drivability change?`,
+    `Can the driver safely reproduce the symptom while parked, or does it only appear while driving under load?`,
+    `What exact dashboard warning lights or messages are active right now?`,
+  ];
+
+  const rotationOffset = history.length % fallbackQuestions.length;
+  const rotatedFallbackQuestions = fallbackQuestions
+    .slice(rotationOffset)
+    .concat(fallbackQuestions.slice(0, rotationOffset));
+
+  return rotatedFallbackQuestions.find((question) => !hasAskedSimilarQuestion(history, question)) ?? "";
 }
 
 function extractKnownParts(text: string) {
@@ -2036,10 +2423,10 @@ function buildEvidenceStage(context: DiagnosticContext): EvidenceStage {
     ...primaryVsSecondaryCodeAssessment,
   ]).filter(Boolean);
 
-  const repairHistory = context.input.issueHistory.repairHistory.length > 0
-    ? context.input.issueHistory.repairHistory
-    : context.input.issueHistory.recentRepairs;
-  const maintenanceHistory = context.input.issueHistory.maintenanceHistory;
+  const repairHistory = (context.input.issueHistory.repairHistory ?? []).length > 0
+    ? (context.input.issueHistory.repairHistory ?? [])
+    : (context.input.issueHistory.recentRepairs ?? []);
+  const maintenanceHistory = context.input.issueHistory.maintenanceHistory ?? [];
   const repairHistoryText = repairHistory.map((item) => normalizeText(item.summary));
   const maintenanceHistoryText = maintenanceHistory.map((item) => normalizeText(item.summary));
   const currentParts = extractKnownParts(fullComplaintText);
@@ -2068,7 +2455,7 @@ function buildEvidenceStage(context: DiagnosticContext): EvidenceStage {
   ]).filter(Boolean);
   const historyRationale = uniqueStrings([...repairHistoryRationale, ...maintenanceHistoryRationale]);
 
-  const recentPartsReplaced = context.input.issueHistory.recentPartsReplaced.map((item) => {
+  const recentPartsReplaced = (context.input.issueHistory.recentPartsReplaced ?? []).map((item) => {
     const daysSinceReplacement =
       item.days_since_replacement ??
       (item.replacedAt ? Math.max(0, Math.round((Date.now() - new Date(item.replacedAt).getTime()) / 86_400_000)) : null);
@@ -2114,8 +2501,8 @@ function buildEvidenceStage(context: DiagnosticContext): EvidenceStage {
   ]).filter(Boolean);
 
   const combinedHistoryText = [
-    ...context.input.issueHistory.priorDiagnostics.map((item) => item.summary),
-    ...context.input.issueHistory.priorDefects.map((item) => item.summary),
+    ...(context.input.issueHistory.priorDiagnostics ?? []).map((item) => item.summary),
+    ...(context.input.issueHistory.priorDefects ?? []).map((item) => item.summary),
     ...repairHistory.map((item) => item.summary),
   ].map((item) => normalizeText(item));
   const repeatCodeFrequency = combinedHistoryText.reduce<Record<string, number>>((accumulator, item) => {
@@ -2308,6 +2695,8 @@ function getBaselineGuidance(causeDef: CauseDefinition | null, causeName: string
     likelyReplacementParts: extractKnownParts(causeName),
     inspectionRelatedParts: ["visual inspection", "connector checks", "follow-up verification"],
     adjacentPartsToCheck: [],
+    recommendedTests: ["Verify the complaint with direct inspection"],
+    recommendedFix: `Verify ${causeName} with the recommended tests before replacing parts.`,
     diagnosticVerificationLaborHours: { min: 1, max: 2 },
     repairLaborHours: { min: 1, max: 3 },
     totalEstimatedLaborHours: { min: 2, max: 5 },
@@ -2472,7 +2861,7 @@ function buildEvidencePackage(
     confidence_threshold: config.confidenceThreshold,
     llm_intake_interpretation: compactIntakeInterpretation,
     normalized_symptoms: compactStrings(evidence.normalizedSymptoms, 8),
-    raw_symptoms: context.input.symptoms.slice(0, 4).map((item) => truncate(item, 120)),
+    raw_symptoms: (context.input.symptoms ?? []).slice(0, 4).map((item) => truncate(item, 120)),
     primary_symptoms: compactStrings(evidence.primarySymptoms, 5),
     secondary_symptoms: compactStrings(evidence.secondarySymptoms, 5),
     symptom_to_system_links: evidence.symptomToSystemLinks.slice(0, 5),
@@ -2502,15 +2891,15 @@ function buildEvidencePackage(
       engine_hours: context.input.vehicle?.engineHours ?? null,
     },
     repair_history: compactHistory(
-      context.input.issueHistory.repairHistory.length > 0
-        ? context.input.issueHistory.repairHistory
-        : context.input.issueHistory.recentRepairs,
+      (context.input.issueHistory.repairHistory ?? []).length > 0
+        ? (context.input.issueHistory.repairHistory ?? [])
+        : (context.input.issueHistory.recentRepairs ?? []),
       3
     ),
-    maintenance_history: compactHistory(context.input.issueHistory.maintenanceHistory, 3),
-    prior_diagnostics: compactHistory(context.input.issueHistory.priorDiagnostics, 2),
-    prior_defects: compactHistory(context.input.issueHistory.priorDefects, 2),
-    recent_inspections: compactHistory(context.input.issueHistory.recentInspections, 1),
+    maintenance_history: compactHistory(context.input.issueHistory.maintenanceHistory ?? [], 3),
+    prior_diagnostics: compactHistory(context.input.issueHistory.priorDiagnostics ?? [], 2),
+    prior_defects: compactHistory(context.input.issueHistory.priorDefects ?? [], 2),
+    recent_inspections: compactHistory(context.input.issueHistory.recentInspections ?? [], 1),
     recent_parts_replaced: evidence.recentPartsReplaced.slice(0, 3),
     recurring_failure_patterns: {
       recurring_failure_score: evidence.recurringFailureScore,
@@ -2536,12 +2925,12 @@ function buildEvidencePackage(
     data_gaps: [
       ...evidence.vehicleDataGaps,
       ...(context.normalizedFaultCodes.length === 0 ? ["No fault codes provided"] : []),
-      ...(context.input.issueHistory.maintenanceHistory.length === 0 ? ["Maintenance history is sparse"] : []),
+      ...((context.input.issueHistory.maintenanceHistory ?? []).length === 0 ? ["Maintenance history is sparse"] : []),
     ].slice(0, 5),
     ambiguities: baseline.confidence_score < config.confidenceThreshold
       ? [`Baseline confidence is below ${config.confidenceThreshold}`]
       : [],
-    clarification_history: context.input.clarificationHistory.slice(-3).map((item) => ({
+    clarification_history: (context.input.clarificationHistory ?? []).slice(-3).map((item) => ({
       question: truncate(item.question, 140),
       answer: truncate(item.answer, 120),
     })),
@@ -3008,10 +3397,8 @@ function buildGuaranteedClarifyingQuestion(
   stage: BaselineStage,
   ranking: z.infer<typeof rankedCauseSchema>[]
 ) {
-  const synthesized = synthesizeClarifyingQuestion(stage, ranking).trim();
-  if (synthesized) {
-    return synthesized;
-  }
+  const synthesized = chooseFreshClarifyingQuestion(stage, ranking, null);
+  if (synthesized) return synthesized;
 
   const primarySymptom =
     stage.evidence.primarySymptoms[0] ?? stage.context.input.symptoms[0] ?? "the reported issue";
@@ -3038,8 +3425,8 @@ function buildIntakeInterpretationPackage(rawInput: DiagnosticInputRequest) {
   return {
     vehicle_id: input.vehicleId,
     fleet_id: input.fleetId ?? null,
-    symptoms: input.symptoms.slice(0, 5),
-    fault_codes: input.faultCodes.slice(0, 8),
+    symptoms: (input.symptoms ?? []).slice(0, 5),
+    fault_codes: (input.faultCodes ?? []).slice(0, 8),
     driver_notes: input.driverNotes ? input.driverNotes.slice(0, 220) : null,
     operating_conditions: input.operatingConditions ? input.operatingConditions.slice(0, 160) : null,
     vehicle_context: {
@@ -3063,28 +3450,505 @@ function buildIntakeInterpretationPackage(rawInput: DiagnosticInputRequest) {
       emissions_configuration: input.vehicle?.emissionsConfiguration ?? null,
     },
     repair_history: compactHistoryEntries(
-      input.issueHistory.repairHistory.length > 0
-        ? input.issueHistory.repairHistory
-        : input.issueHistory.recentRepairs
+      (input.issueHistory.repairHistory ?? []).length > 0
+        ? (input.issueHistory.repairHistory ?? [])
+        : (input.issueHistory.recentRepairs ?? [])
     ),
-    maintenance_history: compactHistoryEntries(input.issueHistory.maintenanceHistory),
-    prior_diagnostics: compactHistoryEntries(input.issueHistory.priorDiagnostics),
-    prior_defects: compactHistoryEntries(input.issueHistory.priorDefects),
-    recent_inspections: compactHistoryEntries(input.issueHistory.recentInspections),
-    recent_parts_replaced: input.issueHistory.recentPartsReplaced.slice(0, 3),
-    clarification_history: input.clarificationHistory.slice(-3).map((item) => ({
-      question: item.question.slice(0, 140),
-      answer: item.answer.slice(0, 120),
+    maintenance_history: compactHistoryEntries(input.issueHistory.maintenanceHistory ?? []),
+    prior_diagnostics: compactHistoryEntries(input.issueHistory.priorDiagnostics ?? []),
+    prior_defects: compactHistoryEntries(input.issueHistory.priorDefects ?? []),
+    recent_inspections: compactHistoryEntries(input.issueHistory.recentInspections ?? []),
+    recent_parts_replaced: (input.issueHistory.recentPartsReplaced ?? []).slice(0, 3),
+    clarification_history: (input.clarificationHistory ?? []).slice(-3).map((item) => ({
+      question: (item.question ?? "").slice(0, 140),
+      answer: (item.answer ?? "").slice(0, 120),
     })),
   };
 }
 
+function mapSimpleCategoryToCauseName(category: string) {
+  const mapping: Record<string, string> = {
+    critical_engine_internal: "Internal engine oil/coolant cross-contamination",
+    engine_performance: "Engine performance fault",
+    oil_lubrication_system: "Oil lubrication system fault",
+    cooling_system: "Cooling system fault",
+    aftertreatment_dpf_def_scr: "Aftertreatment / DPF / DEF / SCR fault",
+    electrical_battery_alternator: "Electrical battery or alternator fault",
+    starting_charging: "Starting or charging fault",
+    air_brake_system: "Air brake system fault",
+    fuel_system: "Fuel system fault",
+    transmission_driveline: "Transmission or driveline fault",
+    hydraulics_pto: "Hydraulics or PTO fault",
+    suspension_steering: "Suspension or steering fault",
+    trailer_lighting: "Trailer lighting fault",
+    abs_wheel_end: "ABS or wheel-end fault",
+    tires_wheels: "Tires or wheels fault",
+    unknown_triage: "Unknown triage",
+  };
+
+  return mapping[category] ?? "Unknown triage";
+}
+
+function buildSimpleTadisFallbackRanking(
+  baselineStage: BaselineStage,
+  topLikelyCause: string
+) {
+  const matchedCause = getCauseDefinitionByName(topLikelyCause);
+  const matchedRanking = baselineStage.ranked.find((item) =>
+    item.cause.id === matchedCause?.id || normalizeText(item.cause.cause) === normalizeText(topLikelyCause)
+  );
+
+  const topEntry = matchedRanking
+    ? toRankedCause(matchedRanking, baselineStage.candidateUniverse, baselineStage.evidence)
+    : toRankedCause(
+        baselineStage.ranked[0] ?? {
+          cause: matchedCause ?? CAUSE_LIBRARY[0],
+          probability: 100,
+          score: 1,
+          evidenceMatches: 1,
+          evidenceSummary: [`Simple mode classified the issue as ${topLikelyCause}`],
+        },
+        baselineStage.candidateUniverse,
+        baselineStage.evidence
+      );
+
+  const rest = baselineStage.ranked
+    .filter((item) => item.cause.cause !== topEntry.cause_name)
+    .slice(0, 3)
+    .map((item) => toRankedCause(item, baselineStage.candidateUniverse, baselineStage.evidence));
+
+  return normalizeTopRankingProbabilities([topEntry, ...rest].slice(0, 4));
+}
+
+function buildSimpleTadisQuestionOutput(input: DiagnosticInputRequest, baselineStage: BaselineStage, details: {
+  confidenceScore: number;
+  clarifyingQuestion: string;
+  fallbackUsed: boolean;
+  fallbackReason: string | null;
+  llmStatus: TadisOutput["llm_status"];
+  topLikelyCause: string;
+  driverAction: z.infer<typeof driverActionSchema>;
+  riskLevel: z.infer<typeof riskLevelSchema>;
+  stageLabel: "classifier" | "diagnosis" | "fallback";
+}) {
+  const finalRanking = buildSimpleTadisFallbackRanking(baselineStage, details.topLikelyCause);
+  const rankingDelta = buildRankingDelta(baselineStage.baseline, finalRanking);
+  const confidenceDelta = details.confidenceScore - baselineStage.baseline.confidence_score;
+  const topCause = finalRanking[0];
+  const topCauseDef = topCause ? getCauseDefinitionByName(topCause.cause_name) : null;
+  const fallbackGuidance = getBaselineGuidance(
+    topCauseDef ?? baselineStage.ranked[0]?.cause ?? null,
+    topCause?.cause_name ?? baselineStage.baseline.possible_causes[0]?.cause ?? "Unknown cause"
+  );
+  const recommendedTests = fallbackGuidance.recommendedTests ?? [];
+  const likelyReplacementParts = fallbackGuidance.likelyReplacementParts ?? [];
+  const inspectionRelatedParts = fallbackGuidance.inspectionRelatedParts ?? [];
+  const adjacentPartsToCheck = fallbackGuidance.adjacentPartsToCheck ?? [];
+  const laborTimeBasis = fallbackGuidance.laborTimeBasis ?? [];
+  const systemsAffected = uniqueStrings([
+    ...(topCauseDef?.systems ?? baselineStage.baseline.systems_affected),
+    ...finalRanking.slice(0, 3).flatMap((item) => getCauseDefinitionByName(item.cause_name)?.systems ?? []),
+  ]);
+  const complianceImpact = getComplianceImpact(details.riskLevel);
+  const maintenanceRecommendations = buildMaintenanceRecommendations(
+    baselineStage.ranked.slice(0, 3).map((item) => ({ cause: item.cause, probability: item.probability / 100 })),
+    details.riskLevel,
+    complianceImpact
+  );
+  const similarConfirmedCasesUsed = buildSimilarConfirmedCaseEvidence(baselineStage.context);
+  const reason = details.fallbackUsed
+    ? `Fallback to rule-engine baseline because ${details.fallbackReason ?? "AI output was not usable"}`
+    : details.confidenceScore >= SIMPLE_TADIS_CONFIDENCE_THRESHOLD
+      ? "Simple TADIS mode used a minimal classifier and diagnosis packet."
+      : "Simple TADIS mode asked a clarifying question before finalizing diagnosis.";
+  const freshClarifyingQuestion = chooseFreshClarifyingQuestion(
+    baselineStage,
+    finalRanking,
+    details.clarifyingQuestion
+  );
+  const shouldAskQuestion =
+    details.confidenceScore < SIMPLE_TADIS_CONFIDENCE_THRESHOLD &&
+    baselineStage.context.input.clarificationHistory.length < MAX_CLARIFICATION_ROUNDS &&
+    freshClarifyingQuestion.length > 0;
+
+  return TadisOutputSchema.parse({
+    vehicle_id: String(baselineStage.context.input.vehicleId),
+    systems_affected: systemsAffected.length > 0 ? systemsAffected : baselineStage.baseline.systems_affected,
+    rule_engine_baseline: baselineStage.baseline,
+    internal_engine_baseline: baselineStage.baseline,
+    final_llm_ranking: finalRanking,
+    llm_final_ranking: finalRanking,
+    ranked_likely_causes: finalRanking,
+    possible_causes: normalizeTopRankingProbabilities(finalRanking).map((item) => ({
+      cause: item.cause_name,
+      probability: item.probability,
+    })),
+    ranking_delta: rankingDelta,
+    confidence_delta: confidenceDelta,
+    llm_adjustments: [
+      "Simple TADIS mode used a minimal classifier and diagnosis packet",
+      "History, repair records, maintenance records, and similar cases were withheld from the AI",
+      reason,
+    ],
+    evidence_summary: uniqueStrings([
+      ...(topCause?.evidence_summary ?? []),
+      ...(details.fallbackUsed ? [reason] : []),
+      baselineStage.context.llmIntakeInterpretation ? "Classifier-normalized symptoms were used before scoring" : "",
+    ]).slice(0, 6),
+    normalized_symptoms: baselineStage.evidence.normalizedSymptoms,
+    primary_symptoms: baselineStage.evidence.primarySymptoms,
+    secondary_symptoms: baselineStage.evidence.secondarySymptoms,
+    symptom_to_system_links: baselineStage.evidence.symptomToSystemLinks,
+    symptom_score: baselineStage.evidence.symptomScore,
+    symptom_signal_strength: baselineStage.evidence.symptomSignalStrength,
+    symptom_rationale: baselineStage.evidence.symptomRationale,
+    fault_code_score: baselineStage.evidence.faultCodeScore,
+    fault_code_signal_strength: baselineStage.evidence.faultCodeSignalStrength,
+    primary_vs_secondary_code_assessment: baselineStage.evidence.primaryVsSecondaryCodeAssessment,
+    contextual_code_relevance: baselineStage.evidence.contextualCodeRelevance,
+    code_to_cause_links: baselineStage.evidence.codeToCauseLinks,
+    fault_code_interpretations: baselineStage.evidence.faultCodeInterpretations,
+    fault_code_rationale: baselineStage.evidence.faultCodeRationale,
+    repair_history_score: baselineStage.evidence.repairHistoryScore,
+    maintenance_history_score: baselineStage.evidence.maintenanceHistoryScore,
+    history_score: baselineStage.evidence.historyScore,
+    repair_history_rationale: baselineStage.evidence.repairHistoryRationale,
+    maintenance_history_rationale: baselineStage.evidence.maintenanceHistoryRationale,
+    history_rationale: baselineStage.evidence.historyRationale,
+    recent_parts_replaced: baselineStage.evidence.recentPartsReplaced,
+    recent_parts_replaced_score: baselineStage.evidence.recentPartsReplacedScore,
+    replacement_relevance_to_current_issue: baselineStage.evidence.replacementRelevanceToCurrentIssue,
+    replacement_effect_direction: baselineStage.evidence.replacementEffectDirection,
+    replacement_decay_weight: baselineStage.evidence.replacementDecayWeight,
+    recent_parts_rationale: baselineStage.evidence.recentPartsRationale,
+    recurring_failure_score: baselineStage.evidence.recurringFailureScore,
+    recurring_pattern_type: baselineStage.evidence.recurringPatternType,
+    repeat_code_frequency: baselineStage.evidence.repeatCodeFrequency,
+    repeat_component_frequency: baselineStage.evidence.repeatComponentFrequency,
+    repeat_repair_without_resolution: baselineStage.evidence.repeatRepairWithoutResolution,
+    suspected_unresolved_root_cause: baselineStage.evidence.suspectedUnresolvedRootCause,
+    recurrence_rationale: baselineStage.evidence.recurrenceRationale,
+    cause_library_fit_score: Math.round(average(finalRanking.slice(0, 3).map((item) => item.cause_library_fit_score))),
+    matched_library_causes: baselineStage.baseline.matched_library_causes,
+    partial_library_matches: baselineStage.baseline.partial_library_matches,
+    new_candidate_causes: [],
+    new_candidate_causes_review_required: false,
+    cause_library_rationale: [
+      "Simple TADIS mode kept the candidate universe small and predictable",
+      `Top category: ${details.topLikelyCause}`,
+    ],
+    overall_confidence_score: details.confidenceScore,
+    confidence_score: details.confidenceScore,
+      confidence_rationale: details.fallbackUsed
+        ? [
+            reason,
+            `Confidence was reduced to ${details.confidenceScore}% because the AI review layer did not return usable structured output`,
+          ]
+        : [
+            `Simple ${details.stageLabel} confidence: ${details.confidenceScore}%`,
+            "No repair history or fleet history was sent to the AI in SIMPLE_TADIS_MODE.",
+          ],
+    next_action: shouldAskQuestion ? "ask_question" : "proceed",
+    clarifying_question: shouldAskQuestion ? freshClarifyingQuestion : "",
+    question_rationale:
+      shouldAskQuestion
+        ? "Confidence is below the simple-mode threshold, so this fresh clarifying question is required."
+        : null,
+    missing_evidence: shouldAskQuestion ? [freshClarifyingQuestion] : [],
+    ambiguity_drivers: details.confidenceScore >= SIMPLE_TADIS_CONFIDENCE_THRESHOLD ? [] : ["Simple-mode confidence remained below threshold"],
+    similar_confirmed_cases_used: similarConfirmedCasesUsed,
+    recommended_tests: recommendedTests,
+    recommended_fix: synthesizeRecommendedFix(
+      topCause?.cause_name ?? details.topLikelyCause,
+      recommendedTests,
+      likelyReplacementParts,
+      true,
+      fallbackGuidance.recommendedFix ?? `Verify ${details.topLikelyCause} before replacing parts.`
+    ),
+    risk_level: details.riskLevel,
+    maintenance_recommendations: maintenanceRecommendations,
+    compliance_impact: complianceImpact,
+    top_most_likely_cause: details.topLikelyCause,
+    possible_replacement_parts: likelyReplacementParts,
+    likely_replacement_parts: likelyReplacementParts,
+    inspection_related_parts: inspectionRelatedParts,
+    adjacent_parts_to_check: adjacentPartsToCheck,
+    confirm_before_replacement: true,
+    diagnostic_verification_labor_hours: fallbackGuidance.diagnosticVerificationLaborHours,
+    repair_labor_hours: fallbackGuidance.repairLaborHours,
+    total_estimated_labor_hours: fallbackGuidance.totalEstimatedLaborHours,
+    labor_time_confidence: fallbackGuidance.laborTimeConfidence,
+    labor_time_basis: laborTimeBasis,
+    driver_action: details.driverAction,
+    driver_action_reason: details.fallbackUsed
+      ? `Fallback ${details.riskLevel} risk assessment recommends ${mapRiskToDriverAction(details.riskLevel).toLowerCase()}.`
+      : `Simple diagnosis points to ${details.topLikelyCause}.`,
+    risk_summary: `Top risk is ${details.riskLevel} based on ${details.topLikelyCause}.`,
+    safety_note:
+      details.riskLevel === "critical"
+        ? "Stop the vehicle and arrange shop or tow support before further operation."
+        : "Use simple-mode safety escalation if symptoms worsen during inspection.",
+    compliance_note:
+      complianceImpact === "critical"
+        ? "Potential out-of-service exposure exists until repair verification is complete."
+        : "No immediate compliance-critical finding is confirmed yet.",
+    monitoring_instructions:
+      details.riskLevel === "critical"
+        ? ["Do not continue driving or idling the engine", "Capture photos of the issue for the shop"]
+        : ["Monitor symptoms and escalate if they worsen"],
+    distance_or_time_limit:
+      details.riskLevel === "critical" ? "Do not operate until repaired" : "Short distance only if needed",
+    llm_status: details.llmStatus,
+    llm_provider: "openrouter",
+    llm_model: "simple_tadis_mode",
+    fallback_used: details.fallbackUsed,
+    fallback_reason: details.fallbackReason,
+    safety_override_applied: details.riskLevel === "critical",
+    safety_override_reason:
+      details.riskLevel === "critical"
+        ? "Simple mode escalated to a critical safety response."
+        : null,
+    review_queue_record_ids: [],
+  });
+}
+
+async function analyzeDiagnosticSimpleMode(input: DiagnosticInputRequest) {
+  const config = getDiagnosticRuntimeConfig();
+  const normalizedInput = DiagnosticInputSchema.parse(input);
+  const diagnosticSessionId = randomUUID();
+  const classifierInput = buildSimpleCategoryInput(normalizedInput);
+  const classifierPrompt = buildSimpleClassificationPrompt(classifierInput);
+  const classifierEstimatedChars = estimatePromptCharacterCount([
+    { role: "user", content: classifierPrompt },
+  ]);
+  const classifierLogId = await insertDiagnosticAiRequestLog({
+    companyId: normalizedInput.fleetId ?? 0,
+    assetId: String(normalizedInput.vehicleId),
+    diagnosticSessionId,
+    callType: "classifier",
+    provider: "openrouter",
+    model: config.openRouterModel,
+    estimatedInputCharacters: classifierEstimatedChars,
+    estimatedInputTokens: estimatePromptTokenCount(classifierEstimatedChars),
+    messageCount: 1,
+    maxTokens: SIMPLE_TADIS_CLASSIFIER_MAX_TOKENS,
+    temperature: 0.1,
+    responseFormatEnabled: false,
+    simpleTadisMode: true,
+    truncationApplied: classifierEstimatedChars > SIMPLE_TADIS_CLASSIFIER_MAX_CHARS,
+    status: "failed",
+    fallbackUsed: false,
+  });
+
+  const classifierAttempt = await classifyDiagnosticIssueWithLlm({ intakePackage: classifierInput }, config);
+  const classifierFallbackUsed = classifierAttempt.status !== "ok";
+  const classifier = classifierAttempt.parsed ?? buildSimpleFallbackClassification(normalizedInput);
+  const baselineStage = buildBaselineStage(normalizedInput, config, null);
+  const simpleClassifierQuestion =
+    classifier.classification_confidence >= SIMPLE_TADIS_CONFIDENCE_THRESHOLD
+      ? null
+      : classifier.clarifying_question ?? "What is the single symptom that is most repeatable right now?";
+
+  if (classifierLogId) {
+    await updateDiagnosticAiRequestLog(classifierLogId, {
+        companyId: normalizedInput.fleetId ?? 0,
+        assetId: String(normalizedInput.vehicleId),
+        diagnosticSessionId,
+      callType: "classifier",
+      provider: classifierAttempt.provider,
+      model: classifierAttempt.model,
+      estimatedInputCharacters: classifierEstimatedChars,
+      estimatedInputTokens: estimatePromptTokenCount(classifierEstimatedChars),
+      messageCount: 1,
+      maxTokens: SIMPLE_TADIS_CLASSIFIER_MAX_TOKENS,
+      temperature: 0.1,
+      responseFormatEnabled: false,
+      simpleTadisMode: true,
+      truncationApplied: classifierEstimatedChars > SIMPLE_TADIS_CLASSIFIER_MAX_CHARS,
+      status:
+        classifierAttempt.status === "ok"
+          ? "success"
+          : classifierFallbackUsed
+            ? "fallback"
+            : "failed",
+      errorCode: classifierAttempt.status === "ok" ? null : classifierAttempt.status,
+      errorMessage: classifierAttempt.fallbackReason,
+      fallbackUsed: classifierFallbackUsed,
+    });
+  }
+
+  if (classifier.classification_confidence < SIMPLE_TADIS_CONFIDENCE_THRESHOLD && !classifierFallbackUsed) {
+      return buildSimpleTadisQuestionOutput(normalizedInput, baselineStage, {
+      confidenceScore: classifier.classification_confidence,
+      clarifyingQuestion: simpleClassifierQuestion ?? "What symptom is most repeatable right now?",
+        fallbackUsed: false,
+        fallbackReason: null,
+        llmStatus: "ok",
+        topLikelyCause: mapSimpleCategoryToCauseName(classifier.primary_category),
+        driverAction:
+        classifier.risk_level === "critical"
+          ? "do_not_operate_until_repaired"
+        : classifier.risk_level === "high"
+              ? "stop_and_inspect_on_site"
+              : "drive_to_shop",
+        riskLevel: classifier.risk_level,
+        stageLabel: "classifier",
+      });
+    }
+
+  const diagnosisInput = buildSimpleDiagnosisInput(normalizedInput, classifier);
+  const diagnosisPrompt = buildSimpleDiagnosisPromptMessage(diagnosisInput);
+  const diagnosisEstimatedChars = estimatePromptCharacterCount([
+    { role: "user", content: diagnosisPrompt },
+  ]);
+  const diagnosisLogId = await insertDiagnosticAiRequestLog({
+    companyId: normalizedInput.fleetId ?? 0,
+    assetId: String(normalizedInput.vehicleId),
+    diagnosticSessionId,
+    callType: "diagnosis",
+    provider: "openrouter",
+    model: config.openRouterModel,
+    estimatedInputCharacters: diagnosisEstimatedChars,
+    estimatedInputTokens: estimatePromptTokenCount(diagnosisEstimatedChars),
+    messageCount: 1,
+    maxTokens: SIMPLE_TADIS_DIAGNOSIS_MAX_TOKENS,
+    temperature: 0.1,
+    responseFormatEnabled: false,
+    simpleTadisMode: true,
+    truncationApplied: diagnosisEstimatedChars > SIMPLE_TADIS_DIAGNOSIS_MAX_CHARS,
+    status: "failed",
+    fallbackUsed: false,
+  });
+  const diagnosisAttempt = await diagnoseDiagnosticIssueWithLlm({ evidencePackage: diagnosisInput }, config);
+  const diagnosisFallbackUsed = diagnosisAttempt.status !== "ok";
+  const diagnosis = diagnosisAttempt.parsed;
+
+  if (diagnosisLogId) {
+    await updateDiagnosticAiRequestLog(diagnosisLogId, {
+        companyId: normalizedInput.fleetId ?? 0,
+        assetId: String(normalizedInput.vehicleId),
+        diagnosticSessionId,
+      callType: "diagnosis",
+      provider: diagnosisAttempt.provider,
+      model: diagnosisAttempt.model,
+      estimatedInputCharacters: diagnosisEstimatedChars,
+      estimatedInputTokens: estimatePromptTokenCount(diagnosisEstimatedChars),
+      messageCount: 1,
+      maxTokens: SIMPLE_TADIS_DIAGNOSIS_MAX_TOKENS,
+      temperature: 0.1,
+      responseFormatEnabled: false,
+      simpleTadisMode: true,
+      truncationApplied: diagnosisEstimatedChars > SIMPLE_TADIS_DIAGNOSIS_MAX_CHARS,
+      status: diagnosisAttempt.status === "ok" ? "success" : diagnosisFallbackUsed ? "fallback" : "failed",
+      errorCode: diagnosisAttempt.status === "ok" ? null : diagnosisAttempt.status,
+      errorMessage: diagnosisAttempt.fallbackReason,
+      fallbackUsed: diagnosisFallbackUsed,
+    });
+  }
+
+  if (diagnosisAttempt.status !== "ok" || !diagnosis) {
+      return buildSimpleTadisQuestionOutput(normalizedInput, baselineStage, {
+      confidenceScore: Math.min(
+        SIMPLE_TADIS_CONFIDENCE_THRESHOLD - 1,
+        Math.max(18, Math.min(70, baselineStage.baseline.confidence_score))
+      ),
+      clarifyingQuestion:
+        baselineStage.baseline.next_action === "ask_question"
+          ? baselineStage.baseline.clarifying_question
+          : "What symptom is most repeatable right now?",
+        fallbackUsed: true,
+        fallbackReason: diagnosisAttempt.fallbackReason ?? "Simple diagnosis AI failed",
+        llmStatus: diagnosisAttempt.status,
+        topLikelyCause: baselineStage.baseline.possible_causes[0]?.cause ?? "Unknown triage",
+        driverAction: mapRiskToDriverAction(baselineStage.baseline.risk_level),
+        riskLevel: baselineStage.baseline.risk_level,
+        stageLabel: "fallback",
+      });
+    }
+
+  if (!diagnosis || diagnosis.confidence_score < SIMPLE_TADIS_CONFIDENCE_THRESHOLD) {
+    const clarifyingQuestion =
+      diagnosis?.clarifying_question ??
+      "What symptom is most repeatable right now, and does it happen while moving, idling, or starting?";
+
+      return buildSimpleTadisQuestionOutput(normalizedInput, baselineStage, {
+      confidenceScore: diagnosis?.confidence_score ?? classifier.classification_confidence,
+      clarifyingQuestion,
+        fallbackUsed: diagnosisFallbackUsed,
+        fallbackReason: diagnosisAttempt.fallbackReason,
+        llmStatus: "ok",
+        topLikelyCause: diagnosis?.top_likely_cause ?? mapSimpleCategoryToCauseName(classifier.primary_category),
+        driverAction: diagnosis?.driver_action ?? mapRiskToDriverAction(classifier.risk_level),
+        riskLevel: classifier.risk_level,
+        stageLabel: "diagnosis",
+      });
+    }
+
+    return buildSimpleTadisQuestionOutput(normalizedInput, baselineStage, {
+    confidenceScore: diagnosis.confidence_score,
+    clarifyingQuestion: diagnosis.confidence_score >= SIMPLE_TADIS_CONFIDENCE_THRESHOLD ? "" : diagnosis.clarifying_question ?? "",
+      fallbackUsed: diagnosisFallbackUsed,
+      fallbackReason: diagnosisAttempt.fallbackReason,
+      llmStatus: diagnosisAttempt.status,
+      topLikelyCause: diagnosis.top_likely_cause,
+      driverAction: diagnosis.driver_action,
+      riskLevel: classifier.risk_level,
+      stageLabel: "diagnosis",
+    });
+  }
+
+function buildSimpleTadisEmergencyFallback(input: DiagnosticInputRequest, error: unknown) {
+  const config = getDiagnosticRuntimeConfig();
+  const normalizedInput = DiagnosticInputSchema.parse(input);
+  const baselineStage = buildBaselineStage(normalizedInput, config, null);
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const fallbackConfidence = Math.min(
+    SIMPLE_TADIS_CONFIDENCE_THRESHOLD - 1,
+    Math.max(18, Math.min(70, baselineStage.baseline.confidence_score))
+  );
+  const clarifyingQuestion =
+    baselineStage.baseline.clarifying_question ||
+    buildGuaranteedClarifyingQuestion(
+      baselineStage,
+      baselineStage.ranked
+        .slice(0, 4)
+        .map((item) => toRankedCause(item, baselineStage.candidateUniverse, baselineStage.evidence))
+    );
+
+  console.warn("[Simple TADIS] Emergency fallback used after simple pipeline error.", {
+    vehicleId: String(normalizedInput.vehicleId),
+    reason: errorMessage,
+  });
+
+  return buildSimpleTadisQuestionOutput(normalizedInput, baselineStage, {
+    confidenceScore: fallbackConfidence,
+    clarifyingQuestion,
+    fallbackUsed: true,
+    fallbackReason: `Simple TADIS pipeline error: ${errorMessage}`,
+    llmStatus: "error",
+    topLikelyCause: baselineStage.baseline.possible_causes[0]?.cause ?? "Unknown triage",
+    driverAction: mapRiskToDriverAction(baselineStage.baseline.risk_level),
+    riskLevel: baselineStage.baseline.risk_level,
+    stageLabel: "fallback",
+  });
+}
+
 async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
   const config = getDiagnosticRuntimeConfig();
+  if (config.simpleTadisMode) {
+    try {
+      return await analyzeDiagnosticSimpleMode(input);
+    } catch (error) {
+      return buildSimpleTadisEmergencyFallback(input, error);
+    }
+  }
   const intakeInterpretation = await interpretDiagnosticIntakeWithLlm(
     { intakePackage: buildIntakeInterpretationPackage(input) },
     config
   );
+  if (shouldUseSimpleTadisEmergencyFallback(intakeInterpretation.fallbackReason)) {
+    return analyzeDiagnosticSimpleMode(input);
+  }
   const baselineStage = buildBaselineStage(input, config, intakeInterpretation.parsed);
   const baselineRanking = baselineStage.ranked.slice(0, 4).map((item) =>
     toRankedCause(item, baselineStage.candidateUniverse, baselineStage.evidence)
@@ -3093,6 +3957,9 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
     { evidencePackage: buildEvidencePackage(baselineStage, config) },
     config
   );
+  if (shouldUseSimpleTadisEmergencyFallback(llmReview.fallbackReason)) {
+    return analyzeDiagnosticSimpleMode(input);
+  }
 
   let finalRanking =
     llmReview.status === "ok"
@@ -3150,10 +4017,16 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
     : synthesizeClarifyingQuestion(baselineStage, finalRanking);
   const llmQuestion =
     llmReview.status === "ok" ? (llmReview.parsed.clarifying_question ?? "").trim() : "";
-  const clarifyingQuestion = llmQuestion || fallbackQuestion;
+  const clarifyingQuestion = chooseFreshClarifyingQuestion(
+    baselineStage,
+    finalRanking,
+    llmQuestion || fallbackQuestion
+  );
   const nextAction =
     shouldForceFallbackClarification
-      ? "ask_question"
+      ? clarifyingQuestion
+        ? "ask_question"
+        : "proceed"
       : llmReview.status === "ok"
       ? confidenceScore >= config.confidenceThreshold
         ? "proceed"
@@ -3469,4 +4342,13 @@ export function mapDiagnosticRiskToUrgency(riskLevel: z.infer<typeof riskLevelSc
 
 export function mapDiagnosticRiskToAction(riskLevel: z.infer<typeof riskLevelSchema>) {
   return mapRiskToAction(riskLevel);
+}
+
+function shouldUseSimpleTadisEmergencyFallback(reason: string | null | undefined) {
+  return Boolean(
+    reason &&
+      /429|402|Provider returned error|Bad Request|prompt tokens|rate limit|overloaded|too many requests|Unable to parse|invalid schema|JSON/i.test(
+        reason
+      )
+  );
 }

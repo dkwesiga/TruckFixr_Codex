@@ -1,0 +1,54 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "4",
+      "tag": "0004_init",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "tag": "0005_rls_policies",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "tag": "0006_password_reset",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "tag": "0007_verified_inspections",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "8",
+      "tag": "0008_vehicle_access_control",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "9",
+      "tag": "0009_fix_vehicleId_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "10",
+      "tag": "0010_fix_diagnosticReviewQueue_vehicleId",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "11",
+      "tag": "0011_fix_all_vehicleId_types",
+      "breakpoints": true
+    }
+  ]
+}

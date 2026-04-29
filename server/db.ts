@@ -118,6 +118,31 @@ async function ensureAuthSchema(pool: Pool) {
     `);
 
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS "aiRequestLogs" (
+        "id" serial PRIMARY KEY,
+        "companyId" integer NOT NULL,
+        "assetId" varchar(64) NOT NULL,
+        "diagnosticSessionId" varchar(128) NOT NULL,
+        "callType" varchar(32) NOT NULL,
+        "provider" varchar(32),
+        "model" varchar(255),
+        "estimatedInputCharacters" integer,
+        "estimatedInputTokens" integer,
+        "messageCount" integer,
+        "maxTokens" integer,
+        "temperature" numeric(4,2),
+        "responseFormatEnabled" boolean NOT NULL DEFAULT false,
+        "simpleTadisMode" boolean NOT NULL DEFAULT false,
+        "truncationApplied" boolean NOT NULL DEFAULT false,
+        "status" varchar(32) NOT NULL,
+        "errorCode" varchar(64),
+        "errorMessage" text,
+        "fallbackUsed" boolean NOT NULL DEFAULT false,
+        "createdAt" timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS "users_openId_unique"
       ON "users" ("openId");
     `);
@@ -615,6 +640,42 @@ async function ensureAuthSchema(pool: Pool) {
         IF vehicle_id_data_type IN ('character varying', 'text') THEN
           EXECUTE 'ALTER TABLE "vehicles" ALTER COLUMN "id" SET DEFAULT gen_random_uuid()::text';
         END IF;
+      END
+      $$;
+    `);
+
+    await pool.query(`
+      DO $$
+      DECLARE
+        target_table text;
+        vehicle_id_type text;
+      BEGIN
+        FOREACH target_table IN ARRAY ARRAY[
+          'vehicleAssignments',
+          'inspections',
+          'inspectionChecklistResponses',
+          'inspectionPhotos',
+          'randomProofRequests',
+          'inspectionFlags',
+          'aiTriageRecords',
+          'repairOutcomes',
+          'inAppAlerts',
+          'maintenanceLogs',
+          'defects',
+          'diagnosticReviewQueue'
+        ]
+        LOOP
+          SELECT data_type
+          INTO vehicle_id_type
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = target_table
+            AND column_name = 'vehicleId';
+
+          IF vehicle_id_type IN ('smallint', 'integer', 'bigint') THEN
+            EXECUTE format('ALTER TABLE %I ALTER COLUMN "vehicleId" TYPE varchar(64) USING trim("vehicleId"::text)', target_table);
+          END IF;
+        END LOOP;
       END
       $$;
     `);

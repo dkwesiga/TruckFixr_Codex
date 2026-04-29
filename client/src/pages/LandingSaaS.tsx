@@ -21,9 +21,9 @@ import {
 const colors = {
   fleetBlue: "#0B3C5D",
   fleetNavy: "#00263F",
-  orange: "#F37021",
-  surface: "#F8F9FF",
-  surfaceSoft: "#E5EEFF",
+  orange: "#E32636",
+  surface: "#F6F8FC",
+  surfaceSoft: "#E8EEF8",
   ink: "#0B1C30",
   muted: "#42474E",
 };
@@ -121,27 +121,35 @@ const metrics = [
 
 const pricingPlans = [
   {
-    name: "Starter",
-    trucks: "2-5 trucks",
-    price: "$99",
-    description: "For owner-operators and small teams standardizing inspections.",
-    features: ["Daily inspections", "Basic TADIS diagnostics", "Morning fleet summary", "Email support"],
+    name: "Owner-Operator",
+    trucks: "1-2 trucks",
+    price: "$19/month",
+    description: "For owner-operators managing their own vehicles and compliance.",
+    features: ["Daily inspections", "Basic TADIS diagnostics", "Email support"],
     highlighted: false,
   },
   {
-    name: "Growth",
+    name: "Small Fleet",
+    trucks: "3-5 trucks",
+    price: "$49/month",
+    description: "For small fleets standardizing inspections and maintenance.",
+    features: ["Daily inspections", "TADIS diagnostics", "Morning fleet summary", "Email support"],
+    highlighted: false,
+  },
+  {
+    name: "Fleet Growth",
     trucks: "6-10 trucks",
-    price: "$249",
+    price: "$99/month",
     description: "For growing teams that need stronger visibility and follow-up.",
-    features: ["Everything in Starter", "Advanced reporting", "Maintenance history", "Truck health trends"],
+    features: ["Everything in Small Fleet", "Advanced reporting", "Maintenance history", "Truck health trends"],
     highlighted: true,
   },
   {
-    name: "Fleet",
+    name: "Fleet Pro",
     trucks: "11-20 trucks",
-    price: "$499",
+    price: "$199/month",
     description: "For operators coordinating more trucks, people, and defects.",
-    features: ["Everything in Growth", "Custom inspection templates", "Unlimited team members", "Priority support"],
+    features: ["Everything in Fleet Growth", "Custom inspection templates", "Unlimited team members", "Priority support"],
     highlighted: false,
   },
 ];
@@ -217,7 +225,7 @@ function StatusPill({ level }: { level: string }) {
 function FleetCommandMockup() {
   return (
     <div className="relative mx-auto max-w-[620px]">
-      <div className="absolute -inset-5 rounded-[2rem] bg-[#F37021]/10 blur-3xl" />
+      <div className="absolute -inset-5 rounded-[2rem] bg-[#E32636]/10 blur-3xl" />
       <div className="relative rotate-1 overflow-hidden rounded-lg border border-[#7FA7CD]/30 bg-[#0B3C5D] p-2 shadow-[0_34px_80px_-40px_rgba(0,38,63,0.85)]">
         <div className="rounded-md border border-white/10 bg-[#071E32]">
           <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
@@ -250,7 +258,7 @@ function FleetCommandMockup() {
                   <p className="font-['Manrope'] text-sm font-bold text-white">Action queue</p>
                   <p className="text-xs text-slate-300">Trucks affecting dispatch readiness</p>
                 </div>
-                <Gauge className="h-5 w-5 text-[#F37021]" />
+                <Gauge className="h-5 w-5 text-[#E32636]" />
               </div>
               <div className="mt-4 space-y-3">
                 {fleetRows.map(([unit, issue, action, level]) => (
@@ -274,7 +282,7 @@ function FleetCommandMockup() {
 
           <div className="border-t border-white/10 bg-[#00263F] px-5 py-4">
             <div className="flex items-start gap-3">
-              <BrainCircuit className="mt-1 h-5 w-5 text-[#F37021]" />
+              <BrainCircuit className="mt-1 h-5 w-5 text-[#E32636]" />
               <p className="text-sm leading-6 text-slate-200">
                 TADIS flags Unit 487964 as likely cooling-system risk. Hold dispatch,
                 inspect coolant level, belt tension, fan response, and recent repair history.
@@ -333,16 +341,8 @@ export default function LandingSaaS() {
     >
       <header className="sticky top-0 z-50 border-b border-[var(--fleet-outline)] bg-white/95 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between px-4 sm:px-6">
-          <a href="/" className="flex items-center gap-3">
-            <AppLogo imageClassName="h-9" frameClassName="rounded p-1.5" />
-            <div className="leading-none">
-              <p className="font-['Manrope'] text-base font-black uppercase tracking-[-0.04em] text-[#00263F]">
-                TruckFixr
-              </p>
-              <p className="mt-1 text-[11px] font-bold uppercase tracking-[0.2em] text-[#A04100]">
-                Fleet AI
-              </p>
-            </div>
+          <a href="/" className="flex items-center">
+            <AppLogo variant="full" imageClassName="h-10 w-auto" />
           </a>
 
           <nav className="hidden items-center gap-8 md:flex">
@@ -355,7 +355,7 @@ export default function LandingSaaS() {
               <a
                 key={label}
                 href={href}
-                className="font-['Manrope'] text-xs font-bold uppercase tracking-[0.08em] text-[var(--fleet-muted)] transition-colors hover:text-[#F37021]"
+                className="font-['Manrope'] text-xs font-bold uppercase tracking-[0.08em] text-[var(--fleet-muted)] transition-colors hover:text-[#E32636]"
               >
                 {label}
               </a>
@@ -366,13 +366,13 @@ export default function LandingSaaS() {
             <Button
               asChild
               variant="outline"
-              className="rounded border-[#00263F] bg-white px-3 font-['Manrope'] text-xs font-bold text-[#00263F] hover:bg-[#E5EEFF] sm:px-4 sm:text-sm"
+              className="rounded border-[#00263F] bg-white px-3 font-['Manrope'] text-xs font-bold text-[#00263F] hover:border-[#E32636] hover:bg-[#F4F7FD] sm:px-4 sm:text-sm"
             >
               <a href="/auth/email">Sign In</a>
             </Button>
             <Button
               asChild
-              className="rounded bg-[#F37021] px-3 font-['Manrope'] text-xs font-bold text-white hover:bg-[#A04100] sm:px-5 sm:text-sm"
+              className="rounded bg-[#E32636] px-3 font-['Manrope'] text-xs font-bold text-white hover:bg-[#BC1E2C] sm:px-5 sm:text-sm"
             >
               <a href="/signup">
                 Sign Up
@@ -384,8 +384,9 @@ export default function LandingSaaS() {
       </header>
 
       <main>
-        <section className="relative isolate overflow-hidden border-b border-[var(--fleet-outline)] bg-[linear-gradient(135deg,#F8F9FF_0%,#E5EEFF_100%)]">
-          <div className="absolute inset-y-0 right-0 -z-10 hidden w-1/2 bg-[radial-gradient(circle,#CBD5E1_1px,transparent_1px)] bg-[length:24px_24px] opacity-50 lg:block" />
+        <section className="relative isolate overflow-hidden border-b border-[var(--fleet-outline)] bg-[linear-gradient(140deg,#F7F9FC_0%,#E9EEF7_52%,#FDEDEF_100%)]">
+          <div className="absolute inset-y-0 right-0 -z-10 hidden w-1/2 bg-[radial-gradient(circle,#C7D2E2_1px,transparent_1px)] bg-[length:24px_24px] opacity-45 lg:block" />
+          <div className="absolute left-[8%] top-16 -z-10 hidden h-48 w-48 rounded-full bg-[#E32636]/8 blur-3xl lg:block" />
           <div className="mx-auto grid min-h-[calc(100svh-4rem)] max-w-[1200px] items-center gap-12 px-4 py-16 sm:px-6 lg:grid-cols-[0.95fr_1.05fr] lg:py-20">
             <motion.div
               initial={{ opacity: 0, y: 24 }}
@@ -393,13 +394,18 @@ export default function LandingSaaS() {
               transition={revealTransition}
               className="max-w-2xl"
             >
-              <p className="inline-flex rounded bg-[#00263F] px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-white">
-                Fleet Intelligence Engine
+              <AppLogo
+                variant="full"
+                className="mb-6"
+                imageClassName="h-16 w-auto sm:h-20"
+              />
+              <p className="inline-flex rounded-full bg-[#00263F] px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-white">
+                Verified fleet health platform
               </p>
               <h1 className="mt-6 font-['Manrope'] text-5xl font-black leading-[0.95] tracking-[-0.06em] text-[#00263F] sm:text-6xl lg:text-7xl">
-                Maximize uptime.
+                Catch fleet problems
                 <br />
-                <span className="text-[#fc7728]">Simplify compliance.</span>
+                <span className="text-[#E32636]">before they become breakdowns.</span>
               </h1>
               <p className="mt-6 max-w-xl text-lg leading-8 text-[#42474E]">
                 Verified inspections, defect reporting, AI triage, and manager visibility
@@ -409,7 +415,7 @@ export default function LandingSaaS() {
                 <Button
                   asChild
                   size="lg"
-                  className="rounded bg-[#F37021] px-8 font-['Manrope'] text-base font-bold text-white shadow-[0_18px_35px_-22px_rgba(243,112,33,0.9)] hover:bg-[#A04100]"
+                  className="rounded bg-[#E32636] px-8 font-['Manrope'] text-base font-bold text-white shadow-[0_18px_35px_-22px_rgba(227,38,54,0.72)] hover:bg-[#BC1E2C]"
                 >
                   <a href="/signup">
                     Start Free Trial
@@ -433,7 +439,7 @@ export default function LandingSaaS() {
                   "Compliance-friendly records",
                 ].map((item) => (
                   <div key={item} className="flex items-center gap-2">
-                    <Check className="h-4 w-4 text-[#F37021]" />
+                    <Check className="h-4 w-4 text-[#E32636]" />
                     <span>{item}</span>
                   </div>
                 ))}
@@ -737,6 +743,7 @@ export default function LandingSaaS() {
             <a href="#faq" className="hover:text-[#F37021]">FAQ</a>
           </div>
           <p>2026 TruckFixr. Fleet AI for modern trucking teams.</p>
+          <p className="text-sm">Contact: <a href="tel:905-677-7663" className="hover:text-[#F37021]">905-677-7663</a></p>
         </div>
       </footer>
     </div>

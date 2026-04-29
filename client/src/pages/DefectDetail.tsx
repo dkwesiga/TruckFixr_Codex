@@ -19,10 +19,23 @@ function DefectDetailContent() {
   }, []);
   const defectQuery = trpc.defects.getById.useQuery({ defectId });
   const utils = trpc.useUtils();
+  const [managerNote, setManagerNote] = useState("");
   const recordRepairOutcomeMutation = trpc.inspections.recordRepairOutcome.useMutation({
     onSuccess: async () => {
       await utils.defects.getById.invalidate({ defectId });
       toast.success("Repair outcome recorded");
+    },
+  });
+  const updateStatusMutation = trpc.defects.updateStatus.useMutation({
+    onSuccess: async () => {
+      await utils.defects.getById.invalidate({ defectId });
+      toast.success("Defect status updated");
+    },
+  });
+  const resolveMutation = trpc.defects.resolve.useMutation({
+    onSuccess: async () => {
+      await utils.defects.getById.invalidate({ defectId });
+      toast.success("Defect marked resolved");
     },
   });
   const [repairForm, setRepairForm] = useState({
@@ -113,6 +126,24 @@ function DefectDetailContent() {
       returnedToServiceAt: new Date().toISOString(),
       repairNotes: repairForm.repairNotes.trim() || undefined,
       resolveDefect: true,
+    });
+  };
+
+  const submitStatusUpdate = async (status: "open" | "acknowledged" | "assigned" | "resolved", options?: { assignedTo?: number }) => {
+    if (!liveDefect) return;
+    await updateStatusMutation.mutateAsync({
+      defectId: defect.id,
+      status,
+      notes: managerNote.trim() || undefined,
+      assignedTo: options?.assignedTo,
+    });
+  };
+
+  const markResolved = async () => {
+    if (!liveDefect) return;
+    await resolveMutation.mutateAsync({
+      defectId: defect.id,
+      resolutionNotes: managerNote.trim() || "Resolved by manager",
     });
   };
 
@@ -257,22 +288,51 @@ function DefectDetailContent() {
             {/* Manager Actions Card */}
             <Card>
               <CardHeader>
-                <CardTitle>Manager Actions</CardTitle>
+              <CardTitle>Manager Actions</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                <Button className="w-full" variant="outline">
+                <div className="space-y-2">
+                  <Label htmlFor="managerNote">Manager note</Label>
+                  <Textarea
+                    id="managerNote"
+                    value={managerNote}
+                    onChange={(event) => setManagerNote(event.target.value)}
+                    placeholder="Optional note for the driver or mechanic"
+                  />
+                </div>
+                <Button
+                  className="w-full"
+                  variant="outline"
+                  disabled={updateStatusMutation.isPending}
+                  onClick={() => void submitStatusUpdate("acknowledged")}
+                >
                   <CheckCircle className="w-4 h-4 mr-2" />
                   Acknowledge
                 </Button>
-                <Button className="w-full" variant="outline">
+                <Button
+                  className="w-full"
+                  variant="outline"
+                  disabled={updateStatusMutation.isPending}
+                  onClick={() => void submitStatusUpdate("assigned")}
+                >
                   <Clock className="w-4 h-4 mr-2" />
                   Assign to Mechanic
                 </Button>
-                <Button className="w-full" variant="outline">
+                <Button
+                  className="w-full"
+                  variant="outline"
+                  disabled={updateStatusMutation.isPending}
+                  onClick={() => void submitStatusUpdate((liveDefect?.status ?? "open") as "open" | "acknowledged" | "assigned" | "resolved")}
+                >
                   <MessageSquare className="w-4 h-4 mr-2" />
                   Add Note
                 </Button>
-                <Button className="w-full" variant="outline">
+                <Button
+                  className="w-full"
+                  variant="outline"
+                  disabled={resolveMutation.isPending}
+                  onClick={() => void markResolved()}
+                >
                   <FileText className="w-4 h-4 mr-2" />
                   Mark Resolved
                 </Button>

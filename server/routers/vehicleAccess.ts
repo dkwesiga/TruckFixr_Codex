@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, inArray, or } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
@@ -32,6 +32,35 @@ const requestReasonSchema = z.enum([
   "other",
 ]);
 
+const vehicleIdentifierSchema = z.union([z.number().int().positive(), z.string().trim().min(1)]);
+
+function normalizeVehicleIdentifier(value: z.infer<typeof vehicleIdentifierSchema>) {
+  return String(value).trim();
+}
+
+function toNumericVehicleId(value: string) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+async function getVehicleByFlexibleId(input: { db: Awaited<ReturnType<typeof getDb>>; fleetId: number; vehicleId: string }) {
+  const db = input.db;
+  if (!db) return null;
+
+  const [vehicle] = await db
+    .select()
+    .from(vehicles)
+    .where(
+      and(
+        eq(vehicles.fleetId, input.fleetId),
+        sql`CAST(${vehicles.id} AS text) = ${input.vehicleId}`
+      )
+    )
+    .limit(1);
+
+  return vehicle ?? null;
+}
+
 function normalizeDate(value?: string | null) {
   if (!value) return null;
   const parsed = new Date(value);
@@ -50,7 +79,7 @@ function isUrgentReason(reason: z.infer<typeof requestReasonSchema>) {
 
 async function notifyUsers(input: {
   fleetId: number;
-  vehicleId?: number | null;
+  vehicleId?: string | number | null;
   actorUserId: number;
   recipientUserIds: number[];
   alertType: string;
@@ -60,13 +89,19 @@ async function notifyUsers(input: {
 }) {
   const db = await getDb();
   if (!db || input.recipientUserIds.length === 0) return;
+  const normalizedVehicleId =
+    typeof input.vehicleId === "number"
+      ? input.vehicleId
+      : typeof input.vehicleId === "string"
+        ? toNumericVehicleId(input.vehicleId)
+        : null;
 
   const uniqueRecipientIds = Array.from(new Set(input.recipientUserIds.filter(Boolean)));
   await db.insert(inAppAlerts).values(
     uniqueRecipientIds.map((userId) => ({
       fleetId: input.fleetId,
       userId,
-      vehicleId: input.vehicleId ?? null,
+      vehicleId: normalizedVehicleId,
       alertType: input.alertType,
       severity: input.severity ?? "info",
       title: input.title,
@@ -157,7 +192,7 @@ export const vehicleAccessRouter = router({
     .input(
       z.object({
         fleetId: z.number().int().positive(),
-        vehicleId: z.number().int().positive(),
+        vehicleId: vehicleIdentifierSchema,
       })
     )
     .query(async ({ input, ctx }) => {
@@ -175,11 +210,13 @@ export const vehicleAccessRouter = router({
         });
       }
 
-      const [vehicle] = await db
-        .select()
-        .from(vehicles)
-        .where(and(eq(vehicles.id, input.vehicleId), eq(vehicles.fleetId, input.fleetId)))
-        .limit(1);
+      const normalizedVehicleId = normalizeVehicleIdentifier(input.vehicleId);
+      const numericVehicleId = toNumericVehicleId(normalizedVehicleId);
+      const vehicle = await getVehicleByFlexibleId({
+        db,
+        fleetId: input.fleetId,
+        vehicleId: normalizedVehicleId,
+      });
 
       if (!vehicle) {
         throw new TRPCError({
@@ -195,27 +232,36 @@ export const vehicleAccessRouter = router({
         });
       }
 
-      const assignmentRows = await db
-        .select({
-          id: vehicleAssignments.id,
-          driverUserId: vehicleAssignments.driverUserId,
-          assignedByUserId: vehicleAssignments.assignedByUserId,
-          accessType: vehicleAssignments.accessType,
-          startsAt: vehicleAssignments.startsAt,
-          expiresAt: vehicleAssignments.expiresAt,
-          status: vehicleAssignments.status,
-          notes: vehicleAssignments.notes,
-          createdAt: vehicleAssignments.createdAt,
-          updatedAt: vehicleAssignments.updatedAt,
-        })
-        .from(vehicleAssignments)
-        .where(
-          and(
-            eq(vehicleAssignments.fleetId, input.fleetId),
-            eq(vehicleAssignments.vehicleId, input.vehicleId)
-          )
-        )
-        .orderBy(desc(vehicleAssignments.updatedAt));
+      const assignmentResult = await db.execute(sql`
+        select
+          "id",
+          "driverUserId",
+          "assignedByUserId",
+          "accessType",
+          "startsAt",
+          "expiresAt",
+          "status",
+          "notes",
+          "createdAt",
+          "updatedAt"
+        from "vehicleAssignments"
+        where
+          "fleetId" = ${input.fleetId}
+          and CAST("vehicleId" AS text) = ${normalizedVehicleId}
+        order by "updatedAt" desc
+      `);
+      const assignmentRows = (assignmentResult.rows ?? []) as Array<{
+        id: number;
+        driverUserId: number;
+        assignedByUserId: number;
+        accessType: string;
+        startsAt: Date;
+        expiresAt: Date | null;
+        status: string;
+        notes: string | null;
+        createdAt: Date;
+        updatedAt: Date;
+      }>;
       const effectiveAssignmentRows =
         assignmentRows.length === 0 && vehicle.assignedDriverId
           ? [
@@ -238,11 +284,16 @@ export const vehicleAccessRouter = router({
         .select()
         .from(vehicleAccessRequests)
         .where(
-          and(
-            eq(vehicleAccessRequests.fleetId, input.fleetId),
-            eq(vehicleAccessRequests.vehicleId, input.vehicleId),
-            eq(vehicleAccessRequests.status, "pending")
-          )
+          numericVehicleId != null
+            ? and(
+                eq(vehicleAccessRequests.fleetId, input.fleetId),
+                eq(vehicleAccessRequests.vehicleId, numericVehicleId),
+                eq(vehicleAccessRequests.status, "pending")
+              )
+            : and(
+                eq(vehicleAccessRequests.fleetId, input.fleetId),
+                eq(vehicleAccessRequests.status, "pending")
+              )
         )
         .orderBy(desc(vehicleAccessRequests.createdAt));
 
@@ -407,7 +458,7 @@ export const vehicleAccessRouter = router({
     .input(
       z.object({
         fleetId: z.number().int().positive(),
-        query: z.string().trim().min(1),
+        query: z.string().trim().optional().default(""),
       })
     )
     .query(async ({ input, ctx }) => {
@@ -455,19 +506,19 @@ export const vehicleAccessRouter = router({
           .join(" ")
           .toLowerCase();
 
-        if (haystack.includes(query)) {
+        if (!query || haystack.includes(query)) {
           visibleVehicles.push(vehicle);
         }
       }
 
-      return visibleVehicles.slice(0, 10);
+      return visibleVehicles.slice(0, query ? 10 : 100);
     }),
 
   assignDriverAccess: protectedProcedure
     .input(
       z.object({
         fleetId: z.number().int().positive(),
-        vehicleId: z.number().int().positive(),
+        vehicleId: vehicleIdentifierSchema,
         driverUserId: z.number().int().positive(),
         accessType: accessTypeSchema.default("permanent"),
         startsAt: z.string().optional(),
@@ -490,14 +541,19 @@ export const vehicleAccessRouter = router({
         });
       }
 
-      const [vehicle] = await db
-        .select()
-        .from(vehicles)
-        .where(and(eq(vehicles.id, input.vehicleId), eq(vehicles.fleetId, input.fleetId)))
-        .limit(1);
+      const normalizedVehicleId = normalizeVehicleIdentifier(input.vehicleId);
+      const numericVehicleId = toNumericVehicleId(normalizedVehicleId);
+      const vehicle = await getVehicleByFlexibleId({
+        db,
+        fleetId: input.fleetId,
+        vehicleId: normalizedVehicleId,
+      });
       if (!vehicle) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Vehicle not found" });
       }
+
+      // Use the actual vehicle ID from DB (could be UUID or numeric)
+      const actualVehicleId = vehicle.id;
 
       const driverBelongsToFleet = await verifyDriverBelongsToFleet({
         fleetId: input.fleetId,
@@ -525,60 +581,138 @@ export const vehicleAccessRouter = router({
         });
       }
 
-      const existing = await getActiveVehicleAssignment({
-        vehicleId: input.vehicleId,
-        driverUserId: input.driverUserId,
-      });
+      let existing = null;
+      try {
+        existing = await getActiveVehicleAssignment({
+          vehicleId: actualVehicleId,
+          driverUserId: input.driverUserId,
+        });
+      } catch (error) {
+        console.warn("[AssignDriver] Skipping active assignment lookup due to schema mismatch.", {
+          vehicleId: actualVehicleId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
 
       let assignment;
       if (existing) {
-        [assignment] = await db
-          .update(vehicleAssignments)
-          .set({
-            accessType: input.accessType,
-            startsAt,
-            expiresAt,
-            status: "active",
-            notes: input.notes?.trim() || null,
-            assignedByUserId: ctx.user.id,
-            updatedAt: new Date(),
-          })
-          .where(eq(vehicleAssignments.id, existing.id))
-          .returning();
+        const updated = await db.execute(sql`
+          update "vehicleAssignments"
+          set
+            "accessType" = ${input.accessType},
+            "startsAt" = ${startsAt},
+            "expiresAt" = ${expiresAt},
+            "status" = ${"active"},
+            "notes" = ${input.notes?.trim() || null},
+            "assignedByUserId" = ${ctx.user.id},
+            "updatedAt" = ${new Date()}
+          where "id" = ${existing.id}
+          returning
+            "id",
+            "fleetId",
+            "vehicleId",
+            "driverUserId",
+            "assignedByUserId",
+            "accessType",
+            "startsAt",
+            "expiresAt",
+            "status",
+            "notes",
+            "createdAt",
+            "updatedAt"
+        `);
+        assignment = updated.rows?.[0] ?? null;
       } else {
         try {
-          [assignment] = await db
-            .insert(vehicleAssignments)
-            .values({
-              fleetId: input.fleetId,
-              vehicleId: input.vehicleId,
-              driverUserId: input.driverUserId,
-              assignedByUserId: ctx.user.id,
-              accessType: input.accessType,
-              startsAt,
-              expiresAt,
-              status: "active",
-              notes: input.notes?.trim() || null,
-            })
-            .returning();
+          const inserted = await db.execute(sql`
+            insert into "vehicleAssignments" (
+              "fleetId",
+              "vehicleId",
+              "driverUserId",
+              "assignedByUserId",
+              "accessType",
+              "startsAt",
+              "expiresAt",
+              "status",
+              "notes",
+              "createdAt",
+              "updatedAt"
+            ) values (
+              ${input.fleetId},
+              ${String(actualVehicleId)},
+              ${input.driverUserId},
+              ${ctx.user.id},
+              ${input.accessType},
+              ${startsAt},
+              ${expiresAt},
+              ${"active"},
+              ${input.notes?.trim() || null},
+              ${new Date()},
+              ${new Date()}
+            )
+            returning
+              "id",
+              "fleetId",
+              "vehicleId",
+              "driverUserId",
+              "assignedByUserId",
+              "accessType",
+              "startsAt",
+              "expiresAt",
+              "status",
+              "notes",
+              "createdAt",
+              "updatedAt"
+          `);
+          assignment = inserted.rows?.[0] ?? null;
         } catch (error) {
-          console.warn("[VehicleAccess] Falling back to legacy vehicle assignment storage.", {
-            vehicleId: input.vehicleId,
+          console.warn("[AssignDriver] Could not write vehicleAssignments history row; continuing with legacy assignment update.", {
+            fleetId: input.fleetId,
+            vehicleId: actualVehicleId,
             driverUserId: input.driverUserId,
-            error: error instanceof Error ? error.message : error,
+            error: error instanceof Error ? error.message : String(error),
           });
           assignment = null;
         }
       }
 
-      await db
-        .update(vehicles)
-        .set({ assignedDriverId: input.driverUserId, updatedAt: new Date() })
-        .where(eq(vehicles.id, input.vehicleId));
+      try {
+        await db.execute(sql`
+          update "vehicles"
+          set
+            "assignedDriverId" = ${input.driverUserId},
+            "updatedAt" = ${new Date()}
+          where
+            "fleetId" = ${input.fleetId}
+            and CAST("id" AS text) = ${String(actualVehicleId)}
+        `);
+      } catch (legacyError) {
+        console.warn("[AssignDriver] Could not update vehicles.assignedDriverId; continuing without legacy column update.", {
+          vehicleId: actualVehicleId,
+          attemptedDriverCandidates: [input.driverUserId],
+          error: legacyError instanceof Error ? legacyError.message : String(legacyError),
+          });
+      }
+
+      try {
+        await db
+          .update(users)
+          .set({
+            managerUserId: ctx.user.id,
+            managerEmail: ctx.user.email?.trim().toLowerCase() || null,
+            updatedAt: new Date(),
+          })
+          .where(eq(users.id, input.driverUserId));
+      } catch (userLinkError) {
+        console.warn("[AssignDriver] Could not update driver manager linkage; continuing.", {
+          driverUserId: input.driverUserId,
+          error: userLinkError instanceof Error ? userLinkError.message : String(userLinkError),
+        });
+      }
 
       await notifyUsers({
         fleetId: input.fleetId,
-        vehicleId: input.vehicleId,
+        vehicleId: numericVehicleId,
         actorUserId: ctx.user.id,
         recipientUserIds: [input.driverUserId],
         alertType: "vehicle_access_granted",
@@ -594,7 +728,7 @@ export const vehicleAccessRouter = router({
         assignment ?? {
           id: 0,
           fleetId: input.fleetId,
-          vehicleId: input.vehicleId,
+          vehicleId: actualVehicleId as unknown as number,
           driverUserId: input.driverUserId,
           assignedByUserId: ctx.user.id,
           accessType: input.accessType,

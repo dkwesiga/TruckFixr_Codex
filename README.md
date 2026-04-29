@@ -132,6 +132,7 @@ Optional backend env vars:
 - `DIAGNOSTIC_TIMEOUT_MS`
 - `DIAGNOSTIC_INTAKE_MAX_TOKENS`
 - `DIAGNOSTIC_REVIEW_MAX_TOKENS`
+- `SIMPLE_TADIS_MODE` set to `true` to force the minimal classifier/diagnosis path during provider stabilization
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
 - `STRIPE_PRICE_PRO_MONTHLY`

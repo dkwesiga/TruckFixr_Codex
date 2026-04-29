@@ -43,4 +43,5 @@ export const ENV = {
   diagnosticConfidenceThreshold: readEnv("DIAGNOSTIC_CONFIDENCE_THRESHOLD"),
   diagnosticNewCauseMinConfidence: readEnv("DIAGNOSTIC_NEW_CAUSE_MIN_CONFIDENCE"),
   diagnosticTimeoutMs: readEnv("DIAGNOSTIC_TIMEOUT_MS"),
+  simpleTadisMode: readEnv("SIMPLE_TADIS_MODE"),
 };

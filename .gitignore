@@ -104,6 +104,7 @@ jspm_packages/
 tmp/
 temp/
 .publish-staging/
+.git-publish/
 .publish-tree.json
 truckfixr-codex-source*.zip
 

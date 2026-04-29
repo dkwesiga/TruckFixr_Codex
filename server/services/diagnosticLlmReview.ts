@@ -164,6 +164,64 @@ export type DiagnosticIntakeInterpretationResult =
       raw: InvokeResult | null;
     };
 
+const simpleCategorySchema = z.object({
+  primary_category: z.enum([
+    "critical_engine_internal",
+    "engine_performance",
+    "oil_lubrication_system",
+    "cooling_system",
+    "aftertreatment_dpf_def_scr",
+    "electrical_battery_alternator",
+    "starting_charging",
+    "air_brake_system",
+    "fuel_system",
+    "transmission_driveline",
+    "hydraulics_pto",
+    "suspension_steering",
+    "trailer_lighting",
+    "abs_wheel_end",
+    "tires_wheels",
+    "unknown_triage",
+  ]),
+  secondary_category: z.union([
+    z.enum([
+      "critical_engine_internal",
+      "engine_performance",
+      "oil_lubrication_system",
+      "cooling_system",
+      "aftertreatment_dpf_def_scr",
+      "electrical_battery_alternator",
+      "starting_charging",
+      "air_brake_system",
+      "fuel_system",
+      "transmission_driveline",
+      "hydraulics_pto",
+      "suspension_steering",
+      "trailer_lighting",
+      "abs_wheel_end",
+      "tires_wheels",
+      "unknown_triage",
+    ]),
+    z.null(),
+  ]),
+  risk_level: z.enum(["low", "medium", "high", "critical"]),
+  classification_confidence: z.number().min(0).max(100),
+  clarifying_question: z.string().nullable(),
+});
+
+const simpleDiagnosisSchema = z.object({
+  top_likely_cause: z.string().min(1),
+  confidence_score: z.number().min(0).max(100),
+  clarifying_question: z.string().nullable(),
+  driver_action: driverActionEnum,
+  safety_note: z.string().min(1),
+  shop_next_steps: z.array(z.string()).min(1).max(5),
+  should_escalate_to_mechanic: z.boolean(),
+});
+
+export type SimpleDiagnosticCategoryResult = z.infer<typeof simpleCategorySchema>;
+export type SimpleDiagnosticDiagnosisResult = z.infer<typeof simpleDiagnosisSchema>;
+
 type PromptCompactLevel = 0 | 1 | 2;
 
 type DiagnosticProviderPlan = {
@@ -173,6 +231,25 @@ type DiagnosticProviderPlan = {
   defaultModel: string | null;
   providerLabel: string;
 };
+
+const MODEL_RATE_LIMIT_COOLDOWN_MS = 120_000;
+const modelSkipUntil = new Map<string, number>();
+
+function shouldTemporarilySkipModel(model: string) {
+  const skipUntil = modelSkipUntil.get(model);
+  if (!skipUntil) return false;
+  if (Date.now() >= skipUntil) {
+    modelSkipUntil.delete(model);
+    return false;
+  }
+  return true;
+}
+
+function rememberTemporaryModelFailure(model: string, error: Error) {
+  if (isOpenRouterRateLimitError(error)) {
+    modelSkipUntil.set(model, Date.now() + MODEL_RATE_LIMIT_COOLDOWN_MS);
+  }
+}
 
 function extractBalancedJsonObjects(text: string) {
   const objects: string[] = [];
@@ -771,6 +848,122 @@ function normalizeIntakeInterpretationStatus(error: Error): Exclude<DiagnosticIn
   return "error";
 }
 
+function normalizeSimpleCategory(value: unknown) {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  const allowed = new Set([
+    "critical_engine_internal",
+    "engine_performance",
+    "oil_lubrication_system",
+    "cooling_system",
+    "aftertreatment_dpf_def_scr",
+    "electrical_battery_alternator",
+    "starting_charging",
+    "air_brake_system",
+    "fuel_system",
+    "transmission_driveline",
+    "hydraulics_pto",
+    "suspension_steering",
+    "trailer_lighting",
+    "abs_wheel_end",
+    "tires_wheels",
+    "unknown_triage",
+  ]);
+
+  return allowed.has(normalized) ? normalized : "unknown_triage";
+}
+
+function normalizeSimpleRiskLevel(value: unknown) {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (normalized === "critical") return "critical";
+  if (normalized === "high") return "high";
+  if (normalized === "medium") return "medium";
+  return "low";
+}
+
+function coerceSimpleCategoryPayload(payload: unknown) {
+  const record = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+  return {
+    primary_category: normalizeSimpleCategory(record.primary_category ?? record.primaryCategory),
+    secondary_category:
+      record.secondary_category === null || record.secondaryCategory === null
+        ? null
+        : normalizeSimpleCategory(record.secondary_category ?? record.secondaryCategory),
+    risk_level: normalizeSimpleRiskLevel(record.risk_level ?? record.riskLevel),
+    classification_confidence: toBoundedScore(
+      record.classification_confidence ?? record.classificationConfidence,
+      0
+    ),
+    clarifying_question:
+      typeof record.clarifying_question === "string"
+        ? record.clarifying_question.trim() || null
+        : typeof record.clarifyingQuestion === "string"
+          ? record.clarifyingQuestion.trim() || null
+          : null,
+  };
+}
+
+function parseSimpleCategoryResponse(rawText: string) {
+  const normalized = normalizeJsonLikeText(rawText);
+  const stripped = stripMarkdownCodeFences(normalized);
+  const candidates = dedupeStrings([
+    normalized,
+    stripped,
+    ...extractJsonCodeBlocks(normalized),
+    ...extractBalancedJsonObjects(stripped),
+    ...extractBalancedJsonObjects(normalized),
+  ]);
+
+  for (const candidate of candidates) {
+    const parseAttempts = dedupeStrings([candidate, removeTrailingCommas(candidate)]);
+    for (const attempt of parseAttempts) {
+      try {
+        const parsed = simpleCategorySchema.parse(coerceSimpleCategoryPayload(JSON.parse(attempt)));
+        if (parsed.classification_confidence >= 85) {
+          parsed.clarifying_question = null;
+        } else if (!parsed.clarifying_question) {
+          throw new Error("Simple classifier schema invalid: clarifying question missing");
+        }
+        return parsed;
+      } catch {
+        // Try the next parse strategy.
+      }
+    }
+  }
+
+  throw new Error("Unable to parse simple classifier JSON");
+}
+
+function parseSimpleDiagnosisResponse(rawText: string) {
+  const normalized = normalizeJsonLikeText(rawText);
+  const stripped = stripMarkdownCodeFences(normalized);
+  const candidates = dedupeStrings([
+    normalized,
+    stripped,
+    ...extractJsonCodeBlocks(normalized),
+    ...extractBalancedJsonObjects(stripped),
+    ...extractBalancedJsonObjects(normalized),
+  ]);
+
+  for (const candidate of candidates) {
+    const parseAttempts = dedupeStrings([candidate, removeTrailingCommas(candidate)]);
+    for (const attempt of parseAttempts) {
+      try {
+        const parsed = simpleDiagnosisSchema.parse(JSON.parse(attempt));
+        if (parsed.confidence_score >= 85) {
+          parsed.clarifying_question = null;
+        } else if (!parsed.clarifying_question) {
+          throw new Error("Simple diagnosis schema invalid: clarifying question missing");
+        }
+        return parsed;
+      } catch {
+        // Try the next parse strategy.
+      }
+    }
+  }
+
+  throw new Error("Unable to parse simple diagnosis JSON");
+}
+
 function coerceFaultCodeInterpretations(value: unknown) {
   const items = Array.isArray(value) ? value : [];
   return items.map((item) => {
@@ -898,6 +1091,54 @@ function buildIntakeInterpretationPrompt(request: DiagnosticIntakeInterpretation
     "",
     "RAW INTAKE PACKAGE",
     JSON.stringify(request.intakePackage),
+  ].join("\n");
+}
+
+function safePromptStringify(value: unknown) {
+  try {
+    return JSON.stringify(value ?? {});
+  } catch {
+    return "{}";
+  }
+}
+
+function buildSimpleCategoryPrompt(request: Record<string, unknown>) {
+  const template = {
+    primary_category: "unknown_triage",
+    secondary_category: null,
+    risk_level: "medium",
+    classification_confidence: 0,
+    clarifying_question: null,
+  };
+
+  return [
+    "Classify only. JSON only.",
+    "Cats: critical_engine_internal, engine_performance, oil_lubrication_system, cooling_system, aftertreatment_dpf_def_scr, electrical_battery_alternator, starting_charging, air_brake_system, fuel_system, transmission_driveline, hydraulics_pto, suspension_steering, trailer_lighting, abs_wheel_end, tires_wheels, unknown_triage.",
+    "risk: low|medium|high|critical. If unsure primary_category=unknown_triage.",
+    "Oil/coolant contamination => critical_engine_internal, critical.",
+    `Shape: ${JSON.stringify(template)}`,
+    safePromptStringify(request),
+  ].join("\n");
+}
+
+function buildSimpleDiagnosisPrompt(request: Record<string, unknown>) {
+  const template = {
+    top_likely_cause: "",
+    confidence_score: 0,
+    clarifying_question: null,
+    driver_action: "stop_and_inspect_on_site",
+    safety_note: "",
+    shop_next_steps: ["Verify the reported symptom."],
+    should_escalate_to_mechanic: true,
+  };
+
+  return [
+    "Diagnose this current issue only. JSON only.",
+    "No history, cases, invoices, company data, or raw records.",
+    "If confidence <85 ask one specific clarifying_question. If >=85 use null.",
+    "driver_action enum: keep_running_monitor, drive_to_shop, stop_and_inspect_on_site, stop_and_tow, derate_and_drive_short_distance, do_not_operate_until_repaired.",
+    `Shape: ${JSON.stringify(template)}`,
+    safePromptStringify(request),
   ].join("\n");
 }
 
@@ -1215,7 +1456,7 @@ function nextAffordableTokenBudget(error: Error, requestedMaxTokens: number) {
     return null;
   }
 
-  const safeBudget = Math.max(180, Math.min(requestedMaxTokens - 1, affordable - 24));
+  const safeBudget = Math.max(24, Math.min(requestedMaxTokens - 1, affordable - 8));
   return safeBudget < requestedMaxTokens ? safeBudget : null;
 }
 
@@ -1225,7 +1466,23 @@ function buildDiagnosticProviderPlan(
   const hasOpenRouter = Boolean(ENV.openRouterApiKey);
 
   if (hasOpenRouter) {
-    const models = [config.openRouterModel, config.openRouterFallbackModel]
+    const expandOpenRouterModel = (model: string) => {
+      const normalized = model.trim().toLowerCase();
+      if (!normalized || normalized === "openrouter/free") {
+        return [
+          "google/gemma-4-26b-a4b-it:free",
+          "google/gemma-4-31b-it:free",
+          "minimax/minimax-m2.5-20260211:free",
+        ];
+      }
+
+      return [model.trim()];
+    };
+
+    const models = [
+      ...expandOpenRouterModel(config.openRouterModel),
+      ...expandOpenRouterModel(config.openRouterFallbackModel),
+    ]
       .filter(Boolean)
       .filter((model, index, values) => values.indexOf(model) === index);
 
@@ -1241,13 +1498,60 @@ function buildDiagnosticProviderPlan(
   return null;
 }
 
+async function invokeSimpleClassificationWithModel(
+  request: DiagnosticIntakeInterpretationRequest,
+  config: DiagnosticRuntimeConfig,
+  providerPlan: DiagnosticProviderPlan,
+  model: string,
+  maxTokens = 80
+) {
+  return invokeWithOrchestration({
+    preferredProvider: providerPlan.preferredProvider,
+    fallbackProviders: providerPlan.fallbackProviders,
+    messages: [
+      {
+        role: "user" as const,
+        content: buildSimpleCategoryPrompt(request.intakePackage),
+      },
+    ],
+    maxTokens,
+    timeoutMs: config.timeoutMs,
+    model,
+    temperature: 0.1,
+  });
+}
+
+async function invokeSimpleDiagnosisWithModel(
+  request: DiagnosticReviewRequest,
+  config: DiagnosticRuntimeConfig,
+  providerPlan: DiagnosticProviderPlan,
+  model: string,
+  maxTokens = 120
+) {
+  return invokeWithOrchestration({
+    preferredProvider: providerPlan.preferredProvider,
+    fallbackProviders: providerPlan.fallbackProviders,
+    messages: [
+      {
+        role: "user" as const,
+        content: buildSimpleDiagnosisPrompt(request.evidencePackage),
+      },
+    ],
+    maxTokens,
+    timeoutMs: config.timeoutMs,
+    model,
+    temperature: 0.1,
+  });
+}
+
 async function invokeIntakeInterpretationWithModel(
   request: DiagnosticIntakeInterpretationRequest,
   config: DiagnosticRuntimeConfig,
   providerPlan: DiagnosticProviderPlan,
   model: string,
   maxTokens = config.intakeMaxTokens,
-  compactLevel: PromptCompactLevel = 0
+  compactLevel: PromptCompactLevel = 0,
+  useResponseFormat = true
 ) {
   return invokeWithOrchestration({
     preferredProvider: providerPlan.preferredProvider,
@@ -1255,7 +1559,7 @@ async function invokeIntakeInterpretationWithModel(
     messages: buildIntakeInterpretationMessages({
       intakePackage: compactIntakePackageForPrompt(request.intakePackage, compactLevel),
     }),
-    responseFormat: { type: "json_object" },
+    responseFormat: useResponseFormat ? { type: "json_object" } : undefined,
     maxTokens,
     timeoutMs: config.timeoutMs,
     model,
@@ -1529,13 +1833,14 @@ async function invokeReviewWithModel(
   providerPlan: DiagnosticProviderPlan,
   model: string,
   maxTokens = config.reviewMaxTokens,
-  compactLevel: PromptCompactLevel = 0
+  compactLevel: PromptCompactLevel = 0,
+  useResponseFormat = true
 ) {
   return invokeWithOrchestration({
     preferredProvider: providerPlan.preferredProvider,
     fallbackProviders: providerPlan.fallbackProviders,
     messages: buildMessages(request, maxTokens, compactLevel, providerPlan.providerLabel),
-    responseFormat: { type: "json_object" },
+    responseFormat: useResponseFormat ? { type: "json_object" } : undefined,
     maxTokens,
     timeoutMs: config.timeoutMs,
     model,
@@ -1546,10 +1851,27 @@ async function invokeReviewWithModel(
 function isRetryableReviewError(error: Error) {
   return (
     isTokenBudgetError(error) ||
+    isOpenRouterProviderError(error) ||
     /timed out|429|5\d\d|temporar|rate limit|overloaded|connection reset|socket hang up/i.test(
       error.message
     )
   );
+}
+
+function isOpenRouterProviderError(error: Error) {
+  return /Provider returned error|400 Bad Request/i.test(error.message);
+}
+
+function isOpenRouterEndpointMissingError(error: Error) {
+  return /404 Not Found|No endpoints found|free .*?period has ended/i.test(error.message);
+}
+
+function isOpenRouterRateLimitError(error: Error) {
+  return /429 Too Many Requests|rate limit|overloaded/i.test(error.message);
+}
+
+function shouldSkipFurtherRetriesForModel(error: Error) {
+  return isOpenRouterEndpointMissingError(error) || isOpenRouterRateLimitError(error);
 }
 
 export async function reviewDiagnosticWithLlm(
@@ -1578,6 +1900,7 @@ export async function reviewDiagnosticWithLlm(
     const attemptsForModel = index === 0 ? config.retryCount + 1 : 2;
     let maxTokens = config.reviewMaxTokens;
     let compactLevel: PromptCompactLevel = 0;
+    let allowResponseFormat = true;
 
     for (let attemptIndex = 0; attemptIndex < attemptsForModel; attemptIndex += 1) {
       try {
@@ -1587,7 +1910,8 @@ export async function reviewDiagnosticWithLlm(
           providerPlan,
           model,
           maxTokens,
-          compactLevel
+          compactLevel,
+          allowResponseFormat
         );
         const rawText = readMessageText(raw);
         let parsed: DiagnosticLlmResponse;
@@ -1648,6 +1972,7 @@ export async function reviewDiagnosticWithLlm(
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         const nextCompactLevel: PromptCompactLevel | null = isPromptLimitError(lastError)
+          || isOpenRouterProviderError(lastError)
           ? nextPromptCompactLevel(compactLevel)
           : null;
 
@@ -1660,6 +1985,15 @@ export async function reviewDiagnosticWithLlm(
         if (reducedMaxTokens) {
           maxTokens = reducedMaxTokens;
           continue;
+        }
+
+        if (isOpenRouterProviderError(lastError) && allowResponseFormat) {
+          allowResponseFormat = false;
+          continue;
+        }
+
+        if (shouldSkipFurtherRetriesForModel(lastError)) {
+          break;
         }
 
         if (attemptIndex < attemptsForModel - 1 && isRetryableReviewError(lastError)) {
@@ -1678,6 +2012,288 @@ export async function reviewDiagnosticWithLlm(
     fallbackUsed: true,
     fallbackReason:
       lastError?.message ?? "Diagnostic LLM review failed without a recoverable response",
+    provider: providerPlan.preferredProvider,
+    model: models[models.length - 1] ?? providerPlan.defaultModel,
+    parsed: null,
+    raw: null,
+  };
+}
+
+export type DiagnosticSimpleClassificationResult =
+  | {
+      status: "ok";
+      fallbackUsed: boolean;
+      fallbackReason: string | null;
+      provider: string;
+      model: string;
+      parsed: SimpleDiagnosticCategoryResult;
+      raw: InvokeResult;
+    }
+  | {
+      status: "not_configured" | "timeout" | "invalid_schema" | "error";
+      fallbackUsed: boolean;
+      fallbackReason: string;
+      provider: string | null;
+      model: string | null;
+      parsed: null;
+      raw: InvokeResult | null;
+    };
+
+export type DiagnosticSimpleDiagnosisResult =
+  | {
+      status: "ok";
+      fallbackUsed: boolean;
+      fallbackReason: string | null;
+      provider: string;
+      model: string;
+      parsed: SimpleDiagnosticDiagnosisResult;
+      raw: InvokeResult;
+    }
+  | {
+      status: "not_configured" | "timeout" | "invalid_schema" | "error";
+      fallbackUsed: boolean;
+      fallbackReason: string;
+      provider: string | null;
+      model: string | null;
+      parsed: null;
+      raw: InvokeResult | null;
+    };
+
+function buildSimpleProviderPlan(config: DiagnosticRuntimeConfig): DiagnosticProviderPlan | null {
+  return buildDiagnosticProviderPlan(config);
+}
+
+export function buildSimpleClassificationPrompt(request: Record<string, unknown>) {
+  return buildSimpleCategoryPrompt(request);
+}
+
+export function buildSimpleDiagnosisPromptMessage(request: Record<string, unknown>) {
+  return buildSimpleDiagnosisPrompt(request);
+}
+
+function normalizeSimpleClassification(parsed: SimpleDiagnosticCategoryResult, symptomText: string) {
+  const contaminationPattern =
+    /(?:oil.*coolant|coolant.*oil|milky oil|coolant in oil pan|oil in coolant reservoir|white smoke.*coolant|combustion gas in coolant|oil\/coolant contamination|coolant mixing with oil)/i;
+  if (contaminationPattern.test(symptomText)) {
+    return {
+      ...parsed,
+      primary_category: "critical_engine_internal" as const,
+      secondary_category:
+        parsed.secondary_category === "oil_lubrication_system" ||
+        parsed.secondary_category === "cooling_system"
+          ? parsed.secondary_category
+          : "oil_lubrication_system",
+      risk_level: parsed.risk_level === "critical" ? parsed.risk_level : "critical",
+      classification_confidence: Math.max(parsed.classification_confidence, 95),
+      clarifying_question: null,
+    };
+  }
+
+  return parsed;
+}
+
+function validateSimpleDiagnosis(parsed: SimpleDiagnosticDiagnosisResult) {
+  if (parsed.confidence_score <= 0) {
+    throw new Error("Simple diagnosis schema invalid: confidence score missing");
+  }
+
+  if (parsed.confidence_score < 85 && !(parsed.clarifying_question ?? "").trim()) {
+    throw new Error("Simple diagnosis schema invalid: clarifying question missing");
+  }
+
+  if (parsed.confidence_score >= 85) {
+    parsed.clarifying_question = null;
+  }
+
+  return parsed;
+}
+
+export async function classifyDiagnosticIssueWithLlm(
+  request: DiagnosticIntakeInterpretationRequest,
+  config: DiagnosticRuntimeConfig
+): Promise<DiagnosticSimpleClassificationResult> {
+  const providerPlan = buildSimpleProviderPlan(config);
+  if (!providerPlan) {
+    return {
+      status: "not_configured",
+      fallbackUsed: true,
+      fallbackReason: "No diagnostic LLM provider is configured. Set OPENROUTER_API_KEY.",
+      provider: null,
+      model: null,
+      parsed: null,
+      raw: null,
+    };
+  }
+
+  const models = providerPlan.primaryModels;
+  let lastError: Error | null = null;
+
+  for (let index = 0; index < models.length; index += 1) {
+    const model = models[index];
+    if (shouldTemporarilySkipModel(model)) {
+      continue;
+    }
+    const attemptsForModel = 2;
+    let maxTokens = 80;
+
+    for (let attemptIndex = 0; attemptIndex < attemptsForModel; attemptIndex += 1) {
+      try {
+        const raw = await invokeSimpleClassificationWithModel(
+          request,
+          config,
+          providerPlan,
+          model,
+          maxTokens
+        );
+        const parsed = normalizeSimpleClassification(
+          parseSimpleCategoryResponse(readMessageText(raw)),
+          safePromptStringify(request.intakePackage).slice(0, 3000)
+        );
+
+        const providerFallbackUsed =
+          (raw.orchestration?.provider != null &&
+            raw.orchestration.provider !== providerPlan.preferredProvider) ||
+          (raw.orchestration?.attempts?.length ?? 0) > 1;
+
+        return {
+          status: "ok",
+          fallbackUsed: index > 0 || attemptIndex > 0 || providerFallbackUsed,
+          fallbackReason:
+            index > 0
+              ? `Primary model failed; fallback model ${model} succeeded`
+              : attemptIndex > 0
+                ? `Primary model ${model} succeeded after retry ${attemptIndex + 1}`
+                : providerFallbackUsed
+                  ? `${raw.orchestration?.provider ?? providerPlan.providerLabel} succeeded after provider fallback`
+                  : null,
+          provider: raw.orchestration?.provider ?? providerPlan.preferredProvider,
+          model: raw.orchestration?.model ?? model,
+          parsed,
+          raw,
+        };
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        rememberTemporaryModelFailure(model, lastError);
+        const reducedMaxTokens = nextAffordableTokenBudget(lastError, maxTokens);
+        if (reducedMaxTokens) {
+          maxTokens = reducedMaxTokens;
+          continue;
+        }
+
+        if (shouldSkipFurtherRetriesForModel(lastError)) {
+          break;
+        }
+
+        if (attemptIndex < attemptsForModel - 1 && isRetryableReviewError(lastError)) {
+          continue;
+        }
+
+        break;
+      }
+    }
+  }
+
+  const normalized = normalizeStatus(lastError ?? new Error("Diagnostic simple classification failed"));
+  return {
+    status: normalized,
+    fallbackUsed: true,
+    fallbackReason: lastError?.message ?? "Diagnostic simple classification failed without a recoverable response",
+    provider: providerPlan.preferredProvider,
+    model: models[models.length - 1] ?? providerPlan.defaultModel,
+    parsed: null,
+    raw: null,
+  };
+}
+
+export async function diagnoseDiagnosticIssueWithLlm(
+  request: DiagnosticReviewRequest,
+  config: DiagnosticRuntimeConfig
+): Promise<DiagnosticSimpleDiagnosisResult> {
+  const providerPlan = buildSimpleProviderPlan(config);
+  if (!providerPlan) {
+    return {
+      status: "not_configured",
+      fallbackUsed: true,
+      fallbackReason: "No diagnostic LLM provider is configured. Set OPENROUTER_API_KEY.",
+      provider: null,
+      model: null,
+      parsed: null,
+      raw: null,
+    };
+  }
+
+  const models = providerPlan.primaryModels;
+  let lastError: Error | null = null;
+
+  for (let index = 0; index < models.length; index += 1) {
+    const model = models[index];
+    if (shouldTemporarilySkipModel(model)) {
+      continue;
+    }
+    const attemptsForModel = 2;
+    let maxTokens = 120;
+
+    for (let attemptIndex = 0; attemptIndex < attemptsForModel; attemptIndex += 1) {
+      try {
+        const raw = await invokeSimpleDiagnosisWithModel(
+          request,
+          config,
+          providerPlan,
+          model,
+          maxTokens
+        );
+        const parsed = validateSimpleDiagnosis(
+          parseSimpleDiagnosisResponse(readMessageText(raw))
+        );
+
+        const providerFallbackUsed =
+          (raw.orchestration?.provider != null &&
+            raw.orchestration.provider !== providerPlan.preferredProvider) ||
+          (raw.orchestration?.attempts?.length ?? 0) > 1;
+
+        return {
+          status: "ok",
+          fallbackUsed: index > 0 || attemptIndex > 0 || providerFallbackUsed,
+          fallbackReason:
+            index > 0
+              ? `Primary model failed; fallback model ${model} succeeded`
+              : attemptIndex > 0
+                ? `Primary model ${model} succeeded after retry ${attemptIndex + 1}`
+                : providerFallbackUsed
+                  ? `${raw.orchestration?.provider ?? providerPlan.providerLabel} succeeded after provider fallback`
+                  : null,
+          provider: raw.orchestration?.provider ?? providerPlan.preferredProvider,
+          model: raw.orchestration?.model ?? model,
+          parsed,
+          raw,
+        };
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        rememberTemporaryModelFailure(model, lastError);
+        const reducedMaxTokens = nextAffordableTokenBudget(lastError, maxTokens);
+        if (reducedMaxTokens) {
+          maxTokens = reducedMaxTokens;
+          continue;
+        }
+
+        if (shouldSkipFurtherRetriesForModel(lastError)) {
+          break;
+        }
+
+        if (attemptIndex < attemptsForModel - 1 && isRetryableReviewError(lastError)) {
+          continue;
+        }
+
+        break;
+      }
+    }
+  }
+
+  const normalized = normalizeStatus(lastError ?? new Error("Diagnostic simple diagnosis failed"));
+  return {
+    status: normalized,
+    fallbackUsed: true,
+    fallbackReason: lastError?.message ?? "Diagnostic simple diagnosis failed without a recoverable response",
     provider: providerPlan.preferredProvider,
     model: models[models.length - 1] ?? providerPlan.defaultModel,
     parsed: null,
@@ -1711,6 +2327,7 @@ export async function interpretDiagnosticIntakeWithLlm(
     const attemptsForModel = index === 0 ? config.retryCount + 1 : 2;
     let maxTokens = config.intakeMaxTokens;
     let compactLevel: PromptCompactLevel = 0;
+    let allowResponseFormat = true;
 
     for (let attemptIndex = 0; attemptIndex < attemptsForModel; attemptIndex += 1) {
       try {
@@ -1720,7 +2337,8 @@ export async function interpretDiagnosticIntakeWithLlm(
           providerPlan,
           model,
           maxTokens,
-          compactLevel
+          compactLevel,
+          allowResponseFormat
         );
         const parsed = parseDiagnosticIntakeInterpretation(readMessageText(raw));
 
@@ -1748,6 +2366,7 @@ export async function interpretDiagnosticIntakeWithLlm(
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         const nextCompactLevel: PromptCompactLevel | null = isPromptLimitError(lastError)
+          || isOpenRouterProviderError(lastError)
           ? nextPromptCompactLevel(compactLevel)
           : null;
 
@@ -1759,6 +2378,11 @@ export async function interpretDiagnosticIntakeWithLlm(
 
         if (reducedMaxTokens) {
           maxTokens = reducedMaxTokens;
+          continue;
+        }
+
+        if (isOpenRouterProviderError(lastError) && allowResponseFormat) {
+          allowResponseFormat = false;
           continue;
         }
 

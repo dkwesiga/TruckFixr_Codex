@@ -18,7 +18,7 @@ import {
   vehicleAssignments,
   vehicles,
 } from "../../drizzle/schema";
-import { desc, eq, and, gte, inArray, isNull, lte, or } from "drizzle-orm";
+import { desc, eq, and, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import {
   INSPECTION_VALIDITY_HOURS,
   buildChecklistByCategory,
@@ -64,7 +64,7 @@ async function verifyFleetAccess(fleetId: number, userId: number, userRole: stri
 
 async function verifyVehicleInspectionAccess(input: {
   fleetId: number;
-  vehicleId: number;
+  vehicleId: number | string;
   userId: number;
   userRole: string;
 }) {
@@ -142,7 +142,7 @@ function mapTriageAction(riskLevel: string, confidenceScore: number) {
 
 async function runInspectionTriage(input: {
   fleetId: number;
-  vehicleId: number;
+  vehicleId: number | string;
   inspectionId: number;
   defectId: number;
   defectDescription: string;
@@ -241,10 +241,10 @@ function getVehicleLifecycleStatus(complianceStatus: ComplianceStatus) {
 }
 
 async function updateVehicleComplianceStatus(
-  vehicleId: number,
+  vehicleId: number | string,
   nextComplianceStatus: ComplianceStatus
 ) {
-  if (vehicleId <= 0) return null;
+  if (!vehicleId || vehicleId === 0 || vehicleId === "") return null;
 
   const db = await getDb();
   if (!db) return null;
@@ -253,7 +253,7 @@ async function updateVehicleComplianceStatus(
     const [existingVehicle] = await db
       .select()
       .from(vehicles)
-      .where(eq(vehicles.id, vehicleId))
+      .where(sql`CAST(${vehicles.id} AS text) = ${String(vehicleId)}`)
       .limit(1);
 
     if (!existingVehicle) return null;
@@ -265,7 +265,7 @@ async function updateVehicleComplianceStatus(
         status: getVehicleLifecycleStatus(nextComplianceStatus),
         updatedAt: new Date(),
       })
-      .where(eq(vehicles.id, vehicleId))
+      .where(sql`CAST(${vehicles.id} AS text) = ${String(vehicleId)}`)
       .returning();
 
     return updatedVehicle ?? null;
@@ -277,6 +277,7 @@ async function updateVehicleComplianceStatus(
 
 async function resolveInspectionRecipients(input: {
   fleetId: number;
+  vehicleId: number | string;
   driverEmail?: string | null;
   managerEmail?: string | null;
   managerUserId?: number | null;
@@ -284,6 +285,7 @@ async function resolveInspectionRecipients(input: {
   const db = await getDb();
   const recipients = new Set<string>();
   const normalizedManagerEmail = input.managerEmail?.trim().toLowerCase() || null;
+  const normalizedVehicleId = String(input.vehicleId).trim();
 
   if (input.driverEmail) {
     recipients.add(input.driverEmail.trim().toLowerCase());
@@ -293,23 +295,52 @@ async function resolveInspectionRecipients(input: {
     if (normalizedManagerEmail) {
       recipients.add(normalizedManagerEmail);
     }
-    return Array.from(recipients);
+    return {
+      recipients: Array.from(recipients),
+      managerUserId: input.managerUserId ?? null,
+      managerEmail: normalizedManagerEmail,
+      managerName: null,
+    };
   }
 
   try {
-    if (input.managerUserId) {
+    const assignmentResult = await db.execute(sql`
+      select
+        "assignedByUserId"
+      from "vehicleAssignments"
+      where
+        "fleetId" = ${input.fleetId}
+        and CAST("vehicleId" AS text) = ${normalizedVehicleId}
+        and "status" = ${"active"}
+        and "startsAt" <= ${new Date()}
+        and ("expiresAt" is null or "expiresAt" >= ${new Date()})
+      order by "updatedAt" desc
+      limit 1
+    `);
+    const assignedByUserId = (assignmentResult.rows?.[0] as any)?.assignedByUserId as number | null | undefined;
+    const managerUserId = assignedByUserId ?? input.managerUserId ?? null;
+
+    if (managerUserId) {
       const [manager] = await db
         .select({
+          id: users.id,
           email: users.email,
+          name: users.name,
         })
         .from(users)
-        .where(eq(users.id, input.managerUserId))
+        .where(eq(users.id, managerUserId))
         .limit(1);
 
       if (manager?.email) {
         recipients.add(manager.email.trim().toLowerCase());
-        return Array.from(recipients);
       }
+
+      return {
+        recipients: Array.from(recipients),
+        managerUserId: manager?.id ?? managerUserId,
+        managerEmail: manager?.email?.trim().toLowerCase() ?? normalizedManagerEmail,
+        managerName: manager?.name ?? null,
+      };
     }
   } catch (error) {
     console.warn("[Inspections] Unable to resolve linked manager email:", error);
@@ -319,10 +350,15 @@ async function resolveInspectionRecipients(input: {
     recipients.add(normalizedManagerEmail);
   }
 
-  return Array.from(recipients);
+  return {
+    recipients: Array.from(recipients),
+    managerUserId: input.managerUserId ?? null,
+    managerEmail: normalizedManagerEmail,
+    managerName: null,
+  };
 }
 
-async function getVehicleProfile(vehicleId: number) {
+async function getVehicleProfile(vehicleId: number | string) {
   const db = await getDb();
 
   if (db) {
@@ -330,7 +366,7 @@ async function getVehicleProfile(vehicleId: number) {
       const [vehicle] = await db
         .select()
         .from(vehicles)
-        .where(eq(vehicles.id, vehicleId))
+        .where(sql`CAST(${vehicles.id} AS text) = ${String(vehicleId)}`)
         .limit(1);
 
       if (vehicle) {
@@ -420,7 +456,7 @@ function summarizeInspection(record: { submittedAt: Date | null; results: unknow
 
 export const inspectionsRouter = router({
   getDailyChecklist: protectedProcedure
-    .input(z.object({ vehicleId: z.number() }))
+    .input(z.object({ vehicleId: z.union([z.number(), z.string()]) }))
     .query(async ({ input, ctx }) => {
       const allowed = await canViewVehicle({
         user: ctx.user,
@@ -879,6 +915,7 @@ export const inspectionsRouter = router({
 
         const reportRecipients = await resolveInspectionRecipients({
           fleetId: input.fleetId,
+          vehicleId: input.vehicleId,
           driverEmail: ctx.user.email,
           managerEmail: ctx.user.managerEmail,
           managerUserId: ctx.user.managerUserId,
@@ -887,7 +924,7 @@ export const inspectionsRouter = router({
         const reportDelivery = await createInspectionReportDelivery({
           prepared,
           inspectionId: inspectionResult.id,
-          recipients: reportRecipients,
+          recipients: reportRecipients.recipients,
           vehicle,
           input,
           userEmail: ctx.user.email,
@@ -952,7 +989,26 @@ export const inspectionsRouter = router({
             userId: ctx.user.id,
           });
         }
-        
+
+        if (reportRecipients.managerUserId) {
+          try {
+            await db.insert(inAppAlerts).values({
+              fleetId: input.fleetId,
+              userId: reportRecipients.managerUserId,
+              vehicleId: String(input.vehicleId),
+              inspectionId: inspectionResult.id,
+              alertType: "inspection_report_submitted",
+              severity: prepared.complianceStatus === "red" ? "critical" : "info",
+              title: "Inspection report received",
+              message:
+                `${ctx.user.name || "A driver"} submitted a verified inspection for ${vehicle?.licensePlate || vehicle?.vin || "the assigned vehicle"}.` +
+                (reportRecipients.managerName ? ` Routed to ${reportRecipients.managerName}.` : ""),
+            });
+          } catch (alertError) {
+            console.warn("[Inspections] Unable to persist manager inspection report alert:", alertError);
+          }
+        }
+
         return {
           success: true,
           inspectionId: inspectionResult.id,
@@ -1009,7 +1065,7 @@ export const inspectionsRouter = router({
 
   // Get inspections for a vehicle
   getByVehicle: protectedProcedure
-    .input(z.object({ vehicleId: z.number(), limit: z.number().default(10) }))
+    .input(z.object({ vehicleId: z.union([z.number(), z.string()]), limit: z.number().default(10) }))
     .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) return [];
@@ -1062,6 +1118,32 @@ export const inspectionsRouter = router({
         .limit(input.limit);
 
       return result;
+    }),
+
+  getManagerReports: protectedProcedure
+    .input(z.object({ limit: z.number().int().positive().max(25).default(10) }))
+    .query(async ({ input, ctx }) => {
+      if (ctx.user.role !== "owner" && ctx.user.role !== "manager") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Only managers can view received inspection reports",
+        });
+      }
+
+      const db = await getDb();
+      if (!db) return [];
+
+      return db
+        .select()
+        .from(inAppAlerts)
+        .where(
+          and(
+            eq(inAppAlerts.userId, ctx.user.id),
+            eq(inAppAlerts.alertType, "inspection_report_submitted")
+          )
+        )
+        .orderBy(desc(inAppAlerts.createdAt))
+        .limit(input.limit);
     }),
 
   getFleetDailyHealth: protectedProcedure

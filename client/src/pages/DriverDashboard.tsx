@@ -24,6 +24,7 @@ type DriverVehicle = {
   year: number | null;
   mileage: number;
   status: "Operational" | "Needs Review";
+  type: string;
 };
 
 type InspectionReport = {
@@ -52,6 +53,7 @@ const initialVehicles: DriverVehicle[] = [
     year: 2022,
     mileage: 245320,
     status: "Operational",
+    type: "truck",
   },
 ];
 
@@ -101,6 +103,9 @@ function DriverDashboardContent() {
   const [vehicles, setVehicles] = useState(initialVehicles);
   const [activeVehicleId, setActiveVehicleId] = useState(initialVehicles[0].id);
   const [isAddVehicleOpen, setIsAddVehicleOpen] = useState(false);
+
+  const isOwnerOperator = user?.role === "owner_operator" || user?.role === "owner" || user?.role === "manager";
+
   const [selectedReport, setSelectedReport] = useState<InspectionReport | null>(null);
   const [isDecodingVin, setIsDecodingVin] = useState(false);
   const [vehicleForm, setVehicleForm] = useState({
@@ -110,6 +115,7 @@ function DriverDashboardContent() {
     make: "",
     model: "",
     year: "",
+    type: "truck",
   });
 
   const activeVehicle =
@@ -172,8 +178,10 @@ function DriverDashboardContent() {
         const nextMake = payload.make || current.make;
         const nextModel = payload.model || current.model;
         const nextYear = payload.year ? String(payload.year) : current.year;
+        const nextType = payload.type || payload.vehicle_type || current.type;
+
         const generatedLabel = getVehicleDisplayLabel({
-          label: current.label,
+          label: current.label || "",
           vin,
           vehicleId: vehicles.length + 1,
         });
@@ -185,6 +193,7 @@ function DriverDashboardContent() {
           make: nextMake,
           model: nextModel,
           year: nextYear,
+          type: nextType,
         };
       });
 
@@ -209,7 +218,7 @@ function DriverDashboardContent() {
     const model = vehicleForm.model.trim();
     const year = vehicleForm.year.trim();
 
-    if (!label || !vin || !licensePlate || !make || !model) {
+    if (!label || !vin || !licensePlate || !make || !model || !vehicleForm.type) {
       toast.error("Fill in all vehicle details before adding it.");
       return;
     }
@@ -224,6 +233,7 @@ function DriverDashboardContent() {
       year: year ? Number(year) : null,
       mileage: 0,
       status: "Operational",
+      type: vehicleForm.type,
     };
 
     setVehicles((current) => [nextVehicle, ...current]);
@@ -235,6 +245,7 @@ function DriverDashboardContent() {
       make: "",
       model: "",
       year: "",
+      type: "truck",
     });
     setIsAddVehicleOpen(false);
 
@@ -242,6 +253,7 @@ function DriverDashboardContent() {
       source: "driver_dashboard",
       vehicle_label: nextVehicle.label,
       vin: nextVehicle.vin,
+      vehicle_type: nextVehicle.type,
     });
     toast.success(`${nextVehicle.label} added to your dashboard.`);
   };
@@ -251,11 +263,11 @@ function DriverDashboardContent() {
       <header className="bg-white border-b border-slate-200">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Driver Dashboard</h1>
+            <h1 className="text-2xl font-bold text-slate-900">{isOwnerOperator ? "My Fleet Health" : "Driver Dashboard"}</h1>
             <p className="text-sm text-slate-600">Hello, {user?.name}</p>
           </div>
           <div className="flex items-center gap-3">
-            <Dialog open={isAddVehicleOpen} onOpenChange={setIsAddVehicleOpen}>
+            {isOwnerOperator && <Dialog open={isAddVehicleOpen} onOpenChange={setIsAddVehicleOpen}>
               <DialogTrigger asChild>
                 <Button className="bg-slate-900 hover:bg-slate-800">
                   <Plus className="w-4 h-4 mr-2" />
@@ -266,7 +278,7 @@ function DriverDashboardContent() {
                 <DialogHeader>
                   <DialogTitle>Add a Vehicle</DialogTitle>
                   <DialogDescription>
-                    Enter a VIN to decode the truck details, then save it to your driver dashboard.
+                    Enter a VIN to decode the vehicle details, then save it to your dashboard.
                   </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4">
@@ -297,6 +309,26 @@ function DriverDashboardContent() {
                     <p className="mt-2 text-xs text-slate-500">
                       If left blank, TruckFixr will use unit {getFallbackUnitNumber(vehicleForm.vin) || "from the last 6 VIN digits"}.
                     </p>
+                  </div>
+                  <div>
+                    <Label htmlFor="vehicle-type">Vehicle Type</Label>
+                    <select
+                      id="vehicle-type"
+                      className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-950 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      value={vehicleForm.type}
+                      onChange={(e) => setVehicleForm((current) => ({ ...current, type: e.target.value }))}
+                    >
+                      <option value="truck">Truck</option>
+                      <option value="tractor">Tractor</option>
+                      <option value="trailer">Trailer</option>
+                      <option value="straight_truck">Straight Truck</option>
+                      <option value="bus">Bus</option>
+                      <option value="van">Van</option>
+                      <option value="reefer_trailer">Reefer Trailer</option>
+                      <option value="flatbed_trailer">Flatbed Trailer</option>
+                      <option value="dry_van_trailer">Dry Van Trailer</option>
+                      <option value="other">Other</option>
+                    </select>
                   </div>
                   <div>
                     <Label htmlFor="vehicle-license">License Plate</Label>
@@ -346,7 +378,7 @@ function DriverDashboardContent() {
                   <Button onClick={handleAddVehicle}>Save Vehicle</Button>
                 </DialogFooter>
               </DialogContent>
-            </Dialog>
+            </Dialog>}
             <Button variant="outline" onClick={() => logout()}>
               Sign Out
             </Button>
@@ -374,6 +406,10 @@ function DriverDashboardContent() {
                       <p className="font-semibold text-slate-900">{activeVehicleDisplay}</p>
                     </div>
                     <div>
+                      <p className="text-xs text-slate-500 mb-1">Type</p>
+                      <p className="font-semibold text-slate-900 capitalize">{activeVehicle.type.replace('_', ' ')}</p>
+                    </div>
+                    <div>
                       <p className="text-xs text-slate-500 mb-1">Distance</p>
                       <p className="font-semibold text-slate-900">
                         {formatDistanceKm(activeVehicle.mileage)}
@@ -390,10 +426,10 @@ function DriverDashboardContent() {
                   </div>
                 </div>
                 <div className="flex w-full flex-col gap-3 sm:w-72">
-                  <Button className="w-full bg-slate-900 hover:bg-slate-800" onClick={() => setIsAddVehicleOpen(true)}>
+                  {isOwnerOperator && <Button className="w-full bg-slate-900 hover:bg-slate-800" onClick={() => setIsAddVehicleOpen(true)}>
                     <Plus className="w-4 h-4 mr-2" />
                     Add Vehicle
-                  </Button>
+                  </Button>}
                   <Button className="w-full bg-blue-600 hover:bg-blue-700" onClick={() => startDiagnosis(activeVehicle)}>
                     <Stethoscope className="w-4 h-4 mr-2" />
                     Start Diagnosis
@@ -432,7 +468,7 @@ function DriverDashboardContent() {
                           <p className="font-semibold text-slate-900">{vehicle.label}</p>
                         </div>
                         <p className="mt-1 text-sm text-slate-600">
-                          {[vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ")}
+                          {[vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ")} <span className="text-slate-400">({vehicle.type})</span>
                         </p>
                         <p className="text-xs text-slate-500">{vehicle.licensePlate}</p>
                       </div>
@@ -504,9 +540,9 @@ function DriverDashboardContent() {
           </CardHeader>
           <CardContent>
             <div className="grid gap-4 md:grid-cols-3">
-              <Button className="h-12 bg-slate-900 hover:bg-slate-800" onClick={() => setIsAddVehicleOpen(true)}>
+              {isOwnerOperator && <Button className="h-12 bg-slate-900 hover:bg-slate-800" onClick={() => setIsAddVehicleOpen(true)}>
                 Add Vehicle
-              </Button>
+              </Button>}
               <Button variant="outline" className="h-12" onClick={() => startDiagnosis(activeVehicle)}>
                 Start Diagnosis
               </Button>
@@ -547,7 +583,7 @@ function DriverDashboardContent() {
 
 export default function DriverDashboard() {
   return (
-    <RoleBasedRoute requiredRoles={["driver"]}>
+    <RoleBasedRoute requiredRoles={["driver", "owner_operator", "owner", "manager"]}>
       <DriverDashboardContent />
     </RoleBasedRoute>
   );

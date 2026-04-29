@@ -15,7 +15,7 @@ export function formatDistanceKm(distanceValue?: number | null) {
 export function getVehicleDisplayLabel(input: {
   label?: string | null;
   vin?: string | null;
-  vehicleId?: number | null;
+  vehicleId?: string | number | null;
 }) {
   const explicitLabel = input.label?.trim();
   if (explicitLabel) {

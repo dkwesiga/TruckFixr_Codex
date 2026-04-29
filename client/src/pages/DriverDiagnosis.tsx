@@ -9,12 +9,14 @@ import VehicleAccessRequestDialog from "@/components/VehicleAccessRequestDialog"
 import { trackFeatureAccessed } from "@/lib/analytics";
 import { loadLastDriverVehicleContext, saveLastDriverVehicleContext } from "@/lib/driverVehicleContext";
 import { type DriverVehicleRecord } from "@/lib/driverVehicles";
+import { useAuthContext } from "@/hooks/useAuthContext";
 import { trpc } from "@/lib/trpc";
 import { getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
 import { toast } from "sonner";
 import { AlertTriangle, ChevronLeft, CheckCircle2, Sparkles, Stethoscope, Truck, Wrench } from "lucide-react";
 
 function DriverDiagnosisContent() {
+  const { user } = useAuthContext();
   const params = useMemo(
     () => new URLSearchParams(window.location.search),
     []
@@ -25,8 +27,9 @@ function DriverDiagnosisContent() {
   const vehicleLabel = getVehicleDisplayLabel({
     label: params.get("label") ?? storedVehicle?.label,
     vin: params.get("vin") ?? storedVehicle?.vin,
-    vehicleId: vehicleId ? Number(vehicleId) : undefined,
+    vehicleId: vehicleId ?? undefined,
   });
+  const isOwnerOperator = user?.role === "owner_operator" || user?.role === "owner" || user?.role === "manager";
 
   const [symptom, setSymptom] = useState("");
   const [faultCode, setFaultCode] = useState("");
@@ -49,13 +52,13 @@ function DriverDiagnosisContent() {
     diagnosisStarted &&
     !!diagnosis &&
     diagnosis.next_action === "ask_question" &&
-    diagnosis.confidence_score < 75 &&
+    diagnosis.confidence_score < 85 &&
     activeClarifyingQuestion.length > 0;
   const isClarificationMissing =
     diagnosisStarted &&
     !!diagnosis &&
     diagnosis.next_action === "ask_question" &&
-    diagnosis.confidence_score < 75 &&
+    diagnosis.confidence_score < 85 &&
     activeClarifyingQuestion.length === 0;
   const shouldShowClarificationPanel = isAwaitingClarification || isClarificationMissing;
   const isDiagnosisReady =
@@ -63,7 +66,7 @@ function DriverDiagnosisContent() {
     !!diagnosis &&
     diagnosis.next_action === "proceed";
   const isLowConfidenceSummary =
-    isDiagnosisReady && !!diagnosis && diagnosis.confidence_score < 75;
+    isDiagnosisReady && !!diagnosis && diagnosis.confidence_score < 85;
   const vehicleChoices = useMemo<DriverVehicleRecord[]>(
     () =>
       (vehiclesQuery.data ?? []).map((vehicle) => ({
@@ -140,7 +143,7 @@ function DriverDiagnosisContent() {
     try {
       await diagnoseMutation.mutateAsync({
         fleetId: Number(fleetId),
-        vehicleId: Number(vehicleId),
+        vehicleId: String(vehicleId),
         vehicleContext: selectedVehicle
           ? {
               id: selectedVehicle.id,
@@ -177,7 +180,9 @@ function DriverDiagnosisContent() {
             <CardHeader>
               <CardTitle>Select a vehicle to start diagnosis</CardTitle>
               <CardDescription>
-                TADIS needs a vehicle before it can build context, pull similar cases, and evaluate compliance impact. Select an existing truck or add one inline, then diagnostics will resume automatically.
+                    {isOwnerOperator
+                      ? "TADIS needs a vehicle before it can build context and evaluate compliance impact. Select a unit from your operation to resume."
+                      : "TADIS needs a vehicle before it can build context, pull similar cases, and evaluate compliance impact. Select an existing truck or add one inline, then diagnostics will resume automatically."}
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
@@ -216,15 +221,21 @@ function DriverDiagnosisContent() {
                   </div>
                 ) : (
                   <div className="rounded-2xl border border-dashed border-amber-300 bg-white p-5 text-sm text-slate-700">
-                    No assigned vehicles are available yet. Request access from your fleet manager or owner, then diagnostics will unlock automatically.
+                    {isOwnerOperator
+                      ? "No vehicles are available in your operation yet. Add your first truck or trailer to unlock TADIS diagnostics."
+                      : "No assigned vehicles are available yet. Request access from your fleet manager or owner, then diagnostics will unlock automatically."}
                   </div>
                 )}
                 <div className="flex flex-wrap gap-3">
-                  <VehicleAccessRequestDialog
-                    fleetId={Number(fleetId)}
-                    triggerLabel="Request Vehicle Access"
-                    triggerVariant="default"
-                  />
+                  {isOwnerOperator ? (
+                    <Button onClick={() => (window.location.href = "/driver")}>Add a Vehicle</Button>
+                  ) : (
+                    <VehicleAccessRequestDialog
+                      fleetId={Number(fleetId)}
+                      triggerLabel="Request Vehicle Access"
+                      triggerVariant="default"
+                    />
+                  )}
                   <Button variant="outline" onClick={() => (window.location.href = "/driver")}>Back to Dashboard</Button>
                 </div>
               </div>
@@ -233,7 +244,7 @@ function DriverDiagnosisContent() {
                   <CardHeader>
                     <CardTitle className="text-base">Access is required before diagnosis</CardTitle>
                     <CardDescription>
-                      Drivers can only diagnose vehicles and trailers assigned to them. If you are covering another unit today, request temporary or permanent access and wait for manager approval.
+                      {isOwnerOperator ? "You can diagnose any vehicle or trailer registered to your operation. Select an active unit to begin building the intake record." : "Drivers can only diagnose vehicles and trailers assigned to them. If you are covering another unit today, request temporary or permanent access and wait for manager approval."}
                     </CardDescription>
                   </CardHeader>
                 </Card>
@@ -251,17 +262,19 @@ function DriverDiagnosisContent() {
         <main className="mx-auto max-w-4xl px-4 py-12 sm:px-6 lg:px-8">
           <Card className="fleet-panel border-[#ffdbcb] bg-[#fff6f0] shadow-none">
             <CardHeader>
-              <CardTitle>You do not currently have access to this vehicle</CardTitle>
+              <CardTitle>{isOwnerOperator ? "Vehicle not found" : "You do not currently have access to this vehicle"}</CardTitle>
               <CardDescription>
-                Drivers can only diagnose assigned vehicles and trailers. Request access from your fleet manager or owner to continue.
+                {isOwnerOperator ? "This vehicle does not belong to your operation. Select another unit from your dashboard to continue." : "Drivers can only diagnose assigned vehicles and trailers. Request access from your fleet manager or owner to continue."}
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-wrap gap-3">
-              <VehicleAccessRequestDialog
-                fleetId={Number(fleetId)}
-                triggerLabel="Request Vehicle Access"
-                triggerVariant="default"
-              />
+              {!isOwnerOperator && (
+                <VehicleAccessRequestDialog
+                  fleetId={Number(fleetId)}
+                  triggerLabel="Request Vehicle Access"
+                  triggerVariant="default"
+                />
+              )}
               <Button variant="outline" onClick={() => (window.location.href = "/driver")}>
                 Back to Dashboard
               </Button>
@@ -292,7 +305,7 @@ function DriverDiagnosisContent() {
           <CardHeader>
             <CardTitle>Diagnostic Intake</CardTitle>
             <CardDescription>
-              Capture what the driver is seeing before sending the truck for inspection.
+              Capture what {isOwnerOperator ? "you are" : "the driver is"} seeing before {isOwnerOperator ? "reviewing health details" : "sending the truck for inspection"}.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
@@ -340,7 +353,7 @@ function DriverDiagnosisContent() {
                 onClick={() => void runDiagnosis([])}
               >
                 <Stethoscope className="w-4 h-4 mr-2" />
-                {diagnoseMutation.isPending ? "Analyzing..." : "Generate Diagnosis"}
+                {diagnoseMutation.isPending ? "Analyzing..." : (isOwnerOperator ? "Run Diagnosis" : "Generate Diagnosis")}
               </Button>
               <Button
                 variant="outline"
@@ -439,7 +452,7 @@ function DriverDiagnosisContent() {
                 {isAwaitingClarification
                   ? "Answer the clarifying question in the intake panel to continue the TADIS loop."
                   : isDiagnosisReady
-                    ? "Generated from the vehicle context, intake details, history, and similar cases."
+                    ? `Generated from vehicle context and intake details for ${isOwnerOperator ? "your records" : "fleet review"}.`
                     : "No diagnosis generated yet."}
               </CardDescription>
             </CardHeader>
@@ -486,7 +499,7 @@ function DriverDiagnosisContent() {
                     <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
                       <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Low-confidence summary</p>
                       <p className="mt-2 text-sm text-slate-700">
-                        TADIS asked up to 5 clarifying questions and still could not reach 75% confidence. Review this summary as a best-effort recommendation and confirm the issue with hands-on inspection and testing before acting on it.
+                        TADIS asked up to 5 clarifying questions and still could not reach 85% confidence. Review this summary as a best-effort recommendation and confirm the issue with hands-on inspection and testing before acting on it.
                       </p>
                     </div>
                   ) : null}
@@ -717,7 +730,7 @@ function DriverDiagnosisContent() {
                 </>
               ) : (
                 <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
-                  Enter a symptom or fault code, then generate a diagnosis to create a compliance warning and manager-ready intake summary.
+                  Enter a symptom or fault code, then generate a diagnosis to create a compliance warning and {isOwnerOperator ? "health summary" : "manager-ready intake summary"}.
                 </div>
               )}
             </CardContent>
@@ -742,7 +755,7 @@ function DriverDiagnosisContent() {
 
 export default function DriverDiagnosis() {
   return (
-    <RoleBasedRoute requiredRoles={["driver"]}>
+    <RoleBasedRoute requiredRoles={["driver", "owner_operator", "owner", "manager"]}>
       <DriverDiagnosisContent />
     </RoleBasedRoute>
   );

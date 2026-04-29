@@ -80,14 +80,14 @@ function DriverDashboardContent() {
   const storage = useMemo(() => getBrowserStorage(), []);
   const subscriptionQuery = trpc.subscriptions.getCurrent.useQuery();
   const trackPilotEventMutation = trpc.subscriptions.trackPilotEvent.useMutation();
-  const activeFleetId = subscriptionQuery.data?.activeFleetId ?? 1;
+  const activeFleetId = subscriptionQuery.data?.activeFleetId ?? (user as any)?.fleetId ?? 0;
   const vehiclesQuery = trpc.vehicles.listByFleet.useQuery(
     { fleetId: activeFleetId },
-    { staleTime: 30_000 }
+    { staleTime: 30_000, enabled: activeFleetId > 0 }
   );
   const myRequestsQuery = trpc.vehicleAccess.listMyRequests.useQuery(
     { fleetId: activeFleetId },
-    { staleTime: 15_000 }
+    { staleTime: 15_000, enabled: activeFleetId > 0 }
   );
   const vehicles = useMemo<DriverVehicle[]>(() => {
     const rows = vehiclesQuery.data ?? [];
@@ -129,6 +129,7 @@ function DriverDashboardContent() {
   const alternateVehicle = vehicles.find((vehicle) => vehicle.id !== activeVehicleId) ?? null;
   const pendingRequests = myRequestsQuery.data ?? [];
   const hasVehicles = vehicles.length > 0;
+  const resolvedFleetId = activeVehicle?.fleetId ?? vehicles[0]?.fleetId ?? activeFleetId;
 
   useEffect(() => {
     if (!vehicles.length) {
@@ -191,7 +192,7 @@ function DriverDashboardContent() {
     setActiveVehicleId(vehicle.id);
     saveLastDriverVehicleContext({
       id: vehicle.id,
-      fleetId: activeFleetId,
+      fleetId: resolvedFleetId,
       label: vehicle.label,
       vin: vehicle.vin,
       licensePlate: vehicle.licensePlate,
@@ -200,7 +201,7 @@ function DriverDashboardContent() {
       year: vehicle.year,
       engineMake: vehicle.engineMake,
     });
-    window.location.href = `/inspection?vehicle=${encodeURIComponent(String(vehicle.id))}&fleet=${encodeURIComponent(String(activeFleetId))}&mode=daily`;
+    window.location.href = `/inspection?vehicle=${encodeURIComponent(String(vehicle.id))}&fleet=${encodeURIComponent(String(resolvedFleetId))}&mode=daily`;
   };
 
   const startDiagnosis = (vehicle: DriverVehicle) => {
@@ -208,7 +209,7 @@ function DriverDashboardContent() {
     setActiveVehicleId(vehicle.id);
     saveLastDriverVehicleContext({
       id: vehicle.id,
-      fleetId: activeFleetId,
+      fleetId: resolvedFleetId,
       label: vehicle.label,
       vin: vehicle.vin,
       licensePlate: vehicle.licensePlate,
@@ -217,24 +218,55 @@ function DriverDashboardContent() {
       year: vehicle.year,
       engineMake: vehicle.engineMake,
     });
-    window.location.href = `/diagnosis?vehicle=${encodeURIComponent(String(vehicle.id))}&fleet=${encodeURIComponent(String(activeFleetId))}&label=${encodeURIComponent(vehicle.label)}&vin=${encodeURIComponent(vehicle.vin)}`;
+    window.location.href = `/diagnosis?vehicle=${encodeURIComponent(String(vehicle.id))}&fleet=${encodeURIComponent(String(resolvedFleetId))}&label=${encodeURIComponent(vehicle.label)}&vin=${encodeURIComponent(vehicle.vin)}`;
   };
 
   return (
     <div className="app-shell min-h-screen">
       <header className="border-b border-[var(--fleet-outline)] bg-white/95 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
-          <div className="flex items-start gap-4">
-            <AppLogo variant="icon" imageClassName="h-full w-full" href="/" />
-            <div>
-            <p className="section-label">Driver dashboard</p>
-            <h1 className="fleet-page-title mt-2 text-3xl font-semibold tracking-tight">Daily readiness workflow</h1>
-            <p className="mt-2 text-sm text-slate-600">See your current truck, complete today&apos;s inspection, and start diagnosis when something feels off.</p>
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:px-8">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-4">
+              <AppLogo variant="icon" imageClassName="h-full w-full" href="/driver" />
+              <div>
+                <p className="section-label">Driver dashboard</p>
+                <h1 className="fleet-page-title mt-2 text-3xl font-semibold tracking-tight">Daily readiness workflow</h1>
+                <p className="mt-2 text-sm text-slate-600">See your current truck, complete today&apos;s inspection, and start diagnosis when something feels off.</p>
+              </div>
+            </div>
+            <div className="hidden items-center gap-3 sm:flex">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" className="h-10 rounded-full border-slate-200 bg-white px-2">
+                    <Avatar className="h-7 w-7 border border-slate-200"><AvatarFallback className="bg-slate-900 text-xs font-semibold text-white">{initials}</AvatarFallback></Avatar>
+                    <div className="hidden text-left sm:block"><p className="text-sm font-medium text-slate-900">{user?.name || "Driver"}</p></div>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56 rounded-2xl border-slate-200 p-2">
+                  <div className="px-2 py-2">
+                    <p className="text-sm font-semibold text-slate-900">{user?.name || "Driver"}</p>
+                    <p className="text-xs text-slate-500">{user?.email || "Signed in"}</p>
+                  </div>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/profile")}>
+                    Profile settings
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/pricing")}>
+                    Subscription & Pricing
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/")}>
+                    <Info className="mr-2 h-4 w-4" />
+                    About TruckFixr
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={logout} className="cursor-pointer rounded-xl text-destructive focus:text-destructive"><LogOut className="mr-2 h-4 w-4" />Sign out</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <VehicleAccessRequestDialog
-              fleetId={activeFleetId}
+              fleetId={resolvedFleetId}
               triggerLabel="Request Vehicle Access"
               triggerVariant="default"
               onSubmitted={() => void myRequestsQuery.refetch()}
@@ -269,33 +301,6 @@ function DriverDashboardContent() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="hidden h-10 rounded-full border-slate-200 bg-white px-2 sm:flex">
-                  <Avatar className="h-7 w-7 border border-slate-200"><AvatarFallback className="bg-slate-900 text-xs font-semibold text-white">{initials}</AvatarFallback></Avatar>
-                  <div className="hidden text-left sm:block"><p className="text-sm font-medium text-slate-900">{user?.name || "Driver"}</p></div>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="hidden w-56 rounded-2xl border-slate-200 p-2 sm:block">
-                <div className="px-2 py-2">
-                  <p className="text-sm font-semibold text-slate-900">{user?.name || "Driver"}</p>
-                  <p className="text-xs text-slate-500">{user?.email || "Signed in"}</p>
-                </div>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/profile")}>
-                  Profile settings
-                </DropdownMenuItem>
-                <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/pricing")}>
-                  Subscription & Pricing
-                </DropdownMenuItem>
-                <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/")}>
-                  <Info className="mr-2 h-4 w-4" />
-                  About TruckFixr
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={logout} className="cursor-pointer rounded-xl text-destructive focus:text-destructive"><LogOut className="mr-2 h-4 w-4" />Sign out</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
           </div>
         </div>
       </header>
@@ -313,7 +318,7 @@ function DriverDashboardContent() {
                 </p>
                 <div className="mt-6 flex flex-wrap gap-3">
                   <VehicleAccessRequestDialog
-                    fleetId={activeFleetId}
+                    fleetId={resolvedFleetId}
                     triggerLabel="Request Vehicle Access"
                     triggerVariant="default"
                     onSubmitted={() => void myRequestsQuery.refetch()}
@@ -380,7 +385,7 @@ function DriverDashboardContent() {
                   <Button className="fleet-primary-btn h-12 rounded-2xl" onClick={() => startInspection(activeVehicle)}><SearchCode className="h-4 w-4" />{pendingDraftForActiveVehicle ? "Resume Pending Inspection" : "Start Daily Inspection"}</Button>
                   <Button variant="outline" className="h-12 rounded-2xl border-[var(--fleet-outline)] bg-white" onClick={() => startDiagnosis(activeVehicle)}><Stethoscope className="h-4 w-4" />Start Diagnosis</Button>
                   <VehicleAccessRequestDialog
-                    fleetId={activeFleetId}
+                    fleetId={resolvedFleetId}
                     triggerLabel="Request Another Vehicle"
                     triggerVariant="outline"
                     onSubmitted={() => void myRequestsQuery.refetch()}
@@ -423,7 +428,7 @@ function DriverDashboardContent() {
                       </Button>
                     ) : (
                       <VehicleAccessRequestDialog
-                        fleetId={activeFleetId}
+                        fleetId={resolvedFleetId}
                         triggerLabel="Request another vehicle"
                         triggerVariant="outline"
                         onSubmitted={() => void myRequestsQuery.refetch()}

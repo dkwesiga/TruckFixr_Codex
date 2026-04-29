@@ -1,15 +1,26 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import AppLogo from "@/components/AppLogo";
 import MorningFleetSummary from "@/components/MorningFleetSummary";
-import VehicleCaptureFlow, { type VehicleCaptureDraft } from "@/components/VehicleCaptureFlow";
+import VehicleCaptureFlow, {
+  type VehicleCaptureDraft,
+} from "@/components/VehicleCaptureFlow";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import { useAuthContext } from "@/hooks/useAuthContext";
 import { trpc } from "@/lib/trpc";
-import { getFallbackUnitNumber, getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
+import {
+  getFallbackUnitNumber,
+  getVehicleDisplayLabel,
+} from "@/lib/vehicleDisplay";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -28,13 +39,33 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { AlertTriangle, Camera, CarFront, ChevronRight, Clock3, LogOut, MapPin, Plus, Search, ShieldCheck, Truck, Users, Wrench } from "lucide-react";
+import {
+  AlertTriangle,
+  Camera,
+  CarFront,
+  ChevronRight,
+  Clock3,
+  LogOut,
+  MapPin,
+  Plus,
+  Search,
+  ShieldCheck,
+  Truck,
+  Users,
+  Wrench,
+} from "lucide-react";
 
 type DashboardRow = {
-  id: number;
+  id: number | string;
   truck: string;
   detail: string;
   assignedDriver: string;
@@ -98,7 +129,9 @@ function formatDefectDescription(value: string | null | undefined) {
     }
 
     if (parsed.output?.top_most_likely_cause?.trim()) {
-      segments.push(`Likely cause: ${parsed.output.top_most_likely_cause.trim()}`);
+      segments.push(
+        `Likely cause: ${parsed.output.top_most_likely_cause.trim()}`
+      );
     }
 
     if (parsed.output?.recommended_fix?.trim()) {
@@ -111,13 +144,15 @@ function formatDefectDescription(value: string | null | undefined) {
   }
 }
 
-function mapVehicleRow(vehicle: any, driverName: string): DashboardRow {
+function mapVehicleRow(vehicle: any, drivers: any[] = []): DashboardRow {
   const priority =
     vehicle.complianceStatus === "red"
       ? "Critical"
       : vehicle.complianceStatus === "yellow"
         ? "High"
         : "Low";
+
+  const driver = drivers.find(d => d.id === vehicle.assignedDriverId);
 
   return {
     id: vehicle.id,
@@ -126,8 +161,11 @@ function mapVehicleRow(vehicle: any, driverName: string): DashboardRow {
       vin: vehicle.vin,
       vehicleId: vehicle.id,
     }),
-    detail: [vehicle.make, vehicle.model, vehicle.engineMake, vehicle.licensePlate].filter(Boolean).join(" | ") || vehicle.vin,
-    assignedDriver: driverName,
+    assignedDriver: driver?.name || "Unassigned",
+    detail:
+      [vehicle.make, vehicle.model, vehicle.engineMake, vehicle.licensePlate]
+        .filter(Boolean)
+        .join(" | ") || vehicle.vin,
     status:
       vehicle.status === "maintenance"
         ? "In Shop"
@@ -155,147 +193,244 @@ function ManagerDashboardFixedContent() {
   const utils = trpc.useUtils();
   const [, navigate] = useLocation();
   const subscriptionQuery = trpc.subscriptions.getCurrent.useQuery();
-  const fleetId = subscriptionQuery.data?.activeFleetId ?? 1;
+  const fleetId = subscriptionQuery.data?.activeFleetId ?? (user as any)?.fleetId ?? 0;
   const [search, setSearch] = useState("");
   const [isAddVehicleOpen, setIsAddVehicleOpen] = useState(false);
-  const [vehicleCaptureInitialStep, setVehicleCaptureInitialStep] = useState<"entry" | "manual" | "scan_source">("entry");
-  const [selectedAccessVehicleId, setSelectedAccessVehicleId] = useState<number | null>(null);
+  const [vehicleCaptureInitialStep, setVehicleCaptureInitialStep] = useState<
+    "entry" | "manual" | "scan_source"
+  >("entry");
+  const [requestActionNote, setRequestActionNote] = useState("");
+  const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
+  const [assignmentStep, setAssignmentStep] = useState<"form" | "warning">("form");
+  const [assignmentWarning, setAssignmentWarning] = useState<{
+    title: string;
+    description: string;
+    confirmLabel: string;
+  } | null>(null);
   const [assignmentForm, setAssignmentForm] = useState({
-    driverUserId: "",
+    vehicleId: null as string | null,
+    driverUserId: null as string | null,
     accessType: "permanent" as "permanent" | "temporary",
     expiresAt: "",
     notes: "",
+    driverMode: "existing" as "existing" | "invite",
+    inviteFirstName: "",
+    inviteLastName: "",
+    inviteEmail: "",
   });
-  const [assignmentDriverMode, setAssignmentDriverMode] = useState<"existing" | "invite">("existing");
-  const [assignmentInviteForm, setAssignmentInviteForm] = useState({
-    name: "",
-    email: "",
-  });
-  const [requestActionNote, setRequestActionNote] = useState("");
+
+  const vehiclesQuery = trpc.vehicles.listByFleet.useQuery({ fleetId }, { enabled: !!fleetId });
+  const managerActionQueueQuery =
+    trpc.diagnostics.getManagerActionQueue.useQuery({
+      fleetId,
+      limit: 5,
+    }, { enabled: !!fleetId });
+    
+  const verifiedHealthQuery = trpc.inspections.getFleetDailyHealth.useQuery(
+    { fleetId },
+    { staleTime: 30_000, enabled: !!fleetId }
+  );
+  const driversQuery = trpc.vehicleAccess.listFleetDrivers.useQuery({ fleetId }, { enabled: !!fleetId });
+  const pendingAccessRequestsQuery = trpc.vehicleAccess.listPendingRequests.useQuery({ fleetId }, { enabled: !!fleetId });
+  
+  const selectedAsset = useMemo(() => 
+    (vehiclesQuery.data ?? []).find(v => String(v.id) === assignmentForm.vehicleId),
+    [vehiclesQuery.data, assignmentForm.vehicleId]
+  );
+  const selectedDriver = useMemo(
+    () =>
+      assignmentForm.driverMode === "existing"
+        ? (driversQuery.data ?? []).find(d => String(d.id) === assignmentForm.driverUserId) ?? null
+        : null,
+    [assignmentForm.driverMode, assignmentForm.driverUserId, driversQuery.data]
+  );
+  const otherDriverAssignments = useMemo(() => {
+    if (assignmentForm.driverMode !== "existing" || !assignmentForm.driverUserId) return [];
+    return (vehiclesQuery.data ?? []).filter(vehicle => {
+      if (String(vehicle.id) === assignmentForm.vehicleId) return false;
+      return String(vehicle.assignedDriverId ?? "") === assignmentForm.driverUserId;
+    });
+  }, [assignmentForm.driverMode, assignmentForm.driverUserId, assignmentForm.vehicleId, vehiclesQuery.data]);
 
   const initials = useMemo(() => {
     const name = user?.name?.trim() || "Manager";
     return name
       .split(/\s+/)
       .slice(0, 2)
-      .map((part) => part.charAt(0).toUpperCase())
+      .map(part => part.charAt(0).toUpperCase())
       .join("");
   }, [user?.name]);
 
-  const driversQuery = trpc.vehicleAccess.listFleetDrivers.useQuery({ fleetId });
-  const vehiclesQuery = trpc.vehicles.listByFleet.useQuery({ fleetId });
-  const pendingAccessRequestsQuery = trpc.vehicleAccess.listPendingRequests.useQuery(
-    { fleetId },
-    { staleTime: 15_000 }
-  );
-  const selectedVehicleAccessQuery = trpc.vehicleAccess.listVehicleAccess.useQuery(
-    {
-      fleetId,
-      vehicleId: selectedAccessVehicleId ?? 0,
-    },
-    {
-      enabled: Boolean(selectedAccessVehicleId),
-      staleTime: 10_000,
+const assignMutation = trpc.vehicles.assignDriver.useMutation({
+    onSuccess: () => {
+      toast.success("Assignment saved successfully.");
+      setIsAssignDialogOpen(false);
+      void vehiclesQuery.refetch();
     }
-  );
-  const managerActionQueueQuery = trpc.diagnostics.getManagerActionQueue.useQuery({
-    fleetId,
-    limit: 5,
   });
-  const verifiedHealthQuery = trpc.inspections.getFleetDailyHealth.useQuery(
-    { fleetId },
-    { staleTime: 30_000 }
-  );
+
+  const approveAccessRequestMutation = trpc.vehicleAccess.approveAccessRequest.useMutation();
+  const denyAccessRequestMutation = trpc.vehicleAccess.denyAccessRequest.useMutation();
+
   const createVehicleMutation = trpc.vehicles.create.useMutation({
-    onSuccess: async () => {
+    onSuccess: async createdVehicle => {
+      utils.vehicles.listByFleet.setData({ fleetId }, current => {
+        const vehicles = current ?? [];
+        const existingIndex = vehicles.findIndex(
+          vehicle => vehicle.id === createdVehicle.id
+        );
+
+        if (existingIndex >= 0) {
+          const next = [...vehicles];
+          next[existingIndex] = createdVehicle;
+          return next;
+        }
+
+        return [createdVehicle, ...vehicles];
+      });
+
       await utils.vehicles.listByFleet.invalidate({ fleetId });
       await vehiclesQuery.refetch();
     },
   });
-  const inviteDriverMutation = trpc.auth.createManagedDriverInvite.useMutation({
-    onSuccess: async () => {
-      await utils.auth.listManagedDrivers.invalidate();
-      await driversQuery.refetch();
-    },
-  });
-  const assignVehicleAccessMutation = trpc.vehicleAccess.assignDriverAccess.useMutation({
-    onSuccess: async () => {
-      await utils.vehicleAccess.listVehicleAccess.invalidate();
-      await utils.vehicleAccess.listPendingRequests.invalidate({ fleetId });
-      await utils.vehicles.listByFleet.invalidate({ fleetId });
-      toast.success("Driver access updated");
-    },
-  });
-  const revokeVehicleAccessMutation = trpc.vehicleAccess.revokeDriverAccess.useMutation({
-    onSuccess: async () => {
-      await utils.vehicleAccess.listVehicleAccess.invalidate();
-      toast.success("Driver access removed");
-    },
-  });
-  const approveAccessRequestMutation = trpc.vehicleAccess.approveAccessRequest.useMutation({
-    onSuccess: async () => {
-      await utils.vehicleAccess.listPendingRequests.invalidate({ fleetId });
-      await utils.vehicleAccess.listVehicleAccess.invalidate();
-      await utils.vehicles.listByFleet.invalidate({ fleetId });
-      toast.success("Vehicle access request approved");
-    },
-  });
-  const denyAccessRequestMutation = trpc.vehicleAccess.denyAccessRequest.useMutation({
-    onSuccess: async () => {
-      await utils.vehicleAccess.listPendingRequests.invalidate({ fleetId });
-      await utils.vehicleAccess.listVehicleAccess.invalidate();
-      toast.success("Vehicle access request denied");
-    },
-  });
 
-  const drivers = driversQuery.data ?? [];
-  const driverMap = useMemo(
-    () =>
-      new Map(
-        drivers.map((driver) => [
-          driver.id,
-          driver.name?.trim() || driver.email?.trim() || `Driver ${driver.id}`,
-        ])
-      ),
-    [drivers]
-  );
+  const parseOptionalVehicleId = (value?: string | number | null) => {
+    if (value === undefined || value === null || value === "") return null;
+    return String(value);
+  };
 
-  const rows = useMemo(() => {
-    const liveVehicles = vehiclesQuery.data ?? [];
-    const mapped =
-      liveVehicles.length > 0
-        ? liveVehicles.map((vehicle) =>
-            mapVehicleRow(
-              vehicle,
-              vehicle.assignedDriverId ? driverMap.get(vehicle.assignedDriverId) || "No driver assigned" : "No driver assigned"
-            )
-          )
-        : [
-            {
-              id: 42,
-              truck: "Truck 42",
-              detail: "Peterbilt 579 | ABC-1234",
-              assignedDriver: "No driver assigned",
-              status: "Dispatch Hold" as const,
-              inspection: "Overdue" as const,
-              priority: "Critical" as const,
-              issue: "Manager dashboard was in demo mode",
-            },
-          ];
+  const parseOptionalDriverId = (value?: string | number | null) => {
+    if (value === undefined || value === null || value === "") return null;
+    return String(value);
+  };
 
-    const q = search.trim().toLowerCase();
-    if (!q) return mapped;
-    return mapped.filter((row) =>
-      [row.truck, row.detail, row.assignedDriver, row.issue].some((value) =>
-        value.toLowerCase().includes(q)
-      )
-    );
-  }, [driverMap, search, vehiclesQuery.data]);
+  const handleOpenAssign = (
+    vehicleId?: string | number,
+    driverId?: string | number
+  ) => {
+    const explicitVehicleId = parseOptionalVehicleId(vehicleId);
+    const defaultVehicleId =
+      explicitVehicleId ?? (vehiclesQuery.data?.[0]?.id != null ? String(vehiclesQuery.data[0].id) : null);
+    setAssignmentForm(prev => ({ 
+      ...prev, 
+      vehicleId: defaultVehicleId,
+      driverUserId: parseOptionalDriverId(driverId),
+      driverMode: driverId ? "existing" : prev.driverMode
+    }));
+    setAssignmentStep("form");
+    setAssignmentWarning(null);
+    setIsAssignDialogOpen(true);
+  };
+
+  useEffect(() => {
+    if (!isAssignDialogOpen) return;
+    if (assignmentForm.vehicleId != null) return;
+    const firstVehicleId =
+      vehiclesQuery.data?.[0]?.id != null ? String(vehiclesQuery.data[0].id) : null;
+    if (firstVehicleId == null) return;
+
+    setAssignmentForm(prev => ({ ...prev, vehicleId: firstVehicleId }));
+  }, [isAssignDialogOpen, assignmentForm.vehicleId, vehiclesQuery.data]);
+
+  const handleAssignSubmit = async (confirmed: boolean = false) => {
+    if (!confirmed && selectedAsset?.assignedDriverId && String(selectedAsset.assignedDriverId) !== String(assignmentForm.driverUserId ?? "")) {
+      setAssignmentWarning({
+        title: "Asset Already Assigned",
+        description: `This asset is currently assigned to ${drivers.find(d => d.id === selectedAsset?.assignedDriverId)?.name || "another driver"}. Reassigning it will immediately revoke the current driver's access.`,
+        confirmLabel: "Reassign Driver",
+      });
+      setAssignmentStep("warning");
+      return;
+    }
+
+    const parsedVehicleId =
+      assignmentForm.vehicleId ??
+      (vehiclesQuery.data?.[0]?.id != null ? String(vehiclesQuery.data[0].id) : null);
+    if (!parsedVehicleId?.trim()) {
+      toast.error("Select a valid vehicle or trailer before assigning.");
+      return;
+    }
+
+    const parsedDriverUserId =
+      assignmentForm.driverMode === "existing"
+        ? assignmentForm.driverUserId
+        : undefined;
+
+    if (
+      assignmentForm.driverMode === "existing" &&
+      !parsedDriverUserId?.trim()
+    ) {
+      toast.error("Select an existing driver or switch to Add New Driver.");
+      return;
+    }
+
+    if (!confirmed && assignmentForm.driverMode === "existing" && otherDriverAssignments.length > 0) {
+      const assignedUnits = otherDriverAssignments
+        .map(vehicle => getVehicleDisplayLabel({
+          label: vehicle.unitNumber,
+          vin: vehicle.vin,
+          vehicleId: vehicle.id as any,
+        }))
+        .slice(0, 3)
+        .join(", ");
+      setAssignmentWarning({
+        title: "Driver Already Assigned",
+        description: `${selectedDriver?.name || selectedDriver?.email || "This driver"} already has active access to ${assignedUnits}${otherDriverAssignments.length > 3 ? ", and other assets" : ""}. Continue if this shared assignment is intentional, such as a tractor and trailer combination.`,
+        confirmLabel: "Assign Anyway",
+      });
+      setAssignmentStep("warning");
+      return;
+    }
+
+    try {
+      await assignMutation.mutateAsync({
+        fleetId,
+        vehicleId: parsedVehicleId,
+        driverUserId:
+          assignmentForm.driverMode === "invite" ? undefined : parsedDriverUserId,
+        accessType: assignmentForm.accessType,
+        expiresAt: assignmentForm.expiresAt || undefined,
+        notes: assignmentForm.notes || undefined,
+        driverMode: assignmentForm.driverMode,
+        inviteFirstName: assignmentForm.inviteFirstName || undefined,
+        inviteLastName: assignmentForm.inviteLastName || undefined,
+        inviteEmail: assignmentForm.inviteEmail || undefined,
+        confirmReassign: confirmed,
+      });
+    } catch (e: any) {
+      const message = e?.message || "Failed to assign driver";
+      if (typeof message === "string" && message.includes("DRIVER_HAS_OTHER_ASSIGNMENTS")) {
+        const assetSummary = message.split("DRIVER_HAS_OTHER_ASSIGNMENTS:")[1]?.trim() || "other active assets";
+        setAssignmentWarning({
+          title: "Driver Already Assigned",
+          description: `${selectedDriver?.name || selectedDriver?.email || "This driver"} already has active access to ${assetSummary}. Continue if this shared assignment is intentional, such as a tractor and trailer combination.`,
+          confirmLabel: "Assign Anyway",
+        });
+        setAssignmentStep("warning");
+        return;
+      }
+      toast.error(e.message || "Failed to assign driver");
+    }
+  };
+
   const pilotAccess = subscriptionQuery.data?.pilotAccess ?? null;
   const managerActionItems = managerActionQueueQuery.data ?? [];
   const verifiedHealth = verifiedHealthQuery.data;
+  const drivers = driversQuery.data ?? [];
   const pendingAccessRequests = pendingAccessRequestsQuery.data ?? [];
-  const selectedVehicleAccess = selectedVehicleAccessQuery.data;
+
+  const rows = useMemo(() => {
+    const liveVehicles = vehiclesQuery.data ?? [];
+    const mapped = liveVehicles.map(vehicle => mapVehicleRow(vehicle, drivers));
+
+    const q = search.trim().toLowerCase();
+    if (!q) return mapped;
+    return mapped.filter(row =>
+      [row.truck, row.detail, row.assignedDriver, row.issue].some(value =>
+        value.toLowerCase().includes(q)
+      )
+    );
+  }, [search, vehiclesQuery.data, drivers]);
 
   const openAddVehicleDialog = () => {
     setVehicleCaptureInitialStep("entry");
@@ -303,26 +438,6 @@ function ManagerDashboardFixedContent() {
   };
 
   const resetVehicleDialog = () => {};
-
-  const openVehicleAccessDialog = (vehicleId: number) => {
-    setSelectedAccessVehicleId(vehicleId);
-    setAssignmentForm({
-      driverUserId: "",
-      accessType: "permanent",
-      expiresAt: "",
-      notes: "",
-    });
-    setAssignmentDriverMode(drivers.length > 0 ? "existing" : "invite");
-    setAssignmentInviteForm({
-      name: "",
-      email: "",
-    });
-    setRequestActionNote("");
-  };
-
-  const selectedVehicleRow = (vehiclesQuery.data ?? []).find(
-    (vehicle) => vehicle.id === selectedAccessVehicleId
-  );
 
   const handleAddVehicle = async (draft: VehicleCaptureDraft) => {
     if (draft.vin.trim().length !== 17) {
@@ -332,6 +447,7 @@ function ManagerDashboardFixedContent() {
     try {
       const createdVehicle = await createVehicleMutation.mutateAsync({
         fleetId,
+        assetType: "truck", // Default for OCR, should be selectable in flow
         unitNumber: draft.label.trim() || getFallbackUnitNumber(draft.vin),
         vin: draft.vin.trim().toUpperCase(),
         licensePlate: draft.licensePlate.trim() || undefined,
@@ -348,11 +464,7 @@ function ManagerDashboardFixedContent() {
       });
 
       toast.success(`${vehicleLabel} created.`, {
-        description: "Step 2 is optional: assign a driver now or later from Vehicle Access.",
-        action: {
-          label: "Assign driver",
-          onClick: () => openVehicleAccessDialog(createdVehicle.id),
-        },
+        description: "Vehicle successfully added to fleet.",
       });
       resetVehicleDialog();
       return {
@@ -362,7 +474,8 @@ function ManagerDashboardFixedContent() {
         vin: createdVehicle.vin,
         licensePlate: createdVehicle.licensePlate?.trim() || "UNKNOWN",
         make: createdVehicle.make?.trim() || draft.make.trim() || "Truck",
-        engineMake: createdVehicle.engineMake?.trim() || draft.engineMake.trim(),
+        engineMake:
+          createdVehicle.engineMake?.trim() || draft.engineMake.trim(),
         model: createdVehicle.model?.trim() || draft.model.trim() || "Unit",
         year:
           typeof createdVehicle.year === "number"
@@ -378,66 +491,21 @@ function ManagerDashboardFixedContent() {
     }
   };
 
-  const handleAssignVehicleAccess = async () => {
-    if (!selectedAccessVehicleId) return;
-
-    let driverUserId = assignmentForm.driverUserId;
-
-    if (assignmentDriverMode === "invite") {
-      if (!assignmentInviteForm.name.trim()) {
-        toast.error("Enter the driver's name.");
-        return;
-      }
-
-      if (!assignmentInviteForm.email.trim()) {
-        toast.error("Enter the driver's email.");
-        return;
-      }
-
-      const inviteResult = await inviteDriverMutation.mutateAsync({
-        name: assignmentInviteForm.name.trim(),
-        email: assignmentInviteForm.email.trim(),
-      });
-
-      driverUserId = String(inviteResult.driver.id);
-      toast.message(inviteResult.invitation.message);
-    } else if (!driverUserId) {
-      toast.error("Select a driver to assign.");
-      return;
-    }
-
-    await assignVehicleAccessMutation.mutateAsync({
-      fleetId,
-      vehicleId: selectedAccessVehicleId,
-      driverUserId: Number(driverUserId),
-      accessType: assignmentForm.accessType,
-      expiresAt: assignmentForm.accessType === "temporary" ? assignmentForm.expiresAt : undefined,
-      notes: assignmentForm.notes.trim() || undefined,
-    });
-    await selectedVehicleAccessQuery.refetch();
-    setAssignmentForm((current) => ({
-      ...current,
-      driverUserId: "",
-      expiresAt: "",
-      notes: "",
-      accessType: "permanent",
-    }));
-    setAssignmentInviteForm({
-      name: "",
-      email: "",
-    });
-  };
 
   return (
     <div className="app-shell min-h-screen">
       <header className="border-b border-[var(--fleet-outline)] bg-white/95 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
           <div className="flex items-start gap-4">
-            <AppLogo imageClassName="h-10" frameClassName="p-1.5" href="/" />
+            <AppLogo imageClassName="h-10" frameClassName="p-1.5" href="/manager" />
             <div>
-            <p className="section-label">Manager dashboard</p>
-            <h1 className="fleet-page-title mt-2 text-3xl font-semibold tracking-tight">Fleet operations center</h1>
-            <p className="mt-2 text-sm text-[var(--fleet-muted)]">Manager actions now open real routes and the dashboard can add vehicles with required driver assignment.</p>
+              <p className="section-label">Manager dashboard</p>
+              <h1 className="fleet-page-title mt-2 text-3xl font-semibold tracking-tight">
+                Fleet operations center
+              </h1>
+              <p className="mt-2 text-sm text-[var(--fleet-muted)]">
+                Manager actions now open real routes and the dashboard can add vehicles.
+              </p>
             </div>
           </div>
 
@@ -446,17 +514,21 @@ function ManagerDashboardFixedContent() {
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--fleet-muted)]" />
               <Input
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={event => setSearch(event.target.value)}
                 placeholder="Search trucks, plates, drivers, issues"
                 className="h-10 rounded-full border-[var(--fleet-outline)] bg-white pl-9 shadow-sm"
               />
             </div>
-            <Button variant="outline" className="rounded-full border-[var(--fleet-outline)] bg-white" onClick={() => window.print()}>
+            <Button
+              variant="outline"
+              className="rounded-full border-[var(--fleet-outline)] bg-white"
+              onClick={() => window.print()}
+            >
               Export morning brief
             </Button>
             <Dialog
               open={isAddVehicleOpen}
-              onOpenChange={(open) => {
+              onOpenChange={open => {
                 setIsAddVehicleOpen(open);
                 if (open) {
                   setVehicleCaptureInitialStep("entry");
@@ -473,7 +545,7 @@ function ManagerDashboardFixedContent() {
               </DialogTrigger>
               <DialogContent className="rounded-[24px] border-[var(--fleet-outline)] sm:max-w-xl">
                 <VehicleCaptureFlow
-                  fleetId={fleetId}
+                fleetId={fleetId}
                   source="vehicles"
                   initialStep={vehicleCaptureInitialStep}
                   saveButtonLabel="Save vehicle"
@@ -484,15 +556,6 @@ function ManagerDashboardFixedContent() {
                   onSaveDraft={handleAddVehicle}
                   renderReviewExtras={() => (
                     <div className="space-y-4">
-                      <div className="rounded-2xl border border-[var(--fleet-outline)] bg-[var(--fleet-surface)] px-4 py-4">
-                        <p className="font-['Manrope'] text-sm font-semibold text-[var(--fleet-ink)]">
-                          Step 2: Assign a driver
-                        </p>
-                        <p className="mt-2 text-sm text-[var(--fleet-muted)]">
-                          Driver assignment is optional and happens after the vehicle is created.
-                          Once this truck is saved, you can assign a driver from Vehicle Access right away or later.
-                        </p>
-                      </div>
                     </div>
                   )}
                   onSaved={() => {
@@ -504,17 +567,38 @@ function ManagerDashboardFixedContent() {
             </Dialog>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="h-10 rounded-full border-slate-200 bg-white px-2">
+                <Button
+                  variant="outline"
+                  className="h-10 rounded-full border-slate-200 bg-white px-2"
+                >
                   <Avatar className="h-7 w-7 border border-slate-200">
-                    <AvatarFallback className="bg-slate-900 text-xs font-semibold text-white">{initials}</AvatarFallback>
+                    <AvatarFallback className="bg-slate-900 text-xs font-semibold text-white">
+                      {initials}
+                    </AvatarFallback>
                   </Avatar>
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56 rounded-2xl border-slate-200 p-2">
-                <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/profile")}>Profile settings</DropdownMenuItem>
-                <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => openAddVehicleDialog()}>Add vehicle</DropdownMenuItem>
+              <DropdownMenuContent
+                align="end"
+                className="w-56 rounded-2xl border-slate-200 p-2"
+              >
+                <DropdownMenuItem
+                  className="cursor-pointer rounded-xl"
+                  onClick={() => navigate("/profile")}
+                >
+                  Profile settings
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="cursor-pointer rounded-xl"
+                  onClick={() => openAddVehicleDialog()}
+                >
+                  Add vehicle
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={logout} className="cursor-pointer rounded-xl text-destructive focus:text-destructive">
+                <DropdownMenuItem
+                  onClick={logout}
+                  className="cursor-pointer rounded-xl text-destructive focus:text-destructive"
+                >
                   <LogOut className="mr-2 h-4 w-4" />
                   Sign out
                 </DropdownMenuItem>
@@ -525,18 +609,42 @@ function ManagerDashboardFixedContent() {
       </header>
 
       <main className="mx-auto max-w-7xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
+        <div className="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-r-xl shadow-sm">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="h-5 w-5 text-amber-600" />
+            <p className="text-sm text-amber-800">
+              Safety notice: Do not use TruckFixr while driving. If you are driving, pull over safely before 
+              entering symptoms, reading results, or following diagnostic instructions.
+            </p>
+          </div>
+        </div>
+
         <section className="grid gap-4 md:grid-cols-3">
           {pilotAccess?.status === "active" ? (
             <Card className="metric-card border-0">
               <CardHeader className="pb-3">
                 <CardDescription>Pilot Access</CardDescription>
-                <CardTitle className="text-2xl font-semibold text-slate-950">Pilot Access Active</CardTitle>
+                <CardTitle className="text-2xl font-semibold text-slate-950">
+                  Pilot Access Active
+                </CardTitle>
               </CardHeader>
               <CardContent className="pt-0 text-sm text-slate-600">
-                <p>Expires {new Date(pilotAccess.expiresAt).toLocaleDateString()}</p>
-                <p className="mt-1">Vehicles used: {pilotAccess.vehiclesUsed} / {pilotAccess.maxVehicles}</p>
-                <p className="mt-1">Users enabled: {pilotAccess.usersUsed} / {pilotAccess.maxUsers}</p>
-                <Button variant="outline" className="mt-4 w-full rounded-xl" onClick={() => navigate("/profile")}>
+                <p>
+                  Expires {new Date(pilotAccess.expiresAt).toLocaleDateString()}
+                </p>
+                <p className="mt-1">
+                  Vehicles used: {pilotAccess.vehiclesUsed} /{" "}
+                  {pilotAccess.maxVehicles}
+                </p>
+                <p className="mt-1">
+                  Users enabled: {pilotAccess.usersUsed} /{" "}
+                  {pilotAccess.maxUsers}
+                </p>
+                <Button
+                  variant="outline"
+                  className="mt-4 w-full rounded-xl"
+                  onClick={() => navigate("/profile")}
+                >
                   Upgrade plan
                 </Button>
               </CardContent>
@@ -545,23 +653,43 @@ function ManagerDashboardFixedContent() {
           <Card className="metric-card border-0">
             <CardHeader className="pb-3">
               <CardDescription>Vehicles in fleet</CardDescription>
-              <CardTitle className="text-3xl font-semibold text-slate-950">{rows.length}</CardTitle>
+              <CardTitle className="text-3xl font-semibold text-slate-950">
+                {vehiclesQuery.data?.length ?? 0}
+              </CardTitle>
+            <Button 
+              variant="link" 
+              className="p-0 h-auto text-blue-600" 
+              onClick={() => handleOpenAssign()}
+            >
+              Assign Vehicle / Trailer
+            </Button>
             </CardHeader>
-            <CardContent className="pt-0 text-sm text-slate-600">Live fleet list with driver assignment.</CardContent>
+            <CardContent className="pt-0 text-sm text-slate-600">
+              Live fleet list with driver assignment.
+            </CardContent>
           </Card>
           <Card className="metric-card border-0">
             <CardHeader className="pb-3">
               <CardDescription>Linked drivers</CardDescription>
-              <CardTitle className="text-3xl font-semibold text-slate-950">{drivers.length}</CardTitle>
+              <CardTitle className="text-3xl font-semibold text-slate-950">
+                {drivers.length}
+              </CardTitle>
             </CardHeader>
-            <CardContent className="pt-0 text-sm text-slate-600">Drivers available to assign to vehicles.</CardContent>
+            <CardContent className="pt-0 text-sm text-slate-600">
+              Drivers available to assign to vehicles.
+            </CardContent>
           </Card>
           <Card className="metric-card border-0">
             <CardHeader className="pb-3">
               <CardDescription>Action shortcuts</CardDescription>
-              <CardTitle className="text-3xl font-semibold text-slate-950">Live</CardTitle>
+              <CardTitle className="text-3xl font-semibold text-slate-950">
+                Live
+              </CardTitle>
             </CardHeader>
-            <CardContent className="pt-0 text-sm text-slate-600">Profile, maintenance queue, truck details, and add vehicle actions now respond.</CardContent>
+            <CardContent className="pt-0 text-sm text-slate-600">
+              Profile, maintenance queue, truck details, and add vehicle actions
+              now respond.
+            </CardContent>
           </Card>
         </section>
 
@@ -574,7 +702,14 @@ function ManagerDashboardFixedContent() {
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-0 text-sm text-slate-600">
-              {verifiedHealth?.today.completionRate ?? 0}% completion rate.
+              <p>{verifiedHealth?.today.completionRate ?? 0}% completion rate.</p>
+              <Button
+                variant="link"
+                className="mt-2 h-auto p-0 text-sm font-medium text-blue-700"
+                onClick={() => navigate("/profile#inspection-reports")}
+              >
+                View inspection reports
+              </Button>
             </CardContent>
           </Card>
           <Card className="metric-card border-0">
@@ -584,7 +719,9 @@ function ManagerDashboardFixedContent() {
                 {verifiedHealth?.today.missedInspections ?? 0}
               </CardTitle>
             </CardHeader>
-            <CardContent className="pt-0 text-sm text-slate-600">Vehicles not inspected today.</CardContent>
+            <CardContent className="pt-0 text-sm text-slate-600">
+              Vehicles not inspected today.
+            </CardContent>
           </Card>
           <Card className="metric-card border-0">
             <CardHeader className="pb-3">
@@ -593,7 +730,9 @@ function ManagerDashboardFixedContent() {
                 {verifiedHealth?.openDefects.length ?? 0}
               </CardTitle>
             </CardHeader>
-            <CardContent className="pt-0 text-sm text-slate-600">Known issues remain visible until resolved.</CardContent>
+            <CardContent className="pt-0 text-sm text-slate-600">
+              Known issues remain visible until resolved.
+            </CardContent>
           </Card>
           <Card className="metric-card border-0">
             <CardHeader className="pb-3">
@@ -602,7 +741,9 @@ function ManagerDashboardFixedContent() {
                 {verifiedHealth?.averages.fleetIntegrityScore ?? 100}
               </CardTitle>
             </CardHeader>
-            <CardContent className="pt-0 text-sm text-slate-600">Average verified inspection score.</CardContent>
+            <CardContent className="pt-0 text-sm text-slate-600">
+              Average verified inspection score.
+            </CardContent>
           </Card>
         </section>
 
@@ -614,7 +755,8 @@ function ManagerDashboardFixedContent() {
                 Daily vehicle health
               </CardTitle>
               <CardDescription>
-                Verified daily status combines inspection completion, open defects, photo proof, location proof, and flags.
+                Verified daily status combines inspection completion, open
+                defects, photo proof, location proof, and flags.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -623,13 +765,19 @@ function ManagerDashboardFixedContent() {
                   No verified inspections yet today.
                 </div>
               ) : (
-                verifiedHealth?.vehicles.map((vehicle) => (
-                  <div key={vehicle.vehicleId} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                verifiedHealth?.vehicles.map(vehicle => (
+                  <div
+                    key={vehicle.vehicleId}
+                    className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4"
+                  >
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div>
-                        <p className="font-semibold text-slate-950">{vehicle.unit}</p>
+                        <p className="font-semibold text-slate-950">
+                          {vehicle.unit}
+                        </p>
                         <p className="mt-1 text-sm text-slate-600">
-                          {vehicle.openDefects} open defects | Integrity {vehicle.integrityScore ?? "N/A"}
+                          {vehicle.openDefects} open defects | Integrity{" "}
+                          {vehicle.integrityScore ?? "N/A"}
                         </p>
                         <p className="mt-2 text-sm text-slate-700">
                           Driver:{" "}
@@ -652,25 +800,18 @@ function ManagerDashboardFixedContent() {
                         >
                           {vehicle.status.replace("_", " ")}
                         </span>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="rounded-full border-slate-200 bg-white"
-                          onClick={() => openVehicleAccessDialog(vehicle.vehicleId)}
-                        >
-                          {vehicle.assignedDriverName ? "Change driver" : "Assign driver"}
-                        </Button>
                       </div>
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-600">
                       <span className="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 ring-1 ring-slate-200">
                         <MapPin className="h-3.5 w-3.5" />
-                        Location {vehicle.locationProofCaptured ? "captured" : "missing"}
+                        Location{" "}
+                        {vehicle.locationProofCaptured ? "captured" : "missing"}
                       </span>
                       <span className="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 ring-1 ring-slate-200">
                         <Camera className="h-3.5 w-3.5" />
-                        Photo proof {vehicle.photoProofSubmitted ? "submitted" : "missing"}
+                        Photo proof{" "}
+                        {vehicle.photoProofSubmitted ? "submitted" : "missing"}
                       </span>
                       {vehicle.latestAiRecommendation ? (
                         <span className="rounded-full bg-white px-2.5 py-1 ring-1 ring-slate-200">
@@ -690,7 +831,10 @@ function ManagerDashboardFixedContent() {
                 <AlertTriangle className="h-5 w-5 text-amber-600" />
                 Inspection integrity alerts
               </CardTitle>
-              <CardDescription>Fast inspections, skipped proof, missing photos, and missing location proof.</CardDescription>
+              <CardDescription>
+                Fast inspections, skipped proof, missing photos, and missing
+                location proof.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               {(verifiedHealth?.integrityAlerts ?? []).length === 0 ? (
@@ -698,10 +842,17 @@ function ManagerDashboardFixedContent() {
                   No integrity alerts are waiting for review.
                 </div>
               ) : (
-                verifiedHealth?.integrityAlerts.slice(0, 8).map((alert) => (
-                  <div key={alert.id} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
-                    <p className="font-semibold text-slate-950">{alert.flagType.replaceAll("_", " ")}</p>
-                    <p className="mt-1 text-sm text-slate-600">{alert.message}</p>
+                verifiedHealth?.integrityAlerts.slice(0, 8).map(alert => (
+                  <div
+                    key={alert.id}
+                    className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4"
+                  >
+                    <p className="font-semibold text-slate-950">
+                      {alert.flagType.replaceAll("_", " ")}
+                    </p>
+                    <p className="mt-1 text-sm text-slate-600">
+                      {alert.message}
+                    </p>
                     <p className="mt-2 text-xs uppercase tracking-[0.14em] text-slate-400">
                       {alert.severity}
                     </p>
@@ -716,7 +867,9 @@ function ManagerDashboardFixedContent() {
           <Card className="saas-card">
             <CardHeader>
               <CardTitle className="text-slate-950">Open defects</CardTitle>
-              <CardDescription>Review, monitor, repair, or resolve driver-reported defects.</CardDescription>
+              <CardDescription>
+                Review, monitor, repair, or resolve driver-reported defects.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               {(verifiedHealth?.openDefects ?? []).length === 0 ? (
@@ -724,25 +877,45 @@ function ManagerDashboardFixedContent() {
                   No open defects.
                 </div>
               ) : (
-                verifiedHealth?.openDefects.slice(0, 8).map((defect) => (
-                  <div key={defect.id} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                verifiedHealth?.openDefects.slice(0, 8).map(defect => (
+                  <div
+                    key={defect.id}
+                    className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4"
+                  >
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="font-semibold text-slate-950">{defect.title}</p>
-                        <p className="mt-1 text-sm text-slate-600">{formatDefectDescription(defect.description)}</p>
+                        <p className="font-semibold text-slate-950">
+                          {defect.title}
+                        </p>
+                        <p className="mt-1 text-sm text-slate-600">
+                          {formatDefectDescription(defect.description)}
+                        </p>
                       </div>
-                      <span className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${badgeClasses(defect.severity === "critical" ? "Critical" : defect.severity === "moderate" || defect.severity === "medium" ? "High" : "Low")}`}>
+                      <span
+                        className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${badgeClasses(defect.severity === "critical" ? "Critical" : defect.severity === "moderate" || defect.severity === "medium" ? "High" : "Low")}`}
+                      >
                         {defect.severity}
                       </span>
                     </div>
                     <p className="mt-3 text-sm text-slate-700">
-                      AI recommendation: {defect.aiRecommendation ?? "Manager review pending"}
+                      AI recommendation:{" "}
+                      {defect.aiRecommendation ?? "Manager review pending"}
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
-                      <Button variant="outline" size="sm" className="rounded-xl" onClick={() => navigate(`/defect/${defect.id}`)}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-xl"
+                        onClick={() => navigate(`/defect/${defect.id}`)}
+                      >
                         Review
                       </Button>
-                      <Button variant="outline" size="sm" className="rounded-xl" onClick={() => navigate(`/defect/${defect.id}`)}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-xl"
+                        onClick={() => navigate(`/defect/${defect.id}`)}
+                      >
                         Create repair action
                       </Button>
                     </div>
@@ -754,30 +927,52 @@ function ManagerDashboardFixedContent() {
 
           <Card className="saas-card">
             <CardHeader>
-              <CardTitle className="text-slate-950">Inspection quality averages</CardTitle>
-              <CardDescription>Simple MVP integrity scoring by vehicle and driver.</CardDescription>
+              <CardTitle className="text-slate-950">
+                Inspection quality averages
+              </CardTitle>
+              <CardDescription>
+                Simple MVP integrity scoring by vehicle and driver.
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <p className="text-sm font-semibold text-slate-900">By vehicle</p>
+                <p className="text-sm font-semibold text-slate-900">
+                  By vehicle
+                </p>
                 <div className="mt-2 space-y-2">
-                  {(verifiedHealth?.averages.byVehicle ?? []).slice(0, 6).map((item) => (
-                    <div key={item.vehicleId} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm">
-                      <span>{item.unit}</span>
-                      <span className="font-semibold text-slate-950">{item.score}</span>
-                    </div>
-                  ))}
+                  {(verifiedHealth?.averages.byVehicle ?? [])
+                    .slice(0, 6)
+                    .map(item => (
+                      <div
+                        key={item.vehicleId}
+                        className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm"
+                      >
+                        <span>{item.unit}</span>
+                        <span className="font-semibold text-slate-950">
+                          {item.score}
+                        </span>
+                      </div>
+                    ))}
                 </div>
               </div>
               <div>
-                <p className="text-sm font-semibold text-slate-900">By driver</p>
+                <p className="text-sm font-semibold text-slate-900">
+                  By driver
+                </p>
                 <div className="mt-2 space-y-2">
-                  {(verifiedHealth?.averages.byDriver ?? []).slice(0, 6).map((item) => (
-                    <div key={item.driverId} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm">
-                      <span>Driver {item.driverId}</span>
-                      <span className="font-semibold text-slate-950">{item.score}</span>
-                    </div>
-                  ))}
+                  {(verifiedHealth?.averages.byDriver ?? [])
+                    .slice(0, 6)
+                    .map(item => (
+                      <div
+                        key={item.driverId}
+                        className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm"
+                      >
+                        <span>Driver {item.driverId}</span>
+                        <span className="font-semibold text-slate-950">
+                          {item.score}
+                        </span>
+                      </div>
+                    ))}
                 </div>
               </div>
             </CardContent>
@@ -793,15 +988,26 @@ function ManagerDashboardFixedContent() {
             <div className="flex flex-col gap-2 border-b border-slate-200 px-7 py-6 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <p className="section-label">Fleet operations</p>
-                <h2 className="mt-2 text-2xl font-semibold text-slate-950">Vehicles and assigned drivers</h2>
-                <p className="mt-2 text-sm text-slate-600">Create the vehicle first, then optionally assign driver access from Vehicle Access.</p>
+                <h2 className="mt-2 text-2xl font-semibold text-slate-950">
+                  Vehicles and assigned drivers
+                </h2>
+                <p className="mt-2 text-sm text-slate-600">
+                  Manage your fleet vehicles and their operational status.
+                </p>
               </div>
               <div className="flex gap-3">
-                <Button variant="outline" className="rounded-full border-slate-200 bg-white" onClick={() => navigate("/defect/1")}>
+                <Button
+                  variant="outline"
+                  className="rounded-full border-slate-200 bg-white"
+                  onClick={() => navigate("/defect/1")}
+                >
                   <Wrench className="mr-2 h-4 w-4" />
                   Open queue
                 </Button>
-                <Button className="fleet-primary-btn rounded-full" onClick={() => openAddVehicleDialog()}>
+                <Button
+                  className="fleet-primary-btn rounded-full"
+                  onClick={() => openAddVehicleDialog()}
+                >
                   <CarFront className="mr-2 h-4 w-4" />
                   Add vehicle
                 </Button>
@@ -812,48 +1018,104 @@ function ManagerDashboardFixedContent() {
               <table className="min-w-full text-left text-sm">
                 <thead className="bg-slate-50/80 text-slate-500">
                   <tr>
-                    {["Truck", "Status", "Inspection", "Assigned Driver", "Issue", "Priority", "Action"].map((heading) => (
-                      <th key={heading} className="px-7 py-4 font-medium">{heading}</th>
+                    {[
+                      "Truck",
+                      "Status",
+                      "Inspection",
+                      "Assigned Driver",
+                      "Issue",
+                      "Priority",
+                      "Action",
+                    ].map(heading => (
+                      <th key={heading} className="px-7 py-4 font-medium">
+                        {heading}
+                      </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.id} className="border-t border-slate-200/80">
-                      <td className="px-7 py-5 align-top">
-                        <div className="flex items-start gap-3">
-                          <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
-                            <Truck className="h-4 w-4" />
-                          </div>
-                          <div>
-                            <p className="font-semibold text-slate-950">{row.truck}</p>
-                            <p className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-400">{row.detail}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-7 py-5 align-top"><span className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${badgeClasses(row.status)}`}>{row.status}</span></td>
-                      <td className="px-7 py-5 align-top"><span className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${badgeClasses(row.inspection)}`}>{row.inspection}</span></td>
-                      <td className="px-7 py-5 align-top text-slate-600">{row.assignedDriver}</td>
-                      <td className="px-7 py-5 align-top text-slate-600">{row.issue}</td>
-                      <td className="px-7 py-5 align-top"><span className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${badgeClasses(row.priority)}`}>{row.priority}</span></td>
-                      <td className="px-7 py-5 align-top">
-                        <div className="flex flex-wrap gap-2">
-                          <Button variant="ghost" size="sm" className="rounded-full text-blue-700 hover:bg-blue-50" onClick={() => navigate(`/truck/${row.id}`)}>
-                            View details
-                            <ChevronRight className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="rounded-full border-slate-200 bg-white"
-                            onClick={() => openVehicleAccessDialog(row.id)}
-                          >
-                            Vehicle Access
-                          </Button>
-                        </div>
+                  {rows.length === 0 ? (
+                    <tr className="border-t border-slate-200/80">
+                      <td
+                        colSpan={7}
+                        className="px-7 py-10 text-center text-sm text-slate-600"
+                      >
+                        {vehiclesQuery.isLoading
+                          ? "Loading your fleet vehicles..."
+                          : search.trim()
+                            ? "No vehicles match that search."
+                            : "No vehicles in this fleet yet. Add a vehicle to start assigning drivers and tracking fleet health."}
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    rows.map(row => (
+                      <tr key={row.id} className="border-t border-slate-200/80">
+                        <td className="px-7 py-5 align-top">
+                          <div className="flex items-start gap-3">
+                            <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100 text-slate-700">
+                              <Truck className="h-4 w-4" />
+                            </div>
+                            <div>
+                              <p className="font-semibold text-slate-950">
+                                {row.truck}
+                              </p>
+                              <p className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-400">
+                                {row.detail}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-7 py-5 align-top">
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${badgeClasses(row.status)}`}
+                          >
+                            {row.status}
+                          </span>
+                        </td>
+                        <td className="px-7 py-5 align-top">
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${badgeClasses(row.inspection)}`}
+                          >
+                            {row.inspection}
+                          </span>
+                        </td>
+                        <td className="px-7 py-5 align-top text-slate-600">
+                          {row.assignedDriver}
+                        </td>
+                        <td className="px-7 py-5 align-top text-slate-600">
+                          {row.issue}
+                        </td>
+                        <td className="px-7 py-5 align-top">
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${badgeClasses(row.priority)}`}
+                          >
+                            {row.priority}
+                          </span>
+                        </td>
+                        <td className="px-7 py-5 align-top">
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="rounded-full text-blue-700 hover:bg-blue-50"
+                              onClick={() => navigate(`/truck/${row.id}`)}
+                            >
+                              View details
+                              <ChevronRight className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="rounded-full"
+                              onClick={() => handleOpenAssign(String(row.id))}
+                            >
+                              Assign
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -869,7 +1131,8 @@ function ManagerDashboardFixedContent() {
                       Linked drivers
                     </CardTitle>
                     <CardDescription>
-                      Invite drivers into TruckFixr or assign linked drivers to a vehicle.
+                      Invite drivers into TruckFixr or assign linked drivers to
+                      a vehicle.
                     </CardDescription>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -894,28 +1157,33 @@ function ManagerDashboardFixedContent() {
               <CardContent className="space-y-3">
                 {drivers.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
-                    No linked drivers yet. Invite a driver from Settings, then assign them to a vehicle.
+                    No linked drivers yet. Invite a driver from Settings, then
+                    assign them to a vehicle.
                   </div>
                 ) : (
-                  drivers.slice(0, 5).map((driver) => (
+                  drivers.slice(0, 5).map(driver => (
                     <div
                       key={driver.id}
                       className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3"
                     >
                       <div>
                         <p className="font-semibold text-slate-950">
-                          {driver.name?.trim() || driver.email || `Driver ${driver.id}`}
+                          {driver.name?.trim() ||
+                            driver.email ||
+                            `Driver ${driver.id}`}
                         </p>
-                        <p className="mt-1 text-sm text-slate-600">{driver.email || "No email available"}</p>
+                        <p className="mt-1 text-sm text-slate-600">
+                          {driver.email || "No email available"}
+                        </p>
                       </div>
                       <Button
                         variant="outline"
                         size="sm"
                         className="rounded-xl"
-                      onClick={() => openAddVehicleDialog()}
-                    >
-                      Add vehicle
-                    </Button>
+                        onClick={() => handleOpenAssign(undefined, String(driver.id))}
+                      >
+                        Assign driver
+                      </Button>
                     </div>
                   ))
                 )}
@@ -928,7 +1196,8 @@ function ManagerDashboardFixedContent() {
                   Vehicle Access
                 </CardTitle>
                 <CardDescription>
-                  Assign permanent or temporary vehicle/trailer access and review pending driver requests.
+                  Assign permanent or temporary vehicle/trailer access and
+                  review pending driver requests.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -937,8 +1206,11 @@ function ManagerDashboardFixedContent() {
                     No vehicle access requests are pending.
                   </div>
                 ) : (
-                  pendingAccessRequests.slice(0, 5).map((request) => (
-                    <div key={request.id} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                  pendingAccessRequests.slice(0, 5).map(request => (
+                    <div
+                      key={request.id}
+                      className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4"
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="font-semibold text-slate-950">
@@ -948,7 +1220,10 @@ function ManagerDashboardFixedContent() {
                               "Vehicle request"}
                           </p>
                           <p className="mt-1 text-sm text-slate-600">
-                            {request.driver?.name || request.driver?.email || `Driver ${request.requestedByDriverId}`} | {request.reason.replaceAll("_", " ")}
+                            {request.driver?.name ||
+                              request.driver?.email ||
+                              `Driver ${request.requestedByDriverId}`}{" "}
+                            | {request.reason.replaceAll("_", " ")}
                           </p>
                         </div>
                         {request.urgent ? (
@@ -958,7 +1233,9 @@ function ManagerDashboardFixedContent() {
                         ) : null}
                       </div>
                       {request.note ? (
-                        <p className="mt-3 text-sm text-slate-700">{request.note}</p>
+                        <p className="mt-3 text-sm text-slate-700">
+                          {request.note}
+                        </p>
                       ) : null}
                       <div className="mt-3 flex flex-wrap gap-2">
                         <Button
@@ -968,7 +1245,8 @@ function ManagerDashboardFixedContent() {
                             void approveAccessRequestMutation.mutateAsync({
                               requestId: request.id,
                               accessType: "permanent",
-                              managerNote: requestActionNote.trim() || undefined,
+                              managerNote:
+                                requestActionNote.trim() || undefined,
                             })
                           }
                         >
@@ -982,8 +1260,11 @@ function ManagerDashboardFixedContent() {
                             void approveAccessRequestMutation.mutateAsync({
                               requestId: request.id,
                               accessType: "temporary",
-                              expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-                              managerNote: requestActionNote.trim() || undefined,
+                              expiresAt: new Date(
+                                Date.now() + 24 * 60 * 60 * 1000
+                              ).toISOString(),
+                              managerNote:
+                                requestActionNote.trim() || undefined,
                             })
                           }
                         >
@@ -996,7 +1277,8 @@ function ManagerDashboardFixedContent() {
                           onClick={() =>
                             void denyAccessRequestMutation.mutateAsync({
                               requestId: request.id,
-                              managerNote: requestActionNote.trim() || undefined,
+                              managerNote:
+                                requestActionNote.trim() || undefined,
                             })
                           }
                         >
@@ -1008,7 +1290,7 @@ function ManagerDashboardFixedContent() {
                 )}
                 <Textarea
                   value={requestActionNote}
-                  onChange={(event) => setRequestActionNote(event.target.value)}
+                  onChange={event => setRequestActionNote(event.target.value)}
                   placeholder="Optional manager note for approve/deny actions"
                   className="min-h-24"
                 />
@@ -1021,7 +1303,8 @@ function ManagerDashboardFixedContent() {
                   Needs manager action
                 </CardTitle>
                 <CardDescription>
-                  Completed driver diagnoses that were shared to your queue for follow-up.
+                  Completed driver diagnoses that were shared to your queue for
+                  follow-up.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -1031,21 +1314,31 @@ function ManagerDashboardFixedContent() {
                   </div>
                 ) : managerActionItems.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
-                    No diagnosis summaries are waiting on manager follow-up right now.
+                    No diagnosis summaries are waiting on manager follow-up
+                    right now.
                   </div>
                 ) : (
-                  managerActionItems.map((item) => (
-                    <div key={item.id} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                  managerActionItems.map(item => (
+                    <div
+                      key={item.id}
+                      className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4"
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <p className="font-semibold text-slate-950">{item.truckLabel}</p>
+                          <p className="font-semibold text-slate-950">
+                            {item.truckLabel}
+                          </p>
                           <p className="mt-1 text-sm text-slate-600">
-                            {[item.truckDetail, item.driverName].filter(Boolean).join(" | ")}
+                            {[item.truckDetail, item.driverName]
+                              .filter(Boolean)
+                              .join(" | ")}
                           </p>
                         </div>
                         <div className="flex flex-col items-end gap-2">
                           {item.riskLevel ? (
-                            <span className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${badgeClasses(item.riskLevel === "high" ? "Critical" : item.riskLevel === "medium" ? "High" : "Low")}`}>
+                            <span
+                              className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${badgeClasses(item.riskLevel === "high" ? "Critical" : item.riskLevel === "medium" ? "High" : "Low")}`}
+                            >
                               {item.riskLevel} risk
                             </span>
                           ) : null}
@@ -1060,13 +1353,17 @@ function ManagerDashboardFixedContent() {
                         <p>{item.possibleCause || item.summary}</p>
                         {item.symptoms.length > 0 ? (
                           <p>
-                            <span className="font-medium text-slate-900">Symptoms:</span>{" "}
+                            <span className="font-medium text-slate-900">
+                              Symptoms:
+                            </span>{" "}
                             {item.symptoms.join(", ")}
                           </p>
                         ) : null}
                         {item.recommendedFix ? (
                           <p>
-                            <span className="font-medium text-slate-900">Recommended fix:</span>{" "}
+                            <span className="font-medium text-slate-900">
+                              Recommended fix:
+                            </span>{" "}
                             {item.recommendedFix}
                           </p>
                         ) : null}
@@ -1080,7 +1377,9 @@ function ManagerDashboardFixedContent() {
                           variant="outline"
                           size="sm"
                           className="rounded-xl"
-                          onClick={() => navigate(`/defect/${item.defectId ?? 1}`)}
+                          onClick={() =>
+                            navigate(`/defect/${item.defectId ?? 1}`)
+                          }
                         >
                           Review action
                         </Button>
@@ -1096,217 +1395,201 @@ function ManagerDashboardFixedContent() {
                   <Users className="h-5 w-5 text-blue-600" />
                   Manager actions
                 </CardTitle>
-                <CardDescription>These links now perform real actions.</CardDescription>
+                <CardDescription>
+                  These links now perform real actions.
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
-                <Button variant="outline" className="w-full justify-start rounded-xl" onClick={() => navigate("/profile")}>Profile settings</Button>
-                <Button variant="outline" className="w-full justify-start rounded-xl" onClick={() => openAddVehicleDialog()}>Add vehicle</Button>
-                <Button variant="outline" className="w-full justify-start rounded-xl" onClick={() => navigate("/defect/1")}>Open maintenance queue</Button>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start rounded-xl"
+                  onClick={() => navigate("/profile")}
+                >
+                  Profile settings
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start rounded-xl"
+                  onClick={() => openAddVehicleDialog()}
+                >
+                  Add vehicle
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start rounded-xl"
+                  onClick={() => navigate("/defect/1")}
+                >
+                  Open maintenance queue
+                </Button>
               </CardContent>
             </Card>
           </div>
         </section>
 
-        <Dialog
-          open={Boolean(selectedAccessVehicleId)}
-          onOpenChange={(open) => {
-            if (!open) {
-              setSelectedAccessVehicleId(null);
-              setRequestActionNote("");
-            }
-          }}
-        >
-          <DialogContent className="rounded-[24px] border-slate-200 sm:max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>Vehicle Access</DialogTitle>
-              <DialogDescription>
-                {selectedVehicleRow
-                  ? `Manage driver access for ${selectedVehicleRow.unitNumber || selectedVehicleRow.licensePlate || selectedVehicleRow.vin}.`
-                  : "Manage driver access assignments and requests."}
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className="space-y-5">
-              <div className="grid gap-4 sm:grid-cols-[1fr_160px_1fr]">
-                <div>
-                  <Label htmlFor="access-driver">Driver</Label>
-                  <div className="mt-2 grid grid-cols-2 gap-2 rounded-2xl border border-[var(--fleet-outline)] bg-[var(--fleet-surface)] p-1">
-                    <Button
-                      type="button"
-                      variant={assignmentDriverMode === "existing" ? "default" : "ghost"}
-                      className="rounded-xl"
-                      onClick={() => setAssignmentDriverMode("existing")}
+        <Dialog open={isAssignDialogOpen} onOpenChange={setIsAssignDialogOpen}>
+          <DialogContent className="rounded-[24px] sm:max-w-2xl">
+            {assignmentStep === "form" ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle>Assign Vehicle / Trailer</DialogTitle>
+                  <DialogDescription>
+                    Select an asset and a driver to manage operational access.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label>Select Vehicle / Trailer</Label>
+                    <Select 
+                      value={
+                        assignmentForm.vehicleId != null
+                          ? String(assignmentForm.vehicleId)
+                          : undefined
+                      }
+                      onValueChange={v =>
+                        setAssignmentForm(p => ({
+                          ...p,
+                          vehicleId: parseOptionalVehicleId(v),
+                        }))
+                      }
                     >
-                      Select existing
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={assignmentDriverMode === "invite" ? "default" : "ghost"}
-                      className="rounded-xl"
-                      onClick={() => setAssignmentDriverMode("invite")}
-                    >
-                      Add driver
-                    </Button>
+                      <SelectTrigger className="rounded-xl">
+                        <SelectValue placeholder="Select vehicle or trailer" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(vehiclesQuery.data ?? []).map(v => (
+                          <SelectItem key={v.id} value={String(v.id)}>
+                            {v.unitNumber} · {v.assetType} {v.licensePlate ? `· ${v.licensePlate}` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
 
-                  {assignmentDriverMode === "existing" ? (
-                    <>
+                  <div className="space-y-2">
+                    <Label>Select Driver</Label>
+                    <div className="flex gap-2 flex-1">
                       <Select
-                        value={assignmentForm.driverUserId}
-                        onValueChange={(value) =>
-                          setAssignmentForm((current) => ({ ...current, driverUserId: value }))
+                        value={
+                          assignmentForm.driverUserId != null
+                            ? String(assignmentForm.driverUserId)
+                            : undefined
                         }
+                        onValueChange={v =>
+                          setAssignmentForm(p => ({
+                            ...p,
+                            driverUserId: parseOptionalDriverId(v),
+                            driverMode: "existing",
+                          }))
+                        }
+                        disabled={assignmentForm.driverMode === "invite"}
                       >
-                        <SelectTrigger id="access-driver" className="mt-3 h-11 rounded-xl">
-                          <SelectValue placeholder={drivers.length > 0 ? "Select driver" : "No linked drivers yet"} />
+                        <SelectTrigger className="rounded-xl">
+                          <SelectValue placeholder="Select existing driver" />
                         </SelectTrigger>
                         <SelectContent>
-                          {drivers.map((driver) => (
-                            <SelectItem key={driver.id} value={String(driver.id)}>
-                              {driver.name?.trim() || driver.email || `Driver ${driver.id}`}
+                          {(driversQuery.data ?? []).map(d => (
+                            <SelectItem key={d.id} value={String(d.id)}>
+                              {d.name} · {d.email}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
-                      {drivers.length === 0 ? (
-                        <p className="mt-2 text-xs text-[var(--fleet-muted)]">
-                          No linked drivers yet. Use “Add driver” to create or link one by name and email.
-                        </p>
-                      ) : (
-                        <p className="mt-2 text-xs text-[var(--fleet-muted)]">
-                          If the driver you need is missing, switch to “Add driver.”
-                        </p>
-                      )}
-                    </>
-                  ) : (
-                    <div className="mt-3 grid gap-4 sm:grid-cols-2">
-                      <div>
-                        <Label htmlFor="access-driver-name">Driver name</Label>
-                        <Input
-                          id="access-driver-name"
-                          value={assignmentInviteForm.name}
-                          onChange={(event) =>
-                            setAssignmentInviteForm((current) => ({ ...current, name: event.target.value }))
-                          }
-                          placeholder="Dixon K"
-                          className="mt-2 h-11 rounded-xl"
+                      <Button 
+                        variant="outline" 
+                        className="rounded-xl"
+                        onClick={() => setAssignmentForm(p => ({...p, driverMode: "invite"}))}
+                      >
+                        + Add New Driver
+                      </Button>
+                    </div>
+                  </div>
+
+                  {assignmentForm.driverMode === "invite" && (
+                    <div className="grid grid-cols-2 gap-4 rounded-xl border p-4 bg-slate-50">
+                      <div className="space-y-2">
+                        <Label>First Name</Label>
+                        <Input 
+                          value={assignmentForm.inviteFirstName} 
+                          onChange={e => setAssignmentForm(p => ({...p, inviteFirstName: e.target.value}))}
                         />
                       </div>
-                      <div>
-                        <Label htmlFor="access-driver-email">Driver email</Label>
-                        <Input
-                          id="access-driver-email"
-                          type="email"
-                          value={assignmentInviteForm.email}
-                          onChange={(event) =>
-                            setAssignmentInviteForm((current) => ({ ...current, email: event.target.value }))
-                          }
-                          placeholder="driver@fleet.com"
-                          className="mt-2 h-11 rounded-xl"
+                      <div className="space-y-2">
+                        <Label>Last Name</Label>
+                        <Input 
+                          value={assignmentForm.inviteLastName} 
+                          onChange={e => setAssignmentForm(p => ({...p, inviteLastName: e.target.value}))}
                         />
                       </div>
-                      <p className="sm:col-span-2 text-xs text-[var(--fleet-muted)]">
-                        If this email already exists for a driver, TruckFixr will link and assign that driver. Otherwise it will create the driver record and send an invite when email is configured.
-                      </p>
+                      <div className="space-y-2 col-span-2">
+                        <Label>Email</Label>
+                        <Input 
+                          type="email" 
+                          value={assignmentForm.inviteEmail} 
+                          onChange={e => setAssignmentForm(p => ({...p, inviteEmail: e.target.value}))}
+                        />
+                      </div>
                     </div>
                   )}
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Assignment Type</Label>
+                      <Select 
+                        value={assignmentForm.accessType} 
+                        onValueChange={(v: any) => setAssignmentForm(p => ({...p, accessType: v}))}
+                      >
+                        <SelectTrigger className="rounded-xl">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="permanent">Permanent</SelectItem>
+                          <SelectItem value="temporary">Temporary</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {assignmentForm.accessType === "temporary" && (
+                      <div className="space-y-2">
+                        <Label>Expiry Date and Time</Label>
+                        <Input 
+                          type="datetime-local" 
+                          value={assignmentForm.expiresAt} 
+                          onChange={e => setAssignmentForm(p => ({...p, expiresAt: e.target.value}))}
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div>
-                  <Label htmlFor="access-type">Access type</Label>
-                  <Select
-                    value={assignmentForm.accessType}
-                    onValueChange={(value: "permanent" | "temporary") =>
-                      setAssignmentForm((current) => ({ ...current, accessType: value }))
-                    }
+                <DialogFooter>
+                  <Button variant="ghost" onClick={() => setIsAssignDialogOpen(false)}>Cancel</Button>
+                  <Button 
+                    className="fleet-primary-btn rounded-xl"
+                    onClick={() => handleAssignSubmit()}
                   >
-                    <SelectTrigger id="access-type" className="mt-2 h-11 rounded-xl">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="permanent">Permanent</SelectItem>
-                      <SelectItem value="temporary">Temporary</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="access-expires">Expiry</Label>
-                  <Input
-                    id="access-expires"
-                    type="datetime-local"
-                    value={assignmentForm.expiresAt}
-                    disabled={assignmentForm.accessType !== "temporary"}
-                    onChange={(event) =>
-                      setAssignmentForm((current) => ({ ...current, expiresAt: event.target.value }))
-                    }
-                    className="mt-2 h-11 rounded-xl"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <Label htmlFor="access-notes">Notes</Label>
-                <Textarea
-                  id="access-notes"
-                  value={assignmentForm.notes}
-                  onChange={(event) =>
-                    setAssignmentForm((current) => ({ ...current, notes: event.target.value }))
-                  }
-                  placeholder="Optional note for the driver"
-                  className="mt-2 min-h-24"
-                />
-              </div>
-
-              <div>
-                <p className="text-sm font-semibold text-slate-900">Assigned drivers</p>
-                <div className="mt-3 space-y-3">
-                  {(selectedVehicleAccess?.assignments ?? []).length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
-                      No driver access assignments yet.
-                    </div>
-                  ) : (
-                    selectedVehicleAccess?.assignments.map((assignment) => (
-                      <div key={assignment.id} className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-4 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <p className="font-semibold text-slate-950">
-                            {assignment.driver?.name || assignment.driver?.email || `Driver ${assignment.driverUserId}`}
-                          </p>
-                          <p className="mt-1 text-sm text-slate-600">
-                            {assignment.accessType} | {assignment.status}
-                            {assignment.expiresAt ? ` | expires ${new Date(assignment.expiresAt).toLocaleString()}` : ""}
-                          </p>
-                        </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="rounded-xl border-red-200 text-red-700 hover:bg-red-50"
-                          onClick={() =>
-                            void revokeVehicleAccessMutation.mutateAsync({
-                              assignmentId: assignment.id,
-                              managerNote: "Access revoked by manager",
-                            })
-                          }
-                        >
-                          Revoke
-                        </Button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <DialogFooter>
-              <Button variant="outline" className="rounded-xl" onClick={() => setSelectedAccessVehicleId(null)}>
-                Close
-              </Button>
-              <Button
-                className="fleet-primary-btn rounded-xl"
-                disabled={assignVehicleAccessMutation.isPending}
-                onClick={() => void handleAssignVehicleAccess()}
-              >
-                {assignVehicleAccessMutation.isPending ? "Saving..." : "Assign driver"}
-              </Button>
-            </DialogFooter>
+                    Assign Driver
+                  </Button>
+                </DialogFooter>
+              </>
+            ) : (
+              <>
+                <DialogHeader>
+                  <DialogTitle>{assignmentWarning?.title || "Assignment requires confirmation"}</DialogTitle>
+                  <DialogDescription>
+                    {assignmentWarning?.description || "Please confirm this assignment change before continuing."}
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogFooter className="flex gap-2">
+                  <Button variant="outline" onClick={() => setAssignmentStep("form")}>Choose Another Asset</Button>
+                  <Button variant="ghost" onClick={() => setIsAssignDialogOpen(false)}>Cancel</Button>
+                  <Button 
+                    variant="destructive"
+                    className="rounded-xl"
+                    onClick={() => handleAssignSubmit(true)}
+                  >
+                    {assignmentWarning?.confirmLabel || "Confirm"}
+                  </Button>
+                </DialogFooter>
+              </>
+            )}
           </DialogContent>
         </Dialog>
       </main>

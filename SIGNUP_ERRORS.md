@@ -122,3 +122,4 @@ If you encounter other issues:
 1. Check your browser console for detailed error messages
 2. Try clearing your browser cache and cookies
 3. Contact support@truckfixr.com for assistance
+4. Call us at 905-677-7663

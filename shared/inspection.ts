@@ -266,9 +266,8 @@ export const inspectionItemResultSchema = z.discriminatedUnion("status", [
 ]);
 
 const inspectionVehicleIdSchema = z
-  .number()
-  .int()
-  .refine((value) => value !== 0, "Vehicle reference is required");
+  .union([z.number().int(), z.string().trim().min(1)])
+  .refine((value) => value !== 0 && value !== "", "Vehicle reference is required");
 
 export const dailyInspectionSubmissionSchema = z.object({
   vehicleId: inspectionVehicleIdSchema,
@@ -420,10 +419,11 @@ const configuredVehicles: Record<number, VehicleInspectionConfig> = {
   42: defaultVehicleInspectionConfig,
 };
 
-export function getVehicleInspectionConfig(vehicleId: number, overrides?: Partial<VehicleInspectionConfig>) {
+export function getVehicleInspectionConfig(vehicleId: number | string, overrides?: Partial<VehicleInspectionConfig>) {
+  const numericVehicleId = typeof vehicleId === "number" ? vehicleId : Number(vehicleId);
   return vehicleInspectionConfigSchema.parse({
     ...defaultVehicleInspectionConfig,
-    ...(configuredVehicles[vehicleId] ?? {}),
+    ...(Number.isFinite(numericVehicleId) ? configuredVehicles[numericVehicleId] ?? {} : {}),
     ...(overrides ?? {}),
   });
 }

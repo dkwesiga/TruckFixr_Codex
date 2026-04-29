@@ -21,8 +21,10 @@ export default function AppLogo({
     <div className={cn("flex shrink-0 items-center", className)}>
       <div
         className={cn(
-          "overflow-hidden rounded-2xl bg-white/95 p-2 shadow-[0_16px_40px_-28px_rgba(15,23,42,0.45)] ring-1 ring-slate-200/80",
-          variant === "icon" && "flex h-14 w-14 items-center justify-center p-0",
+          variant === "full"
+            ? "overflow-hidden"
+            : "overflow-hidden rounded-2xl bg-white/95 p-2 shadow-[0_16px_40px_-28px_rgba(15,23,42,0.45)] ring-1 ring-slate-200/80",
+          variant === "icon" && "flex h-14 w-14 items-center justify-center p-1.5",
           frameClassName
         )}
       >
@@ -32,7 +34,7 @@ export default function AppLogo({
           className={cn(
             "block object-contain",
             variant === "icon"
-              ? "h-full w-full object-cover object-top"
+              ? "h-full w-full"
               : "h-12 w-auto",
             imageClassName
           )}

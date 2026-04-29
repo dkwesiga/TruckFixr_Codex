@@ -21,7 +21,7 @@ export default function UserProfile() {
     name: user?.name || "",
     email: user?.email || "",
     company: "",
-    role: (user?.role || "driver") as "driver" | "manager" | "owner",
+    role: (user?.role || "driver") as "driver" | "owner_operator" | "manager" | "owner",
     managerEmail: user?.managerEmail || "",
   });
   const [isLoading, setIsLoading] = useState(false);
@@ -56,6 +56,10 @@ export default function UserProfile() {
   const downgradeQuery = trpc.subscriptions.validateDowngrade.useQuery(
     { targetTier: "free" },
     { enabled: Boolean(user) }
+  );
+  const managerReportsQuery = trpc.inspections.getManagerReports.useQuery(
+    { limit: 8 },
+    { enabled: user?.role === "manager" || user?.role === "owner" }
   );
   const inviteDriverMutation = trpc.auth.createManagedDriverInvite.useMutation();
 
@@ -361,11 +365,12 @@ export default function UserProfile() {
                   <select
                     value={formData.role}
                     onChange={(e) =>
-                      setFormData({ ...formData, role: e.target.value as "driver" | "manager" | "owner" })
+                      setFormData({ ...formData, role: e.target.value as any })
                     }
                     className="w-full px-3 py-2 border border-slate-300 rounded-md text-sm"
                   >
                     <option value="driver">Driver</option>
+                    <option value="owner_operator">Owner Operator</option>
                     <option value="manager">Manager</option>
                     <option value="owner">Owner</option>
                   </select>
@@ -699,7 +704,7 @@ export default function UserProfile() {
           </Card>
 
           {(user.role === "manager" || user.role === "owner") ? (
-            <Card className="w-full">
+            <Card id="inspection-reports" className="w-full">
               <CardHeader>
                 <CardTitle>Invite Drivers</CardTitle>
                 <CardDescription>
@@ -747,6 +752,34 @@ export default function UserProfile() {
                 >
                   {inviteDriverMutation.isPending ? "Sending invite..." : "Invite driver"}
                 </Button>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {(user.role === "manager" || user.role === "owner") ? (
+            <Card className="w-full">
+              <CardHeader>
+                <CardTitle>Inspection Reports</CardTitle>
+                <CardDescription>
+                  Reports submitted by drivers assigned to your vehicles land here and in your email inbox.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {(managerReportsQuery.data ?? []).length > 0 ? (
+                  managerReportsQuery.data?.map((report: any) => (
+                    <div key={report.id} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-medium text-slate-900">{report.title}</p>
+                        <span className="text-xs text-slate-500">
+                          {new Date(report.createdAt).toLocaleString()}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm text-slate-600">{report.message}</p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-sm text-slate-600">No inspection reports received yet.</p>
+                )}
               </CardContent>
             </Card>
           ) : null}

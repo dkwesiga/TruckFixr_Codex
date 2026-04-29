@@ -169,6 +169,7 @@ describe("TADIS Service Layer", () => {
     ENV.openRouterFallbackModel = "";
     ENV.geminiApiKey = "";
     ENV.geminiModel = "";
+    ENV.simpleTadisMode = "false";
     ENV.diagnosticConfidenceThreshold = "85";
     ENV.diagnosticNewCauseMinConfidence = "62";
     ENV.diagnosticTimeoutMs = "4500";
@@ -255,10 +256,108 @@ describe("TADIS Service Layer", () => {
     expect(
       requestedUrls.every((url) => url.startsWith("https://openrouter.ai/api/v1/"))
     ).toBe(true);
-    expect(requestedBodies.every((body) => body.model === "openrouter/free")).toBe(true);
+      expect(
+        requestedBodies.every(
+          (body) => typeof body.model === "string" && String(body.model).includes("google/gemma-4-26b-a4b-it:free")
+        )
+      ).toBe(true);
     expect(result.llm_provider).toBe("openrouter");
     expect(result.llm_status).toBe("ok");
     expect(result.fallback_used).toBe(false);
+  });
+
+  it("uses the simple TADIS prompt path when SIMPLE_TADIS_MODE is enabled", async () => {
+    ENV.simpleTadisMode = "true";
+
+    const requestedBodies: Array<Record<string, unknown>> = [];
+    let callIndex = 0;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        requestedBodies.push(JSON.parse(String(init?.body ?? "{}")));
+        return createReviewResponse(
+          callIndex++ === 0
+            ? {
+                primary_category: "critical_engine_internal",
+                secondary_category: "cooling_system",
+                risk_level: "critical",
+                classification_confidence: 97,
+                clarifying_question: null,
+              }
+            : {
+                top_likely_cause: "Internal engine oil/coolant cross-contamination",
+                confidence_score: 92,
+                clarifying_question: null,
+                driver_action: "do_not_operate_until_repaired",
+                safety_note: "Stop operating and arrange tow or on-site service.",
+                shop_next_steps: ["Inspect oil and coolant samples", "Pressure-test the cooling system"],
+                should_escalate_to_mechanic: true,
+              }
+        );
+      })
+    );
+
+    const result = await analyzeDiagnostic({
+      vehicleId: 42,
+      vehicle: {
+        id: 42,
+        make: "Peterbilt",
+        model: "579",
+        year: 2022,
+        mileage: 245320,
+        engine: "Cummins X15",
+        configuration: { airBrakes: true },
+      },
+      symptoms: ["Engine oil mixing with coolant", "Milky residue in the surge tank"],
+      faultCodes: ["P0128"],
+      driverNotes: "Recent repair notes and history should not be sent to the AI.",
+      operatingConditions: "Under load",
+      issueHistory: {
+        priorDiagnostics: [
+          { summary: "Old diagnostic should stay out of simple mode", status: "confirmed" },
+        ],
+        priorDefects: [{ summary: "Old defect", status: "open" }],
+        recentInspections: [{ summary: "Old inspection", status: "submitted" }],
+        recentRepairs: [{ summary: "Old repair", status: "completed" }],
+        repairHistory: [{ summary: "Repair history that should be excluded", status: "completed" }],
+        maintenanceHistory: [{ summary: "Maintenance history that should be excluded", status: "completed" }],
+        recentPartsReplaced: [{ part: "thermostat", replacedAt: new Date().toISOString() }],
+        complianceHistory: [{ summary: "Compliance history", status: "green" }],
+      },
+      similarCases: [
+        {
+          id: "historical-1",
+          source: "historical",
+          causeId: "coolant_leak",
+          cause: "Coolant leak or low coolant level",
+          systems_affected: ["cooling"],
+          symptomSignals: ["coolant leak"],
+          faultCodes: [],
+          summary: "Historical case",
+          resolution: "Fixed",
+          confirmedFix: "Clamp replacement",
+          resolutionSuccess: true,
+          risk_level: "high",
+          similarity: 0.8,
+        },
+      ],
+      clarificationHistory: [],
+    });
+
+    expect(requestedBodies).toHaveLength(2);
+    const [classifierBody, diagnosisBody] = requestedBodies;
+    const classifierPrompt = String((classifierBody.messages as Array<Record<string, unknown>>)[1].content);
+    const diagnosisPrompt = String((diagnosisBody.messages as Array<Record<string, unknown>>)[1].content);
+    expect(classifierPrompt).toContain('"asset_type"');
+    expect(classifierPrompt).not.toContain("repair_history");
+    expect(classifierPrompt).not.toContain("similar_cases");
+    expect(diagnosisPrompt).toContain('"current_issue"');
+    expect(diagnosisPrompt).not.toContain("maintenance_history");
+    expect(diagnosisPrompt).not.toContain("similar_confirmed_cases");
+    expect(result.llm_status).toBe("ok");
+    expect(result.fallback_used).toBe(false);
+    expect(result.top_most_likely_cause).toContain("oil/coolant cross-contamination");
   });
 
   it("enriches generic LLM wording with case-specific evidence before returning the final result", async () => {

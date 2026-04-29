@@ -3,7 +3,7 @@ import { getDb } from "../db";
 
 type QueueInput = {
   fleetId: number | null;
-  vehicleId: number;
+  vehicleId: string;
   baseline: {
     possible_causes: Array<{ cause: string; probability: number }>;
   };

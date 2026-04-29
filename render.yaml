@@ -109,6 +109,8 @@ services:
         value: "320"
       - key: DIAGNOSTIC_REVIEW_MAX_TOKENS
         value: "380"
+      - key: SIMPLE_TADIS_MODE
+        value: "false"
       - key: STRIPE_SECRET_KEY
         sync: false
       - key: STRIPE_WEBHOOK_SECRET

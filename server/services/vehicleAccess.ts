@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, isNull, lte, or } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { fleets, users, vehicleAssignments, vehicles } from "../../drizzle/schema";
 import {
@@ -13,6 +13,12 @@ type AppUser = {
   role: string;
   email?: string | null;
 };
+
+type VehicleIdentifier = number | string;
+
+function normalizeVehicleIdentifier(vehicleId: VehicleIdentifier) {
+  return String(vehicleId).trim();
+}
 
 export type FleetGrantContact = {
   id: number;
@@ -85,41 +91,57 @@ export async function canManageVehicleAccess(input: {
   return canManageCompanyOperations(input);
 }
 
-export async function getVehicleById(vehicleId: number) {
+export async function getVehicleById(vehicleId: VehicleIdentifier) {
   const db = await getDb();
   if (!db) return null;
-  const [vehicle] = await db.select().from(vehicles).where(eq(vehicles.id, vehicleId)).limit(1);
+  const normalizedVehicleId = normalizeVehicleIdentifier(vehicleId);
+  const [vehicle] = await db
+    .select()
+    .from(vehicles)
+    .where(sql`CAST(${vehicles.id} AS text) = ${normalizedVehicleId}`)
+    .limit(1);
   return vehicle ?? null;
 }
 
 export async function getActiveVehicleAssignment(input: {
-  vehicleId: number;
+  vehicleId: VehicleIdentifier;
   driverUserId: number;
 }) {
   const db = await getDb();
   if (!db) return null;
   const now = new Date();
-  const [assignment] = await db
-    .select()
-    .from(vehicleAssignments)
-    .where(
-      and(
-        eq(vehicleAssignments.vehicleId, input.vehicleId),
-        eq(vehicleAssignments.driverUserId, input.driverUserId),
-        eq(vehicleAssignments.status, "active"),
-        lte(vehicleAssignments.startsAt, now),
-        or(isNull(vehicleAssignments.expiresAt), gte(vehicleAssignments.expiresAt, now))
-      )
-    )
-    .orderBy(desc(vehicleAssignments.updatedAt))
-    .limit(1);
+  const normalizedVehicleId = normalizeVehicleIdentifier(input.vehicleId);
+  const result = await db.execute(sql`
+    select
+      "id",
+      "fleetId",
+      "vehicleId",
+      "driverUserId",
+      "assignedByUserId",
+      "accessType",
+      "startsAt",
+      "expiresAt",
+      "status",
+      "notes",
+      "createdAt",
+      "updatedAt"
+    from "vehicleAssignments"
+    where
+      CAST("vehicleId" AS text) = ${normalizedVehicleId}
+      and "driverUserId" = ${input.driverUserId}
+      and "status" = ${"active"}
+      and "startsAt" <= ${now}
+      and ("expiresAt" is null or "expiresAt" >= ${now})
+    order by "updatedAt" desc
+    limit 1
+  `);
 
-  return assignment ?? null;
+  return (result.rows?.[0] as any) ?? null;
 }
 
 export async function canViewVehicle(input: {
   user: AppUser;
-  vehicleId: number;
+  vehicleId: VehicleIdentifier;
   fleetId?: number;
 }) {
   const vehicle = await getVehicleById(input.vehicleId);
@@ -142,7 +164,7 @@ export async function canViewVehicle(input: {
 
 export async function canInspectVehicle(input: {
   user: AppUser;
-  vehicleId: number;
+  vehicleId: VehicleIdentifier;
   fleetId?: number;
 }) {
   const canView = await canViewVehicle(input);
@@ -152,7 +174,7 @@ export async function canInspectVehicle(input: {
 
 export async function canDiagnoseVehicle(input: {
   user: AppUser;
-  vehicleId: number;
+  vehicleId: VehicleIdentifier;
   fleetId?: number;
 }) {
   const canView = await canViewVehicle(input);
@@ -190,8 +212,52 @@ export async function listDriverAccessibleVehicles(input: {
   return directVehicles.filter(
     (vehicle) =>
       vehicle.assetRecordStatus === "active" &&
-      vehicle.status === "active" &&
       (vehicle.assignedDriverId === input.driverUserId || assignedVehicleIds.has(vehicle.id))
+  );
+}
+
+export async function listDriverAccessibleVehiclesAcrossFleets(input: {
+  driverUserId: number;
+}) {
+  const db = await getDb();
+  if (!db) return [];
+
+  const now = new Date();
+  const assignments = await db
+    .select({
+      vehicleId: vehicleAssignments.vehicleId,
+    })
+    .from(vehicleAssignments)
+    .where(
+      and(
+        eq(vehicleAssignments.driverUserId, input.driverUserId),
+        eq(vehicleAssignments.status, "active"),
+        lte(vehicleAssignments.startsAt, now),
+        or(isNull(vehicleAssignments.expiresAt), gte(vehicleAssignments.expiresAt, now))
+      )
+    );
+
+  const assignedVehicleIds = Array.from(
+    new Set(assignments.map((row) => row.vehicleId).filter(Boolean))
+  );
+
+  const assignedVehicles =
+    assignedVehicleIds.length > 0
+      ? await db.select().from(vehicles).where(inArray(vehicles.id, assignedVehicleIds))
+      : [];
+
+  const directVehicles = await db
+    .select()
+    .from(vehicles)
+    .where(eq(vehicles.assignedDriverId, input.driverUserId));
+
+  const mergedVehicles = new Map<string, (typeof directVehicles)[number]>();
+  for (const vehicle of [...assignedVehicles, ...directVehicles]) {
+    mergedVehicles.set(String(vehicle.id), vehicle);
+  }
+
+  return Array.from(mergedVehicles.values()).filter(
+    (vehicle) => vehicle.assetRecordStatus === "active"
   );
 }
 

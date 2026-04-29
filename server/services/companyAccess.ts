@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
 import { randomBytes } from "crypto";
 import { getDb } from "../db";
 import {
@@ -7,6 +7,7 @@ import {
   companyMemberships,
   fleets,
   users,
+  vehicleAssignments,
   vehicles,
 } from "../../drizzle/schema";
 
@@ -172,7 +173,94 @@ export async function getUserPrimaryFleetId(userId: number) {
     .where(eq(fleets.ownerId, userId))
     .limit(1);
 
-  return ownedFleet?.id ?? 1;
+  if (ownedFleet?.id) {
+    return ownedFleet.id;
+  }
+
+  const now = new Date();
+  const [assignmentFleet] = await db
+    .select({ fleetId: vehicleAssignments.fleetId })
+    .from(vehicleAssignments)
+    .where(
+      and(
+        eq(vehicleAssignments.driverUserId, userId),
+        eq(vehicleAssignments.status, "active"),
+        or(eq(vehicleAssignments.accessType, "permanent"), gte(vehicleAssignments.expiresAt, now))
+      )
+    )
+    .orderBy(desc(vehicleAssignments.updatedAt))
+    .limit(1);
+
+  if (assignmentFleet?.fleetId) {
+    await ensureCompanyMembership({
+      fleetId: assignmentFleet.fleetId,
+      userId,
+      role: "driver",
+      status: "active",
+    }).catch(() => null);
+    return assignmentFleet.fleetId;
+  }
+
+  const [directVehicleFleet] = await db
+    .select({ fleetId: vehicles.fleetId })
+    .from(vehicles)
+    .where(eq(vehicles.assignedDriverId, userId))
+    .orderBy(desc(vehicles.updatedAt))
+    .limit(1);
+
+  if (directVehicleFleet?.fleetId) {
+    await ensureCompanyMembership({
+      fleetId: directVehicleFleet.fleetId,
+      userId,
+      role: "driver",
+      status: "active",
+    }).catch(() => null);
+    return directVehicleFleet.fleetId;
+  }
+
+  const [driverRow] = await db
+    .select({
+      managerUserId: users.managerUserId,
+      role: users.role,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  if (driverRow?.role === "driver" && driverRow.managerUserId != null) {
+    const managerMembership = await getCompanyMembership({
+      userId: driverRow.managerUserId,
+    });
+    if (managerMembership?.fleetId) {
+      await ensureCompanyMembership({
+        fleetId: managerMembership.fleetId,
+        userId,
+        role: "driver",
+        approvedByUserId: driverRow.managerUserId,
+        status: "active",
+      }).catch(() => null);
+      return managerMembership.fleetId;
+    }
+
+    const [managedFleet] = await db
+      .select({ id: fleets.id })
+      .from(fleets)
+      .where(eq(fleets.ownerId, driverRow.managerUserId))
+      .limit(1);
+
+    if (managedFleet?.id) {
+      await ensureCompanyMembership({
+        fleetId: managedFleet.id,
+        userId,
+        role: "driver",
+        approvedByUserId: driverRow.managerUserId,
+        status: "active",
+      }).catch(() => null);
+      return managedFleet.id;
+    }
+  }
+
+  return 1;
 }
 
 export async function canManageCompanyOperations(input: { fleetId: number; user: AppUser }) {
@@ -332,9 +420,11 @@ export async function verifyDriverCompanyMembership(input: { fleetId: number; dr
   );
 }
 
-export async function isAssetOperational(vehicleId: number) {
+export async function isAssetOperational(vehicleId: number | string) {
   const db = await getDb();
   if (!db) return false;
+
+  const normalizedVehicleId = String(vehicleId).trim();
 
   const [vehicle] = await db
     .select({
@@ -342,7 +432,7 @@ export async function isAssetOperational(vehicleId: number) {
       assetRecordStatus: vehicles.assetRecordStatus,
     })
     .from(vehicles)
-    .where(eq(vehicles.id, vehicleId))
+    .where(sql`CAST(${vehicles.id} AS text) = ${normalizedVehicleId}`)
     .limit(1);
 
   if (!vehicle) return false;

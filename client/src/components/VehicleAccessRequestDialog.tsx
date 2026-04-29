@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
@@ -60,7 +61,7 @@ export default function VehicleAccessRequestDialog({
   );
   const requestableVehiclesQuery = trpc.vehicleAccess.listRequestableVehicles.useQuery(
     { fleetId, query: search.trim() },
-    { enabled: open && search.trim().length >= 2, staleTime: 10_000 }
+    { enabled: open, staleTime: 10_000 }
   );
   const myRequestsQuery = trpc.vehicleAccess.listMyRequests.useQuery(
     { fleetId },
@@ -110,6 +111,8 @@ export default function VehicleAccessRequestDialog({
   };
 
   const vehicles = requestableVehiclesQuery.data ?? [];
+  const selectedVehicle =
+    vehicles.find((vehicle) => vehicle.id === selectedVehicleId) ?? null;
   const grantors = grantContactsQuery.data?.grantors ?? [];
   const selectedGrantor =
     grantors.find((grantor) => grantor.id === requestedFromUserId) ??
@@ -145,7 +148,47 @@ export default function VehicleAccessRequestDialog({
 
         <div className="space-y-4">
           <div>
-            <Label htmlFor="vehicle-access-search">Search fleet vehicle or trailer</Label>
+            <Label htmlFor="vehicle-access-select">Select a company vehicle or trailer</Label>
+            <Select
+              value={selectedVehicleId != null ? String(selectedVehicleId) : ""}
+              onValueChange={(value) => {
+                const nextVehicleId = value ? Number(value) : null;
+                setSelectedVehicleId(nextVehicleId);
+                if (nextVehicleId != null) {
+                  setManualIdentifier("");
+                }
+              }}
+            >
+              <SelectTrigger id="vehicle-access-select" className="mt-2 h-11 rounded-xl">
+                <SelectValue placeholder="Choose from company vehicles" />
+              </SelectTrigger>
+              <SelectContent>
+                {vehicles.length > 0 ? (
+                  vehicles.map((vehicle) => (
+                    <SelectItem key={vehicle.id} value={String(vehicle.id)}>
+                      {vehicle.unitNumber || vehicle.licensePlate || vehicle.vin}
+                      {vehicle.assetType ? ` | ${vehicle.assetType}` : ""}
+                      {vehicle.make || vehicle.model ? ` | ${[vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(" ")}` : ""}
+                    </SelectItem>
+                  ))
+                ) : (
+                  <SelectItem value="__no_vehicle__" disabled>
+                    No unassigned company vehicles available
+                  </SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+            {selectedVehicle ? (
+              <p className="mt-2 text-xs text-slate-500">
+                Selected: {[selectedVehicle.assetType, selectedVehicle.year, selectedVehicle.make, selectedVehicle.model, selectedVehicle.licensePlate]
+                  .filter(Boolean)
+                  .join(" | ")}
+              </p>
+            ) : null}
+          </div>
+
+          <div>
+            <Label htmlFor="vehicle-access-search">Filter company vehicles</Label>
             <div className="relative mt-2">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <Input
@@ -155,7 +198,7 @@ export default function VehicleAccessRequestDialog({
                   setSearch(event.target.value);
                   setSelectedVehicleId(null);
                 }}
-                placeholder="Unit number, VIN, plate, trailer number"
+                placeholder="Type unit number, VIN, plate, trailer number"
                 className="pl-9"
               />
             </div>

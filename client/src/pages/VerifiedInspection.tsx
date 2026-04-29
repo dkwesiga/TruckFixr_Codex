@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { useLocation } from "wouter";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,6 +10,7 @@ import VehicleAccessRequestDialog from "@/components/VehicleAccessRequestDialog"
 import { trpc } from "@/lib/trpc";
 import { useAuthContext } from "@/hooks/useAuthContext";
 import { loadLastDriverVehicleContext } from "@/lib/driverVehicleContext";
+import { getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -16,6 +18,7 @@ import {
   CheckCircle2,
   Clock3,
   MapPin,
+  Upload,
   ShieldCheck,
   Truck,
 } from "lucide-react";
@@ -122,10 +125,12 @@ function summarizeDefectDescription(value: unknown) {
 
 function VerifiedInspectionContent() {
   const { user } = useAuthContext();
+  const [, navigate] = useLocation();
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const storedVehicle = useMemo(() => loadLastDriverVehicleContext(), []);
-  const vehicleId = Number(params.get("vehicle") ?? storedVehicle?.id ?? 42);
+  const vehicleId = params.get("vehicle") ?? storedVehicle?.id ?? "";
   const fleetId = Number(params.get("fleet") ?? storedVehicle?.fleetId ?? 1);
+  const isOwnerOperator = user?.role === "owner_operator" || user?.role === "owner" || user?.role === "manager";
   const [inspectionSession, setInspectionSession] = useState<any>(null);
   const [location, setLocation] = useState<LocationCapture | null>(null);
   const [responses, setResponses] = useState<Record<string, ChecklistResponse>>({});
@@ -141,14 +146,37 @@ function VerifiedInspectionContent() {
   );
   const [notes, setNotes] = useState("");
   const [submitResult, setSubmitResult] = useState<any>(null);
+  const proofCaptureRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const proofUploadRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const startMutation = trpc.inspections.startVerified.useMutation();
   const submitMutation = trpc.inspections.submitVerified.useMutation();
+  const vehiclesQuery = trpc.vehicles.listByFleet.useQuery(
+    { fleetId },
+    { staleTime: 30_000, enabled: fleetId > 0 }
+  );
 
   const categories = inspectionSession?.categories ?? [];
   const allItems = categories.flatMap((category: any) => category.items);
   const openDefects = inspectionSession?.openDefects ?? [];
   const requestedProofItems: string[] = inspectionSession?.requestedProofItems ?? [];
+  const selectedVehicle = useMemo(
+    () => (vehiclesQuery.data ?? []).find((vehicle) => String(vehicle.id) === String(vehicleId)) ?? null,
+    [vehicleId, vehiclesQuery.data]
+  );
+  const vehicleLabel = useMemo(
+    () =>
+      getVehicleDisplayLabel({
+        label:
+          storedVehicle?.label ??
+          selectedVehicle?.unitNumber ??
+          selectedVehicle?.licensePlate ??
+          undefined,
+        vin: storedVehicle?.vin ?? selectedVehicle?.vin ?? undefined,
+        vehicleId: vehicleId || undefined,
+      }),
+    [selectedVehicle?.licensePlate, selectedVehicle?.unitNumber, selectedVehicle?.vin, storedVehicle?.label, storedVehicle?.vin, vehicleId]
+  );
   const openDefectGroups = useMemo<OpenDefectGroup[]>(() => {
     const grouped = new Map<string, OpenDefectGroup>();
     for (const defect of openDefects) {
@@ -220,6 +248,14 @@ function VerifiedInspectionContent() {
     }));
   };
 
+  const triggerProofCapture = (proofItem: string) => {
+    proofCaptureRefs.current[proofItem]?.click();
+  };
+
+  const triggerProofUpload = (proofItem: string) => {
+    proofUploadRefs.current[proofItem]?.click();
+  };
+
   const validationErrors = useMemo(() => {
     const errors: string[] = [];
     allItems.forEach((item: any) => {
@@ -282,6 +318,9 @@ function VerifiedInspectionContent() {
     });
     setSubmitResult(result);
     toast.success("Verified inspection submitted");
+    window.setTimeout(() => {
+      navigate("/driver");
+    }, 1500);
   };
 
   if (!inspectionSession) {
@@ -297,7 +336,7 @@ function VerifiedInspectionContent() {
                 <div>
                   <CardTitle className="fleet-page-title">Verified daily inspection</CardTitle>
                   <CardDescription>
-                    TruckFixr captures timing, proof photos, location status, open defect follow-up, and AI triage.
+                    {isOwnerOperator ? "Today’s inspection helps you keep a credible record of your truck’s condition." : "TruckFixr captures timing, proof photos, location status, open defect follow-up, and AI triage."}
                   </CardDescription>
                 </div>
               </div>
@@ -307,7 +346,7 @@ function VerifiedInspectionContent() {
                 <p className="text-sm font-medium text-slate-900">Vehicle</p>
                 <p className="mt-1 flex items-center gap-2 text-sm text-slate-600">
                   <Truck className="h-4 w-4" />
-                  {storedVehicle?.label || `Vehicle ${vehicleId}`}
+                  {vehicleLabel}
                 </p>
               </div>
               <Button
@@ -317,11 +356,13 @@ function VerifiedInspectionContent() {
               >
                 {startMutation.isPending ? "Starting..." : "Start today's inspection"}
               </Button>
-              <VehicleAccessRequestDialog
-                fleetId={fleetId}
-                triggerLabel="Request Vehicle Access"
-                triggerVariant="outline"
-              />
+              {!isOwnerOperator && (
+                <VehicleAccessRequestDialog
+                  fleetId={fleetId}
+                  triggerLabel="Request Vehicle Access"
+                  triggerVariant="outline"
+                />
+              )}
             </CardContent>
           </Card>
         </div>
@@ -357,13 +398,45 @@ function VerifiedInspectionContent() {
               {requestedProofItems.map((proofItem) => (
                 <div key={proofItem} className="rounded-2xl border border-amber-200 bg-white p-3">
                   <Label className="capitalize">{proofItem}</Label>
-                  <Input
-                    className="mt-2"
+                  <input
+                    ref={(node) => {
+                      proofCaptureRefs.current[proofItem] = node;
+                    }}
+                    className="hidden"
                     type="file"
                     accept="image/*"
                     capture="environment"
                     onChange={(event) => void handleProofPhoto(proofItem, event.target.files)}
                   />
+                  <input
+                    ref={(node) => {
+                      proofUploadRefs.current[proofItem] = node;
+                    }}
+                    className="hidden"
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) => void handleProofPhoto(proofItem, event.target.files)}
+                  />
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="rounded-xl border-amber-300 bg-white text-amber-900 hover:bg-amber-50"
+                      onClick={() => triggerProofCapture(proofItem)}
+                    >
+                      <Camera className="mr-2 h-4 w-4" />
+                      Take photo
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="rounded-xl border-amber-300 bg-white text-amber-900 hover:bg-amber-50"
+                      onClick={() => triggerProofUpload(proofItem)}
+                    >
+                      <Upload className="mr-2 h-4 w-4" />
+                      Upload photo
+                    </Button>
+                  </div>
                   {proofPhotos[proofItem]?.photoUrl ? (
                     <p className="mt-2 text-xs font-medium text-emerald-700">Photo attached</p>
                   ) : (
@@ -551,7 +624,7 @@ function VerifiedInspectionContent() {
         <Card className="fleet-panel border-[var(--fleet-outline)] shadow-none">
           <CardHeader>
             <CardTitle className="fleet-page-title">Submit inspection</CardTitle>
-            <CardDescription>Add the driver name, e-signature, and any final note before sending this to the fleet manager.</CardDescription>
+            <CardDescription>Add the driver name, e-signature, and any final note before {isOwnerOperator ? "saving the record" : "sending this to the fleet manager"}.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -590,7 +663,7 @@ function VerifiedInspectionContent() {
               disabled={submitMutation.isPending}
               onClick={submitInspection}
             >
-              {submitMutation.isPending ? "Submitting..." : "Submit verified inspection"}
+              {submitMutation.isPending ? "Submitting..." : (isOwnerOperator ? "Save verified inspection" : "Submit verified inspection")}
             </Button>
           </CardContent>
         </Card>
@@ -641,7 +714,7 @@ function VerifiedInspectionContent() {
 
 export default function VerifiedInspection() {
   return (
-    <RoleBasedRoute requiredRoles={["driver", "manager", "owner"]}>
+    <RoleBasedRoute requiredRoles={["driver", "owner_operator", "manager", "owner"]}>
       <VerifiedInspectionContent />
     </RoleBasedRoute>
   );
