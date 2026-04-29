@@ -46,7 +46,7 @@ services:
     rootDir: .
     autoDeploy: true
     buildCommand: npm install -g pnpm@10.15.1 && pnpm install --frozen-lockfile --reporter=append-only && pnpm build:server
-    startCommand: node dist/index.js
+    startCommand: sh -c "pnpm build:server && node dist/index.js"
     healthCheckPath: /healthz
     envVars:
       - key: NODE_ENV
