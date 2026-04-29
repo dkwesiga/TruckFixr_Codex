@@ -7,7 +7,7 @@ services:
       - truckfixr.com
       - www.truckfixr.com
     autoDeploy: true
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build:client
+    buildCommand: npm install -g pnpm@10.15.1 && pnpm install --frozen-lockfile --config.confirmModulesPurge=false --reporter=append-only && pnpm build:client
     staticPublishPath: dist/public
     routes:
       - type: rewrite
@@ -45,8 +45,8 @@ services:
     plan: starter
     rootDir: .
     autoDeploy: true
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build:server
-    startCommand: corepack enable && pnpm start:server
+    buildCommand: npm install -g pnpm@10.15.1 && pnpm install --frozen-lockfile --config.confirmModulesPurge=false --reporter=append-only && pnpm build:server
+    startCommand: node dist/index.js
     healthCheckPath: /healthz
     envVars:
       - key: NODE_ENV
