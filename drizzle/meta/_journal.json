@@ -49,6 +49,12 @@
       "version": "11",
       "tag": "0011_fix_all_vehicleId_types",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "12",
+      "tag": "0012_enable_public_table_rls",
+      "breakpoints": true
     }
   ]
 }

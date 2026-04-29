@@ -465,11 +465,18 @@ function buildSimpleDiagnosisInput(
   input: DiagnosticInputRequest,
   classifier: SimpleDiagnosticClassification
 ) {
+  const clarificationSummary = input.clarificationHistory?.length
+    ? input.clarificationHistory
+        .slice(-5)
+        .map((turn, index) => `Q${index + 1}: ${turn.question} A${index + 1}: ${turn.answer}`)
+        .join(" | ")
+    : "";
   const symptomDescription = truncateForSimpleMode(
     [
       (input.symptoms ?? []).slice(0, 3).join("; "),
       input.driverNotes ? `Driver notes: ${input.driverNotes}` : "",
       input.operatingConditions ? `Operating conditions: ${input.operatingConditions}` : "",
+      clarificationSummary ? `Clarifications: ${clarificationSummary}` : "",
     ]
       .filter(Boolean)
       .join(" | "),
@@ -3530,6 +3537,7 @@ function buildSimpleTadisQuestionOutput(input: DiagnosticInputRequest, baselineS
   driverAction: z.infer<typeof driverActionSchema>;
   riskLevel: z.infer<typeof riskLevelSchema>;
   stageLabel: "classifier" | "diagnosis" | "fallback";
+  finalizedAfterClarificationLimit?: boolean;
 }) {
   const finalRanking = buildSimpleTadisFallbackRanking(baselineStage, details.topLikelyCause);
   const rankingDelta = buildRankingDelta(baselineStage.baseline, finalRanking);
@@ -3556,7 +3564,9 @@ function buildSimpleTadisQuestionOutput(input: DiagnosticInputRequest, baselineS
     complianceImpact
   );
   const similarConfirmedCasesUsed = buildSimilarConfirmedCaseEvidence(baselineStage.context);
-  const reason = details.fallbackUsed
+  const reason = details.finalizedAfterClarificationLimit
+    ? `Finalized after ${MAX_CLARIFICATION_ROUNDS} clarification rounds using the current issue, driver answers, and simple AI classification because the diagnosis provider was unavailable.`
+    : details.fallbackUsed
     ? `Fallback to rule-engine baseline because ${details.fallbackReason ?? "AI output was not usable"}`
     : details.confidenceScore >= SIMPLE_TADIS_CONFIDENCE_THRESHOLD
       ? "Simple TADIS mode used a minimal classifier and diagnosis packet."
@@ -3639,7 +3649,12 @@ function buildSimpleTadisQuestionOutput(input: DiagnosticInputRequest, baselineS
     ],
     overall_confidence_score: details.confidenceScore,
     confidence_score: details.confidenceScore,
-      confidence_rationale: details.fallbackUsed
+      confidence_rationale: details.finalizedAfterClarificationLimit
+        ? [
+            reason,
+            `Confidence is ${details.confidenceScore}% because five clarification answers were considered, but the AI diagnosis provider did not return a usable final JSON result.`,
+          ]
+        : details.fallbackUsed
         ? [
             reason,
             `Confidence was reduced to ${details.confidenceScore}% because the AI review layer did not return usable structured output`,
@@ -3680,7 +3695,9 @@ function buildSimpleTadisQuestionOutput(input: DiagnosticInputRequest, baselineS
     labor_time_confidence: fallbackGuidance.laborTimeConfidence,
     labor_time_basis: laborTimeBasis,
     driver_action: details.driverAction,
-    driver_action_reason: details.fallbackUsed
+    driver_action_reason: details.finalizedAfterClarificationLimit
+      ? `After the clarification limit, TruckFixr is using the strongest current-issue signal: ${details.topLikelyCause}.`
+      : details.fallbackUsed
       ? `Fallback ${details.riskLevel} risk assessment recommends ${mapRiskToDriverAction(details.riskLevel).toLowerCase()}.`
       : `Simple diagnosis points to ${details.topLikelyCause}.`,
     risk_summary: `Top risk is ${details.riskLevel} based on ${details.topLikelyCause}.`,
@@ -3847,22 +3864,38 @@ async function analyzeDiagnosticSimpleMode(input: DiagnosticInputRequest) {
   }
 
   if (diagnosisAttempt.status !== "ok" || !diagnosis) {
+      const clarificationLimitReached =
+        normalizedInput.clarificationHistory.length >= MAX_CLARIFICATION_ROUNDS;
+      const finalizedConfidence = clarificationLimitReached
+        ? Math.min(
+            SIMPLE_TADIS_CONFIDENCE_THRESHOLD - 1,
+            Math.max(65, classifier.classification_confidence, baselineStage.baseline.confidence_score)
+          )
+        : Math.min(
+            SIMPLE_TADIS_CONFIDENCE_THRESHOLD - 1,
+            Math.max(18, Math.min(70, baselineStage.baseline.confidence_score))
+          );
       return buildSimpleTadisQuestionOutput(normalizedInput, baselineStage, {
-      confidenceScore: Math.min(
-        SIMPLE_TADIS_CONFIDENCE_THRESHOLD - 1,
-        Math.max(18, Math.min(70, baselineStage.baseline.confidence_score))
-      ),
+      confidenceScore: finalizedConfidence,
       clarifyingQuestion:
-        baselineStage.baseline.next_action === "ask_question"
+        clarificationLimitReached
+          ? ""
+          : baselineStage.baseline.next_action === "ask_question"
           ? baselineStage.baseline.clarifying_question
           : "What symptom is most repeatable right now?",
         fallbackUsed: true,
         fallbackReason: diagnosisAttempt.fallbackReason ?? "Simple diagnosis AI failed",
         llmStatus: diagnosisAttempt.status,
-        topLikelyCause: baselineStage.baseline.possible_causes[0]?.cause ?? "Unknown triage",
-        driverAction: mapRiskToDriverAction(baselineStage.baseline.risk_level),
-        riskLevel: baselineStage.baseline.risk_level,
+        topLikelyCause:
+          clarificationLimitReached
+            ? mapSimpleCategoryToCauseName(classifier.primary_category)
+            : baselineStage.baseline.possible_causes[0]?.cause ?? "Unknown triage",
+        driverAction: mapRiskToDriverAction(
+          clarificationLimitReached ? classifier.risk_level : baselineStage.baseline.risk_level
+        ),
+        riskLevel: clarificationLimitReached ? classifier.risk_level : baselineStage.baseline.risk_level,
         stageLabel: "fallback",
+        finalizedAfterClarificationLimit: clarificationLimitReached,
       });
     }
 
