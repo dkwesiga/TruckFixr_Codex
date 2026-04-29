@@ -17,6 +17,7 @@ import {
   Camera,
   CheckCircle2,
   Clock3,
+  ChevronLeft,
   MapPin,
   Upload,
   ShieldCheck,
@@ -355,6 +356,15 @@ function VerifiedInspectionContent() {
                 onClick={startInspection}
               >
                 {startMutation.isPending ? "Starting..." : "Start today's inspection"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-12 w-full text-base"
+                onClick={() => navigate("/driver")}
+              >
+                <ChevronLeft className="mr-2 h-4 w-4" />
+                Back to dashboard
               </Button>
               {!isOwnerOperator && (
                 <VehicleAccessRequestDialog
@@ -704,6 +714,12 @@ function VerifiedInspectionContent() {
                   )}
                 </div>
               ))}
+              <div className="pt-2">
+                <Button type="button" variant="outline" className="w-full" onClick={() => navigate("/driver")}>
+                  <ChevronLeft className="mr-2 h-4 w-4" />
+                  Back to dashboard
+                </Button>
+              </div>
             </CardContent>
           </Card>
         )}

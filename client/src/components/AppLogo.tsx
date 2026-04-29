@@ -17,6 +17,9 @@ export default function AppLogo({
   alt = "TruckFixr",
   variant = "full",
 }: AppLogoProps) {
+  const logoSrc =
+    variant === "icon" ? "/truckfixr-logo-square.png" : "/truckfixr-logo.png";
+
   const content = (
     <div className={cn("flex shrink-0 items-center", className)}>
       <div
@@ -29,7 +32,7 @@ export default function AppLogo({
         )}
       >
         <img
-          src="/truckfixr-logo.png"
+          src={logoSrc}
           alt={alt}
           className={cn(
             "block object-contain",

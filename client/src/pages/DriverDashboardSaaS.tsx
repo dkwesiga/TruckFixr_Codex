@@ -223,8 +223,44 @@ function DriverDashboardContent() {
 
   return (
     <div className="app-shell min-h-screen">
+      <div className="fixed right-4 top-4 z-50">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="h-11 rounded-full border-slate-200 bg-white px-3 shadow-lg shadow-slate-200/60">
+              <Avatar className="h-7 w-7 border border-slate-200">
+                <AvatarFallback className="bg-slate-900 text-xs font-semibold text-white">{initials}</AvatarFallback>
+              </Avatar>
+              <span className="hidden sm:block text-sm font-medium text-slate-900">{user?.name || "Driver"}</span>
+              <Menu className="h-4 w-4 sm:hidden" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56 rounded-2xl border-slate-200 p-2">
+            <div className="px-2 py-2">
+              <p className="text-sm font-semibold text-slate-900">{user?.name || "Driver"}</p>
+              <p className="text-xs text-slate-500">{user?.email || "Signed in"}</p>
+            </div>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/profile")}>
+              Profile settings
+            </DropdownMenuItem>
+            <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/pricing")}>
+              Subscription & Pricing
+            </DropdownMenuItem>
+            <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/")}>
+              <Info className="mr-2 h-4 w-4" />
+              About TruckFixr
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={logout} className="cursor-pointer rounded-xl text-destructive focus:text-destructive">
+              <LogOut className="mr-2 h-4 w-4" />
+              Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
       <header className="border-b border-[var(--fleet-outline)] bg-white/95 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:px-8">
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 pr-20 sm:px-6 lg:px-8 lg:pr-24">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-4">
               <AppLogo variant="icon" imageClassName="h-full w-full" href="/driver" />
@@ -234,35 +270,6 @@ function DriverDashboardContent() {
                 <p className="mt-2 text-sm text-slate-600">See your current truck, complete today&apos;s inspection, and start diagnosis when something feels off.</p>
               </div>
             </div>
-            <div className="hidden items-center gap-3 sm:flex">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" className="h-10 rounded-full border-slate-200 bg-white px-2">
-                    <Avatar className="h-7 w-7 border border-slate-200"><AvatarFallback className="bg-slate-900 text-xs font-semibold text-white">{initials}</AvatarFallback></Avatar>
-                    <div className="hidden text-left sm:block"><p className="text-sm font-medium text-slate-900">{user?.name || "Driver"}</p></div>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56 rounded-2xl border-slate-200 p-2">
-                  <div className="px-2 py-2">
-                    <p className="text-sm font-semibold text-slate-900">{user?.name || "Driver"}</p>
-                    <p className="text-xs text-slate-500">{user?.email || "Signed in"}</p>
-                  </div>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/profile")}>
-                    Profile settings
-                  </DropdownMenuItem>
-                  <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/pricing")}>
-                    Subscription & Pricing
-                  </DropdownMenuItem>
-                  <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/")}>
-                    <Info className="mr-2 h-4 w-4" />
-                    About TruckFixr
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={logout} className="cursor-pointer rounded-xl text-destructive focus:text-destructive"><LogOut className="mr-2 h-4 w-4" />Sign out</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
           </div>
           <div className="flex items-center gap-3">
             <VehicleAccessRequestDialog
@@ -271,41 +278,11 @@ function DriverDashboardContent() {
               triggerVariant="default"
               onSubmitted={() => void myRequestsQuery.refetch()}
             />
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="h-10 rounded-full border-slate-200 bg-white px-3 sm:hidden">
-                  <Menu className="h-4 w-4" />
-                  Menu
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-60 rounded-2xl border-slate-200 p-2 sm:hidden">
-                <div className="px-2 py-2">
-                  <p className="text-sm font-semibold text-slate-900">{user?.name || "Driver"}</p>
-                  <p className="text-xs text-slate-500">{user?.email || "Signed in"}</p>
-                </div>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/profile")}>
-                  Profile & Settings
-                </DropdownMenuItem>
-                <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/pricing")}>
-                  Subscription & Pricing
-                </DropdownMenuItem>
-                <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/")}>
-                  <Info className="mr-2 h-4 w-4" />
-                  About TruckFixr
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={logout} className="cursor-pointer rounded-xl text-destructive focus:text-destructive">
-                  <LogOut className="mr-2 h-4 w-4" />
-                  Sign out
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl space-y-8 px-4 py-8 sm:px-6 lg:px-8">
+      <main className="mx-auto max-w-7xl space-y-8 px-4 py-8 pt-16 sm:px-6 sm:pt-20 lg:px-8">
         {!hasVehicles ? (
           <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
             <Card className="saas-card overflow-hidden p-0">

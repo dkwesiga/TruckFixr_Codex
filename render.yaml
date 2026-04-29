@@ -7,7 +7,7 @@ services:
       - truckfixr.com
       - www.truckfixr.com
     autoDeploy: true
-    buildCommand: npm install -g pnpm@10.15.1 && pnpm install --frozen-lockfile --config.confirmModulesPurge=false --reporter=append-only && pnpm build:client
+    buildCommand: npm install -g pnpm@10.15.1 && pnpm install --frozen-lockfile --reporter=append-only && pnpm build:client
     staticPublishPath: dist/public
     routes:
       - type: rewrite
@@ -15,7 +15,7 @@ services:
         destination: /index.html
     envVars:
       - key: VITE_API_BASE_URL
-        sync: false
+        value: https://truckfixr-api.onrender.com
       - key: VITE_APP_ID
         value: truckfixr-render
       - key: VITE_SUPABASE_URL
@@ -45,7 +45,7 @@ services:
     plan: starter
     rootDir: .
     autoDeploy: true
-    buildCommand: npm install -g pnpm@10.15.1 && pnpm install --frozen-lockfile --config.confirmModulesPurge=false --reporter=append-only && pnpm build:server
+    buildCommand: npm install -g pnpm@10.15.1 && pnpm install --frozen-lockfile --reporter=append-only && pnpm build:server
     startCommand: node dist/index.js
     healthCheckPath: /healthz
     envVars:

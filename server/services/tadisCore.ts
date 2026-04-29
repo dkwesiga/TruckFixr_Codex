@@ -881,9 +881,9 @@ const CAUSE_LIBRARY: CauseDefinition[] = [
     faultCodes: [],
     vehicleSignals: ["airBrakes"],
     recommendedTests: [
-      "Check air pressure build and leak-down rates",
-      "Listen for leaks at lines, fittings, and chambers",
-      "Inspect the dryer and governor function",
+      "Measure tractor and trailer air-system leak-down rate with brakes released and applied",
+      "Soap-test gladhands, air lines, fittings, relay valves, and brake chambers to pinpoint the leak",
+      "Verify compressor cut-in/cut-out and confirm the air dryer purge valve is not leaking",
     ],
     recommendedFix: "Repair leaking air lines or brake components and confirm normal pressure recovery.",
     questions: [
@@ -1633,9 +1633,20 @@ const BASELINE_PARTS_GUIDANCE: Record<
     laborTimeBasis: ["ABS code capture and wheel-end inspection", "Sensor replacement is usually bounded work"],
   },
   air_brake_leak: {
-    likelyReplacementParts: ["air line", "push-to-connect fitting", "brake chamber", "air dryer service parts"],
-    inspectionRelatedParts: ["leak-down tester", "governor", "pressure gauges"],
-    adjacentPartsToCheck: ["relay valves", "gladhands", "supply tanks"],
+    likelyReplacementParts: [
+      "air line",
+      "push-to-connect fitting",
+      "service gladhand seal",
+      "brake chamber",
+      "relay valve",
+    ],
+    inspectionRelatedParts: [
+      "soap solution leak check",
+      "dash and tank pressure gauges",
+      "service and parking brake chambers",
+      "trailer supply and service gladhands",
+    ],
+    adjacentPartsToCheck: ["air dryer purge valve", "governor lines", "supply tanks", "quick-release valves"],
     diagnosticVerificationLaborHours: { min: 1, max: 2 },
     repairLaborHours: { min: 1.5, max: 4 },
     laborTimeConfidence: 79,
@@ -2677,12 +2688,13 @@ function mapRiskToDriverAction(riskLevel: z.infer<typeof riskLevelSchema>): z.in
   return "keep_running_monitor";
 }
 
-function getCauseDefinitionByName(causeName: string) {
+function getCauseDefinitionByName(causeName: string): CauseDefinition | null {
   const normalized = normalizeText(causeName);
   return (
     CAUSE_LIBRARY.find((cause) => cause.id === causeName) ??
     CAUSE_LIBRARY.find((cause) => normalizeText(cause.cause) === normalized) ??
-    CAUSE_LIBRARY.find((cause) => normalized.includes(normalizeText(cause.cause)))
+    CAUSE_LIBRARY.find((cause) => normalized.includes(normalizeText(cause.cause))) ??
+    null
   );
 }
 
@@ -2710,6 +2722,18 @@ function getBaselineGuidance(causeDef: CauseDefinition | null, causeName: string
     laborTimeConfidence: 55,
     laborTimeBasis: ["Generic fallback labor estimate used because no hardcoded cause guidance matched"],
   };
+}
+
+function resolveFinalSystemsAffected(
+  topCauseDef: CauseDefinition | null,
+  baselineSystemsAffected: string[],
+  fallbackCategorySystems: string[] = []
+) {
+  const primarySystems = topCauseDef?.systems?.length ? topCauseDef.systems : baselineSystemsAffected;
+  const combined = uniqueStrings([...primarySystems, ...fallbackCategorySystems]).filter(
+    (system) => system !== "unknown"
+  );
+  return combined.length > 0 ? combined : baselineSystemsAffected;
 }
 
 function buildBaselineStage(
@@ -3553,10 +3577,7 @@ function buildSimpleTadisQuestionOutput(input: DiagnosticInputRequest, baselineS
   const inspectionRelatedParts = fallbackGuidance.inspectionRelatedParts ?? [];
   const adjacentPartsToCheck = fallbackGuidance.adjacentPartsToCheck ?? [];
   const laborTimeBasis = fallbackGuidance.laborTimeBasis ?? [];
-  const systemsAffected = uniqueStrings([
-    ...(topCauseDef?.systems ?? baselineStage.baseline.systems_affected),
-    ...finalRanking.slice(0, 3).flatMap((item) => getCauseDefinitionByName(item.cause_name)?.systems ?? []),
-  ]);
+  const systemsAffected = resolveFinalSystemsAffected(topCauseDef, baselineStage.baseline.systems_affected);
   const complianceImpact = getComplianceImpact(details.riskLevel);
   const maintenanceRecommendations = buildMaintenanceRecommendations(
     baselineStage.ranked.slice(0, 3).map((item) => ({ cause: item.cause, probability: item.probability / 100 })),
@@ -4007,12 +4028,7 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
     llmReview.status === "ok" && !criticalEvidenceOverride.applied
       ? llmReview.parsed.top_cause_repair_guidance
       : null;
-  const systemsAffected = uniqueStrings([
-    ...(topCauseDef?.systems ?? baselineStage.baseline.systems_affected),
-    ...finalRanking
-      .slice(0, 3)
-      .flatMap((item) => getCauseDefinitionByName(item.cause_name)?.systems ?? []),
-  ]);
+  const systemsAffected = resolveFinalSystemsAffected(topCauseDef, baselineStage.baseline.systems_affected);
   const initialRiskLevel = determineRiskLevel(
     finalRanking.slice(0, 2).map((item) => ({
       causeName: item.cause_name,
@@ -4125,19 +4141,19 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
   const recommendedTests =
     llmRepairGuidance?.recommended_tests?.length
       ? llmRepairGuidance.recommended_tests
-      : baselineStage.baseline.recommended_tests;
+      : (fallbackGuidance.recommendedTests ?? []);
   const possibleReplacementParts =
     llmRepairGuidance?.likely_replacement_parts?.length
       ? llmRepairGuidance.likely_replacement_parts
-      : fallbackGuidance.likelyReplacementParts;
+      : (fallbackGuidance.likelyReplacementParts ?? []);
   const inspectionRelatedParts =
     llmRepairGuidance?.inspection_related_parts?.length
       ? llmRepairGuidance.inspection_related_parts
-      : fallbackGuidance.inspectionRelatedParts;
+      : (fallbackGuidance.inspectionRelatedParts ?? []);
   const adjacentPartsToCheck =
     llmRepairGuidance?.adjacent_parts_to_check?.length
       ? llmRepairGuidance.adjacent_parts_to_check
-      : fallbackGuidance.adjacentPartsToCheck;
+      : (fallbackGuidance.adjacentPartsToCheck ?? []);
   const diagnosticVerificationLaborHours =
     llmRepairGuidance?.diagnostic_verification_labor_hours ?? fallbackGuidance.diagnosticVerificationLaborHours;
   const repairLaborHours = llmRepairGuidance?.repair_labor_hours ?? fallbackGuidance.repairLaborHours;

@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { trpc } from "@/lib/trpc";
-import { getApiUrl } from "@/lib/api";
+import { getApiUrl, readApiPayload } from "@/lib/api";
 import { saveLastDriverVehicleContext } from "@/lib/driverVehicleContext";
 import { loadDriverVehicles, saveDriverVehicles, type DriverVehicleRecord } from "@/lib/driverVehicles";
 import { getFallbackUnitNumber, getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
@@ -163,7 +163,9 @@ export default function VehicleCaptureFlow({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageDataUrl }),
       });
-      const payload = await response.json().catch(() => ({}));
+      const payload = await readApiPayload<Record<string, any>>(response, {
+        htmlErrorMessage: "TruckFixr received an HTML page instead of the VIN extraction API response. Check the live API base URL configuration.",
+      }).catch(() => ({}));
 
       if (!response.ok || !payload.vin) {
         setOcrWarning(payload.warning || payload.error || "Couldn't read VIN clearly.");
@@ -197,7 +199,9 @@ export default function VehicleCaptureFlow({
 
     try {
       const response = await fetch(getApiUrl(`/api/vehicles/decode-vin/${encodeURIComponent(vin)}`));
-      const payload = await response.json().catch(() => ({}));
+      const payload = await readApiPayload<Record<string, any>>(response, {
+        htmlErrorMessage: "TruckFixr received an HTML page instead of the VIN decode API response. Check the live API base URL configuration.",
+      }).catch(() => ({}));
 
       setVehicleForm((current) => ({
         ...current,

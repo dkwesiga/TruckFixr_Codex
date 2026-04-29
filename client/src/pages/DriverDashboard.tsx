@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import { trackEvent, trackInspectionStarted, trackVehicleAdded } from "@/lib/analytics";
 import { saveLastDriverVehicleContext } from "@/lib/driverVehicleContext";
-import { getApiUrl } from "@/lib/api";
+import { getApiUrl, readApiPayload } from "@/lib/api";
 import { createTemporaryDriverVehicleId } from "@/lib/driverVehicles";
 import { formatDistanceKm, getFallbackUnitNumber, getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
 import { toast } from "sonner";
@@ -168,7 +168,9 @@ function DriverDashboardContent() {
 
     try {
       const response = await fetch(getApiUrl(`/api/vehicles/decode-vin/${encodeURIComponent(vin)}`));
-      const payload = await response.json();
+      const payload = await readApiPayload<Record<string, any>>(response, {
+        htmlErrorMessage: "TruckFixr received an HTML page instead of the VIN decode API response. Check the live API base URL configuration.",
+      });
 
       if (!response.ok) {
         throw new Error(payload.error || "VIN decode failed");

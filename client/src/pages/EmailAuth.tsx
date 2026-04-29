@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { trpc } from "@/lib/trpc";
-import { getApiUrl } from "@/lib/api";
+import { getApiUrl, readApiPayload } from "@/lib/api";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { trackSignup, trackLogin } from "@/lib/analytics";
@@ -101,11 +101,13 @@ export default function EmailAuth() {
       credentials: 'include',
       body: JSON.stringify({ email, password, name }),
     });
+    const payload = await readApiPayload(response, {
+      htmlErrorMessage: "TruckFixr received an HTML page instead of the signup API response. Check the live API base URL configuration.",
+    });
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Signup failed');
+      throw new Error((payload as any).error || 'Signup failed');
     }
-    return response.json();
+    return payload;
   };
 
   const handleSignin = async (email: string, password: string) => {
@@ -115,11 +117,13 @@ export default function EmailAuth() {
       credentials: 'include',
       body: JSON.stringify({ email, password }),
     });
+    const payload = await readApiPayload(response, {
+      htmlErrorMessage: "TruckFixr received an HTML page instead of the signin API response. Check the live API base URL configuration.",
+    });
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Signin failed');
+      throw new Error((payload as any).error || 'Signin failed');
     }
-    return response.json();
+    return payload;
   };
 
   const handleForgotPassword = async (email: string) => {
@@ -128,9 +132,9 @@ export default function EmailAuth() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email }),
     });
-    const payload = await response.json().catch(() => ({}));
+    const payload = await readApiPayload(response).catch(() => ({}));
     if (!response.ok) {
-      throw new Error(payload.error || 'Unable to send password reset email');
+      throw new Error((payload as any).error || 'Unable to send password reset email');
     }
     return payload;
   };
@@ -141,9 +145,9 @@ export default function EmailAuth() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ accessToken, password }),
     });
-    const payload = await response.json().catch(() => ({}));
+    const payload = await readApiPayload(response).catch(() => ({}));
     if (!response.ok) {
-      throw new Error(payload.error || 'Unable to reset password');
+      throw new Error((payload as any).error || 'Unable to reset password');
     }
     return payload;
   };
