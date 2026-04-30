@@ -9,7 +9,6 @@ import { registerVehicleLookupRoutes } from "./vehicleLookupRoutes";
 import { ENV } from "./env";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
-import { setupVite } from "./vite";
 
 function normalizeOrigin(value: string) {
   try {
@@ -100,6 +99,7 @@ async function startServer() {
   );
 
   if (isDevelopment) {
+    const { setupVite } = await import("./vite");
     await setupVite(app, server);
   } else {
     app.get("/", (_req, res) => {

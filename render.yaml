@@ -47,8 +47,8 @@ services:
     plan: free
     rootDir: .
     autoDeploy: true
-    buildCommand: npm install -g pnpm@10.15.1 && CI=true pnpm install --frozen-lockfile --force --reporter=append-only && pnpm build:server
-    startCommand: sh -c "pnpm build:server && node dist/index.js"
+    buildCommand: npm install -g pnpm@10.15.1 && CI=true pnpm install --frozen-lockfile --force --reporter=append-only && pnpm exec tsx --version
+    startCommand: pnpm exec tsx server/_core/index.ts
     healthCheckPath: /healthz
     envVars:
       - key: NODE_VERSION
