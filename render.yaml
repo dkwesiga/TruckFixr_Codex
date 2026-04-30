@@ -14,6 +14,8 @@ services:
         source: /*
         destination: /index.html
     envVars:
+      - key: NODE_VERSION
+        value: 20.19.5
       - key: VITE_API_BASE_URL
         value: https://truckfixr-api.onrender.com
       - key: VITE_APP_ID
@@ -49,6 +51,8 @@ services:
     startCommand: sh -c "pnpm build:server && node dist/index.js"
     healthCheckPath: /healthz
     envVars:
+      - key: NODE_VERSION
+        value: 20.19.5
       - key: NODE_ENV
         value: production
       - key: VITE_APP_ID
