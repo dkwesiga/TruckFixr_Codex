@@ -71,6 +71,18 @@ function badgeClasses(value: string) {
   }
 }
 
+function formatReportTimestamp(value: unknown) {
+  if (!value) return "Submitted inspection";
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return "Submitted inspection";
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function DriverDashboardContent() {
   const { user, logout } = useAuthContext();
   const [, navigate] = useLocation();
@@ -88,6 +100,10 @@ function DriverDashboardContent() {
   const myRequestsQuery = trpc.vehicleAccess.listMyRequests.useQuery(
     { fleetId: activeFleetId },
     { staleTime: 15_000, enabled: activeFleetId > 0 }
+  );
+  const inspectionReportsQuery = trpc.inspections.getMyReports.useQuery(
+    { limit: 5 },
+    { staleTime: 30_000, enabled: Boolean(user?.id) }
   );
   const vehicles = useMemo<DriverVehicle[]>(() => {
     const rows = vehiclesQuery.data ?? [];
@@ -108,7 +124,15 @@ function DriverDashboardContent() {
   }, [vehiclesQuery.data]);
   const activeVehicle = vehicles.find((vehicle) => vehicle.id === activeVehicleId) ?? vehicles[0] ?? null;
   const pilotAccess = subscriptionQuery.data?.pilotAccess ?? null;
-  const latestInspection = recentActivity.find((item) => item.type === "inspection");
+  const inspectionReports = inspectionReportsQuery.data ?? [];
+  const latestInspectionReport = inspectionReports[0];
+  const latestInspection = latestInspectionReport
+    ? {
+        detail: `${formatReportTimestamp(latestInspectionReport.submittedAt)} - ${String(
+          latestInspectionReport.overallVehicleResult ?? "submitted"
+        ).replaceAll("_", " ")}`,
+      }
+    : recentActivity.find((item) => item.type === "inspection");
   const pendingDrafts = useMemo(
     () =>
       vehicles
@@ -492,17 +516,35 @@ function DriverDashboardContent() {
               <CardDescription className="text-sm text-slate-600">Review what happened recently before starting your next task.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 px-7 py-6">
-              {recentActivity.map((activity) => (
-                <div key={activity.id} className="rounded-[22px] border border-slate-200 bg-white p-4">
+              {inspectionReports.length === 0 ? (
+                <div className="rounded-[22px] border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                  No submitted DVIR reports yet. Completed daily inspections will appear here.
+                </div>
+              ) : null}
+              {inspectionReports.map((report) => (
+                <div key={report.id} className="rounded-[22px] border border-slate-200 bg-white p-4">
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex items-start gap-3">
-                      <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100">{activity.type === "inspection" ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <AlertCircle className="h-4 w-4 text-amber-600" />}</div>
+                      <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                      </div>
                       <div>
-                        <p className="font-semibold text-slate-950">{activity.title}</p>
-                        <p className="mt-1 text-sm text-slate-600">{activity.detail}</p>
+                        <p className="font-semibold text-slate-950">DVIR inspection report</p>
+                        <p className="mt-1 text-sm text-slate-600">
+                          {report.vehicleLabel} | {formatReportTimestamp(report.submittedAt)} | Integrity{" "}
+                          {report.integrityScore ?? "N/A"}
+                        </p>
                       </div>
                     </div>
-                    {activity.type === "inspection" && activity.report ? <Button variant="outline" size="sm" className="rounded-full border-slate-200 bg-white" onClick={() => setSelectedReport(activity.report ?? null)}><Eye className="h-4 w-4" />View Report</Button> : null}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="rounded-full border-slate-200 bg-white"
+                      onClick={() => navigate(`/inspection-report/${report.id}`)}
+                    >
+                      <Eye className="h-4 w-4" />
+                      View Report
+                    </Button>
                   </div>
                 </div>
               ))}

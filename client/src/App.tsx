@@ -19,6 +19,7 @@ const Pricing = lazy(() => import("./pages/Pricing"));
 const EmailAuth = lazy(() => import("./pages/EmailAuth"));
 const UserProfile = lazy(() => import("./pages/UserProfile"));
 const AdminBillingDashboard = lazy(() => import("./pages/AdminBillingDashboard"));
+const InspectionReportDvir = lazy(() => import("./pages/InspectionReportDvir"));
 
 function RouteFallback() {
   return (
@@ -43,6 +44,7 @@ function Router() {
         <Route path={"/driver"} component={DriverDashboardSaaS} />
         <Route path={"/diagnosis"} component={DriverDiagnosis} />
         <Route path={"/inspection"} component={VerifiedInspection} />
+        <Route path={"/inspection-report/:id"} component={InspectionReportDvir} />
         <Route path={"/defect/:id"} component={DefectDetail} />
         <Route path={"/truck/:id"} component={TruckDetail} />
         <Route path={"/pricing"} component={Pricing} />

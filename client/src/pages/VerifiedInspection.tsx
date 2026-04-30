@@ -19,7 +19,6 @@ import {
   Clock3,
   ChevronLeft,
   MapPin,
-  Upload,
   ShieldCheck,
   Truck,
 } from "lucide-react";
@@ -145,10 +144,11 @@ function VerifiedInspectionContent() {
   const [driverSignature, setDriverSignature] = useState(
     () => user?.name?.trim() || ""
   );
+  const [signatureConfirmed, setSignatureConfirmed] = useState(false);
   const [notes, setNotes] = useState("");
   const [submitResult, setSubmitResult] = useState<any>(null);
   const proofCaptureRefs = useRef<Record<string, HTMLInputElement | null>>({});
-  const proofUploadRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const defectCaptureRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const startMutation = trpc.inspections.startVerified.useMutation();
   const submitMutation = trpc.inspections.submitVerified.useMutation();
@@ -253,8 +253,8 @@ function VerifiedInspectionContent() {
     proofCaptureRefs.current[proofItem]?.click();
   };
 
-  const triggerProofUpload = (proofItem: string) => {
-    proofUploadRefs.current[proofItem]?.click();
+  const triggerDefectCapture = (itemId: string) => {
+    defectCaptureRefs.current[itemId]?.click();
   };
 
   const validationErrors = useMemo(() => {
@@ -282,6 +282,10 @@ function VerifiedInspectionContent() {
       errors.push("Enter the driver's e-signature before submitting.");
     }
 
+    if (!signatureConfirmed) {
+      errors.push("Confirm that the e-signature is accurate before submitting.");
+    }
+
     openDefectGroups.forEach((defectGroup) => {
       if (!followUps[defectGroup.defectIds[0]]?.status) {
         errors.push(`Acknowledge open defect: ${defectGroup.title}.`);
@@ -289,7 +293,7 @@ function VerifiedInspectionContent() {
     });
 
     return errors;
-  }, [allItems, driverPrintedName, driverSignature, followUps, openDefectGroups, responses]);
+  }, [allItems, driverPrintedName, driverSignature, followUps, openDefectGroups, responses, signatureConfirmed]);
 
   const submitInspection = async () => {
     if (validationErrors.length > 0) {
@@ -302,6 +306,7 @@ function VerifiedInspectionContent() {
       inspectionId: inspectionSession.inspectionId,
       driverPrintedName: driverPrintedName.trim(),
       driverSignature: driverSignature.trim(),
+      signatureConfirmed,
       notes,
       submitLocation,
       checklistResponses: allItems.map((item: any) => responses[item.id]),
@@ -319,9 +324,6 @@ function VerifiedInspectionContent() {
     });
     setSubmitResult(result);
     toast.success("Verified inspection submitted");
-    window.setTimeout(() => {
-      navigate("/driver");
-    }, 1500);
   };
 
   if (!inspectionSession) {
@@ -401,7 +403,7 @@ function VerifiedInspectionContent() {
             <CardHeader>
               <CardTitle className="text-base text-amber-950">Today&apos;s verification check</CardTitle>
               <CardDescription className="text-amber-800">
-                Please upload a photo of {requestedProofItems.join(" and ")}.
+                Please take a photo of {requestedProofItems.join(" and ")}.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-3 sm:grid-cols-2">
@@ -418,15 +420,6 @@ function VerifiedInspectionContent() {
                     capture="environment"
                     onChange={(event) => void handleProofPhoto(proofItem, event.target.files)}
                   />
-                  <input
-                    ref={(node) => {
-                      proofUploadRefs.current[proofItem] = node;
-                    }}
-                    className="hidden"
-                    type="file"
-                    accept="image/*"
-                    onChange={(event) => void handleProofPhoto(proofItem, event.target.files)}
-                  />
                   <div className="mt-2 flex flex-wrap gap-2">
                     <Button
                       type="button"
@@ -436,15 +429,6 @@ function VerifiedInspectionContent() {
                     >
                       <Camera className="mr-2 h-4 w-4" />
                       Take photo
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="rounded-xl border-amber-300 bg-white text-amber-900 hover:bg-amber-50"
-                      onClick={() => triggerProofUpload(proofItem)}
-                    >
-                      <Upload className="mr-2 h-4 w-4" />
-                      Upload photo
                     </Button>
                   </div>
                   {proofPhotos[proofItem]?.photoUrl ? (
@@ -585,12 +569,25 @@ function VerifiedInspectionContent() {
                           <Camera className="h-4 w-4" />
                           Defect photo
                         </Label>
-                        <Input
+                        <input
+                          ref={(node) => {
+                            defectCaptureRefs.current[item.id] = node;
+                          }}
+                          className="hidden"
                           type="file"
                           accept="image/*"
                           capture="environment"
                           onChange={(event) => void handleDefectPhoto(item, event.target.files)}
                         />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full rounded-xl border-red-200 bg-white text-red-900 hover:bg-red-50"
+                          onClick={() => triggerDefectCapture(item.id)}
+                        >
+                          <Camera className="mr-2 h-4 w-4" />
+                          Take photo
+                        </Button>
                         {response.photoUrls.length > 0 && (
                           <p className="text-xs font-medium text-emerald-700">Defect photo attached</p>
                         )}
@@ -662,6 +659,17 @@ function VerifiedInspectionContent() {
               value={notes}
               onChange={(event) => setNotes(event.target.value)}
             />
+            <label className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={signatureConfirmed}
+                onChange={(event) => setSignatureConfirmed(event.target.checked)}
+              />
+              <span>
+                I confirm this e-signature is mine and the completed inspection report is accurate to the best of my knowledge.
+              </span>
+            </label>
             {validationErrors.length > 0 && (
               <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
                 <AlertTriangle className="mr-2 inline h-4 w-4" />
@@ -715,6 +723,13 @@ function VerifiedInspectionContent() {
                 </div>
               ))}
               <div className="pt-2">
+                <Button
+                  type="button"
+                  className="mb-2 w-full"
+                  onClick={() => navigate(`/inspection-report/${submitResult.inspectionId}`)}
+                >
+                  View DVIR report
+                </Button>
                 <Button type="button" variant="outline" className="w-full" onClick={() => navigate("/driver")}>
                   <ChevronLeft className="mr-2 h-4 w-4" />
                   Back to dashboard

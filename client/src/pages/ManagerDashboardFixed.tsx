@@ -95,6 +95,18 @@ function badgeClasses(value: string) {
   }
 }
 
+function formatReportTimestamp(value: unknown) {
+  if (!value) return "Submitted inspection";
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return "Submitted inspection";
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function formatDefectDescription(value: string | null | undefined) {
   const description = value?.trim();
   if (!description) return "No additional defect details were provided.";
@@ -228,6 +240,10 @@ function ManagerDashboardFixedContent() {
     
   const verifiedHealthQuery = trpc.inspections.getFleetDailyHealth.useQuery(
     { fleetId },
+    { staleTime: 30_000, enabled: !!fleetId }
+  );
+  const inspectionReportsQuery = trpc.inspections.getMyReports.useQuery(
+    { fleetId, limit: 8 },
     { staleTime: 30_000, enabled: !!fleetId }
   );
   const driversQuery = trpc.vehicleAccess.listFleetDrivers.useQuery({ fleetId }, { enabled: !!fleetId });
@@ -706,7 +722,14 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
               <Button
                 variant="link"
                 className="mt-2 h-auto p-0 text-sm font-medium text-blue-700"
-                onClick={() => navigate("/profile#inspection-reports")}
+                onClick={() => {
+                  const firstReport = inspectionReportsQuery.data?.[0];
+                  if (firstReport) {
+                    navigate(`/inspection-report/${firstReport.id}`);
+                    return;
+                  }
+                  toast.info("No DVIR inspection reports are available yet.");
+                }}
               >
                 View inspection reports
               </Button>
@@ -743,6 +766,53 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
             </CardHeader>
             <CardContent className="pt-0 text-sm text-slate-600">
               Average verified inspection score.
+            </CardContent>
+          </Card>
+        </section>
+
+        <section>
+          <Card className="saas-card">
+            <CardHeader>
+              <CardTitle className="text-slate-950">DVIR inspection reports</CardTitle>
+              <CardDescription>
+                Completed verified daily inspections are saved here for manager review and driver records.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {inspectionReportsQuery.isLoading ? (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+                  Loading inspection reports...
+                </div>
+              ) : null}
+              {!inspectionReportsQuery.isLoading && (inspectionReportsQuery.data ?? []).length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+                  No DVIR inspection reports have been submitted yet.
+                </div>
+              ) : null}
+              {(inspectionReportsQuery.data ?? []).map((report) => (
+                <div
+                  key={report.id}
+                  className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-4 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div>
+                    <p className="font-semibold text-slate-950">{report.vehicleLabel}</p>
+                    <p className="mt-1 text-sm text-slate-600">
+                      Driver: {report.driverName} | {formatReportTimestamp(report.submittedAt)}
+                    </p>
+                    <p className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-400">
+                      {String(report.overallVehicleResult ?? "submitted").replaceAll("_", " ")} | Integrity{" "}
+                      {report.integrityScore ?? "N/A"}
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="rounded-full bg-white"
+                    onClick={() => navigate(`/inspection-report/${report.id}`)}
+                  >
+                    View DVIR report
+                  </Button>
+                </div>
+              ))}
             </CardContent>
           </Card>
         </section>

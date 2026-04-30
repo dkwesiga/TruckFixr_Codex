@@ -381,6 +381,9 @@ export const submitVerifiedInspectionSchema = z.object({
   inspectionId: z.number().int().positive(),
   driverPrintedName: z.string().trim().min(1, "Driver name is required"),
   driverSignature: z.string().trim().min(1, "Driver e-signature is required"),
+  signatureConfirmed: z
+    .boolean()
+    .refine((value) => value === true, "Confirm the driver signature before submitting."),
   notes: z.string().trim().optional(),
   submitLocation: locationCaptureSchema.optional(),
   checklistResponses: z.array(verifiedInspectionChecklistResponseSchema).min(1),

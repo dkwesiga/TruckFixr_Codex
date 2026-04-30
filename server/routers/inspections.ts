@@ -51,6 +51,8 @@ import {
   canManageVehicleAccess,
   canViewVehicle,
 } from "../services/vehicleAccess";
+import { sendEmail } from "../services/email";
+import { ENV } from "../_core/env";
 
 async function verifyFleetAccess(fleetId: number, userId: number, userRole: string): Promise<boolean> {
   return canManageVehicleAccess({
@@ -238,6 +240,131 @@ const fallbackVehicles = {
 
 function getVehicleLifecycleStatus(complianceStatus: ComplianceStatus) {
   return complianceStatus === "red" ? "maintenance" : "active";
+}
+
+const dvirCategoryCodeMap: Record<string, { code: string; label: string; side: "tractor" | "trailer" }> = {
+  dashboard_warning_lights: { code: "6", label: "Driver controls / warning lights", side: "tractor" },
+  tires_wheels: { code: "21", label: "Tires, wheels, hubs, fasteners", side: "trailer" },
+  brakes: { code: "1", label: "Air brake system / brakes", side: "trailer" },
+  brakes_air_system: { code: "1", label: "Air brake system", side: "trailer" },
+  steering: { code: "19", label: "Steering", side: "tractor" },
+  lights: { code: "18", label: "Lamps / reflectors", side: "trailer" },
+  lights_reflectors: { code: "18", label: "Lamps / reflectors", side: "trailer" },
+  tires: { code: "21", label: "Tires", side: "trailer" },
+  suspension: { code: "20", label: "Suspension system", side: "trailer" },
+  fluid_leaks: { code: "12", label: "Fluid systems / visible leaks", side: "tractor" },
+  coupling: { code: "4", label: "Coupling devices", side: "trailer" },
+  mirrors_windshield: { code: "14", label: "Glass and mirrors", side: "tractor" },
+  body_damage: { code: "11", label: "Frame and cargo body", side: "trailer" },
+  load_security: { code: "3", label: "Cargo securement", side: "trailer" },
+  other: { code: "13", label: "General", side: "tractor" },
+  safety_equipment: { code: "9", label: "Emergency equipment and safety devices", side: "tractor" },
+};
+
+function toDisplayDate(value: unknown) {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString("en-US");
+}
+
+function toDisplayTime(value: unknown) {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(String(value));
+  return Number.isNaN(date.getTime())
+    ? ""
+    : date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+}
+
+function buildDvirPayload(input: {
+  inspection: typeof inspections.$inferSelect;
+  vehicle: typeof vehicles.$inferSelect | null;
+  fleet: typeof fleets.$inferSelect | null;
+  driver: typeof users.$inferSelect | null;
+}) {
+  const results = parseInspectionResults(input.inspection.results) as any;
+  const checklistResponses = Array.isArray(results?.checklistResponses)
+    ? results.checklistResponses
+    : [];
+  const issueItems = checklistResponses.filter((item: any) => item.result === "issue_found");
+  const groupedRows = checklistResponses.map((item: any) => {
+    const mapped = dvirCategoryCodeMap[item.category] ?? dvirCategoryCodeMap.other;
+    return {
+      code: mapped.code,
+      side: mapped.side,
+      item: mapped.label,
+      originalItem: item.itemLabel,
+      defectCode: item.result === "issue_found" ? mapped.code : "",
+      defectMarked: item.result === "issue_found",
+      repairedMarked: false,
+      severity: item.severity ?? null,
+      note:
+        item.result === "issue_found"
+          ? item.defectDescription ?? ""
+          : item.result === "not_checked"
+            ? item.note ?? "Not checked"
+            : "",
+    };
+  });
+
+  const location =
+    input.inspection.submitLatitude && input.inspection.submitLongitude
+      ? `${input.inspection.submitLatitude}, ${input.inspection.submitLongitude}`
+      : input.inspection.locationStatus ?? "unavailable";
+  const vehicleLabel =
+    input.vehicle?.unitNumber ||
+    input.vehicle?.licensePlate ||
+    input.vehicle?.vin ||
+    String(input.inspection.vehicleId);
+
+  return {
+    inspectionId: input.inspection.id,
+    reportType: "Driver Vehicle Inspection Report",
+    formStyle: "DVIR familiar layout",
+    company: {
+      name: input.fleet?.name ?? "TruckFixr fleet",
+      address: input.fleet?.address ?? "",
+    },
+    tripType: "pre_trip",
+    date: toDisplayDate(input.inspection.submittedAt ?? input.inspection.updatedAt),
+    time: toDisplayTime(input.inspection.submittedAt ?? input.inspection.updatedAt),
+    location,
+    vehicle: {
+      id: input.inspection.vehicleId,
+      unitNumber: vehicleLabel,
+      vin: input.vehicle?.vin ?? "",
+      licensePlate: input.vehicle?.licensePlate ?? "",
+      make: input.vehicle?.make ?? "",
+      model: input.vehicle?.model ?? "",
+      year: input.vehicle?.year ?? null,
+      assetType: input.vehicle?.assetType ?? "",
+    },
+    driver: {
+      id: input.inspection.driverId,
+      name: results?.driverPrintedName || input.driver?.name || input.driver?.email || "Driver",
+      signature: results?.driverSignature ?? "",
+      email: input.driver?.email ?? "",
+    },
+    status: {
+      noDefectsFound: issueItems.length === 0,
+      defectsFound: issueItems.length > 0,
+      overallVehicleResult: input.inspection.overallVehicleResult ?? "no_defect",
+      complianceStatus: input.inspection.complianceStatus,
+      integrityScore: input.inspection.integrityScore ?? 100,
+      durationSeconds: input.inspection.durationSeconds ?? 0,
+      locationStatus: input.inspection.locationStatus ?? "unavailable",
+    },
+    rows: groupedRows,
+    tractorRows: groupedRows.filter((row) => row.side === "tractor"),
+    trailerRows: groupedRows.filter((row) => row.side === "trailer"),
+    defectsNotCodedAbove: issueItems
+      .map((item: any) => `${item.itemLabel}: ${item.defectDescription ?? item.note ?? ""}`.trim())
+      .filter(Boolean),
+    proofPhotos: Array.isArray(results?.proofPhotos) ? results.proofPhotos : [],
+    flags: Array.isArray(results?.flags) ? results.flags : [],
+    triageResults: Array.isArray(results?.triageResults) ? results.triageResults : [],
+    notes: input.inspection.notes ?? "",
+    submittedAt: input.inspection.submittedAt ?? input.inspection.updatedAt,
+  };
 }
 
 async function updateVehicleComplianceStatus(
@@ -873,6 +1000,49 @@ export const inspectionsRouter = router({
 
       await updateVehicleComplianceStatus(inspection.vehicleId, complianceStatus);
 
+      const reportRecipients = await resolveInspectionRecipients({
+        fleetId: inspection.fleetId,
+        vehicleId: inspection.vehicleId,
+        driverEmail: ctx.user.email,
+        managerEmail: ctx.user.managerEmail,
+        managerUserId:
+          ctx.user.role === "owner" || ctx.user.role === "manager"
+            ? ctx.user.id
+            : ctx.user.managerUserId,
+      });
+
+      if (reportRecipients.managerUserId) {
+        await db.insert(inAppAlerts).values({
+          fleetId: inspection.fleetId,
+          userId: reportRecipients.managerUserId,
+          vehicleId: String(inspection.vehicleId),
+          inspectionId: input.inspectionId,
+          alertType: "inspection_report_submitted",
+          severity: complianceStatus === "red" ? "critical" : "info",
+          title: "DVIR inspection report received",
+          message: `${ctx.user.name || "A driver"} submitted a verified DVIR-style inspection report.`,
+        });
+      }
+
+      if (reportRecipients.recipients.length > 0) {
+        const reportUrl = `${ENV.appBaseUrl.replace(/\/+$/, "")}/inspection-report/${input.inspectionId}`;
+        sendEmail({
+          to: reportRecipients.recipients,
+          subject: `TruckFixr DVIR report #${input.inspectionId}`,
+          text: `A verified daily vehicle inspection report was submitted.\n\nReport: ${reportUrl}\n\nVehicle: ${vehicle?.unitNumber || vehicle?.licensePlate || vehicle?.vin || inspection.vehicleId}\nDriver: ${ctx.user.name || ctx.user.email || "Driver"}\nResult: ${overallVehicleResult}\nIntegrity score: ${integrity.score}/100`,
+          html: `
+            <p>A verified daily vehicle inspection report was submitted.</p>
+            <p><strong>Vehicle:</strong> ${vehicle?.unitNumber || vehicle?.licensePlate || vehicle?.vin || inspection.vehicleId}</p>
+            <p><strong>Driver:</strong> ${ctx.user.name || ctx.user.email || "Driver"}</p>
+            <p><strong>Result:</strong> ${overallVehicleResult}</p>
+            <p><strong>Integrity score:</strong> ${integrity.score}/100</p>
+            <p><a href="${reportUrl}">Open the TruckFixr DVIR report</a></p>
+          `,
+        }).catch((error) => {
+          console.warn("[Inspections] Unable to email verified DVIR report:", error);
+        });
+      }
+
       return {
         success: true,
         inspectionId: input.inspectionId,
@@ -1061,6 +1231,134 @@ export const inspectionsRouter = router({
       }
 
       return inspection;
+    }),
+
+  getDvirReport: protectedProcedure
+    .input(z.object({ inspectionId: z.number().int().positive() }))
+    .query(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) return null;
+
+      const [inspection] = await db
+        .select()
+        .from(inspections)
+        .where(eq(inspections.id, input.inspectionId))
+        .limit(1);
+
+      if (!inspection) return null;
+
+      const hasAccess = await canViewVehicle({
+        user: ctx.user,
+        vehicleId: inspection.vehicleId,
+        fleetId: inspection.fleetId,
+      });
+
+      if (!hasAccess && inspection.driverId !== ctx.user.id) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You do not have access to this inspection report",
+        });
+      }
+
+      const [vehicle] = await db
+        .select()
+        .from(vehicles)
+        .where(sql`CAST(${vehicles.id} AS text) = ${String(inspection.vehicleId)}`)
+        .limit(1);
+      const [fleet] = await db
+        .select()
+        .from(fleets)
+        .where(eq(fleets.id, inspection.fleetId))
+        .limit(1);
+      const [driver] = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, inspection.driverId))
+        .limit(1);
+
+      return buildDvirPayload({
+        inspection,
+        vehicle: vehicle ?? null,
+        fleet: fleet ?? null,
+        driver: driver ?? null,
+      });
+    }),
+
+  getMyReports: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().int().positive().optional(),
+        limit: z.number().int().positive().max(25).default(10),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) return [];
+
+      const isManager = ctx.user.role === "owner" || ctx.user.role === "manager";
+      if (isManager) {
+        if (!input.fleetId) return [];
+        const hasAccess = await verifyFleetAccess(input.fleetId, ctx.user.id, ctx.user.role);
+        if (!hasAccess) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "You do not have access to this fleet",
+          });
+        }
+      }
+
+      const rows = await db
+        .select({
+          id: inspections.id,
+          fleetId: inspections.fleetId,
+          vehicleId: inspections.vehicleId,
+          driverId: inspections.driverId,
+          submittedAt: inspections.submittedAt,
+          updatedAt: inspections.updatedAt,
+          overallVehicleResult: inspections.overallVehicleResult,
+          complianceStatus: inspections.complianceStatus,
+          integrityScore: inspections.integrityScore,
+          status: inspections.status,
+        })
+        .from(inspections)
+        .where(
+          isManager && input.fleetId
+            ? eq(inspections.fleetId, input.fleetId)
+            : eq(inspections.driverId, ctx.user.id)
+        )
+        .orderBy(desc(inspections.submittedAt), desc(inspections.updatedAt))
+        .limit(input.limit);
+
+      const vehicleIds = Array.from(new Set(rows.map((row) => String(row.vehicleId))));
+      const driverIds = Array.from(new Set(rows.map((row) => row.driverId)));
+      const vehicleRows =
+        vehicleIds.length > 0
+          ? await db
+              .select()
+              .from(vehicles)
+              .where(or(...vehicleIds.map((vehicleId) => sql`CAST(${vehicles.id} AS text) = ${vehicleId}`)))
+          : [];
+      const driverRows =
+        driverIds.length > 0
+          ? await db.select().from(users).where(inArray(users.id, driverIds))
+          : [];
+      const vehicleMap = new Map(vehicleRows.map((vehicle) => [String(vehicle.id), vehicle]));
+      const driverMap = new Map(driverRows.map((driver) => [driver.id, driver]));
+
+      return rows.map((row) => {
+        const vehicle = vehicleMap.get(String(row.vehicleId));
+        const driver = driverMap.get(row.driverId);
+        return {
+          ...row,
+          vehicleLabel:
+            vehicle?.unitNumber ||
+            vehicle?.licensePlate ||
+            vehicle?.vin ||
+            String(row.vehicleId),
+          driverName: driver?.name || driver?.email || "Driver",
+          submittedAt: row.submittedAt ?? row.updatedAt,
+        };
+      });
     }),
 
   // Get inspections for a vehicle
