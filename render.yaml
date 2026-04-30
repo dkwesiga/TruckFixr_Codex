@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: truckfixr-web
+    name: TruckFixr-frontend
     runtime: static
     rootDir: .
     domains:
