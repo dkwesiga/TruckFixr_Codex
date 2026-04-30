@@ -42,7 +42,7 @@ services:
   - type: web
     name: truckfixr-api
     runtime: node
-    plan: starter
+    plan: free
     rootDir: .
     autoDeploy: true
     buildCommand: npm install -g pnpm@10.15.1 && pnpm install --frozen-lockfile --reporter=append-only && pnpm build:server
