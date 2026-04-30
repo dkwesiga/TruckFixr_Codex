@@ -19,17 +19,20 @@ function normalizeOrigin(value: string) {
 }
 
 function getAllowedOrigins() {
-  return new Set(
-    [
-      ENV.appBaseUrl,
-      "http://localhost:3000",
-      "http://127.0.0.1:3000",
-      "http://localhost:5173",
-      "http://127.0.0.1:5173",
-    ]
-      .filter(Boolean)
-      .map((origin) => normalizeOrigin(origin))
-  );
+  const origins = new Set<string>([
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://truckfixr.com",
+    "https://www.truckfixr.com",
+  ]);
+
+  if (ENV.appBaseUrl) {
+    origins.add(ENV.appBaseUrl);
+  }
+
+  return new Set(Array.from(origins).map((origin) => normalizeOrigin(origin)));
 }
 
 function applyCors(app: express.Express) {
