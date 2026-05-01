@@ -3,6 +3,8 @@ import { ENV } from "./env";
 type SupabaseAuthUser = {
   id: string;
   email?: string | null;
+  email_confirmed_at?: string | null;
+  confirmed_at?: string | null;
   user_metadata?: Record<string, unknown> | null;
 };
 
@@ -93,6 +95,7 @@ export async function signInWithSupabaseEmail(input: {
     id: user.id,
     email: (user.email ?? input.email).trim().toLowerCase(),
     name: getPreferredName(user, input.email),
+    emailVerified: Boolean(user.email_confirmed_at ?? user.confirmed_at),
   };
 }
 
@@ -128,6 +131,7 @@ export async function signUpWithSupabaseEmail(input: {
     id: user.id,
     email: (user.email ?? input.email).trim().toLowerCase(),
     name: getPreferredName(user, input.email) || input.name.trim(),
+    emailVerified: Boolean(user.email_confirmed_at ?? user.confirmed_at),
   };
 }
 
@@ -140,6 +144,20 @@ export async function sendPasswordResetWithSupabaseEmail(input: {
     body: JSON.stringify({
       email: input.email.trim().toLowerCase(),
       redirect_to: input.redirectTo,
+    }),
+  });
+
+  return !payload.error;
+}
+
+export async function resendSupabaseVerificationEmail(input: {
+  email: string;
+}) {
+  const payload = await requestSupabaseAuth("/auth/v1/resend", {
+    method: "POST",
+    body: JSON.stringify({
+      type: "signup",
+      email: input.email.trim().toLowerCase(),
     }),
   });
 

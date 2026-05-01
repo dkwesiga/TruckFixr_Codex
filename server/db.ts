@@ -101,6 +101,7 @@ async function ensureAuthSchema(pool: Pool) {
         "email" varchar(320),
         "passwordHash" text,
         "loginMethod" varchar(64),
+        "emailVerified" boolean NOT NULL DEFAULT false,
         "role" user_role NOT NULL DEFAULT 'driver',
         "managerEmail" varchar(320),
         "managerUserId" integer,
@@ -113,7 +114,8 @@ async function ensureAuthSchema(pool: Pool) {
         "cancelAtPeriodEnd" boolean NOT NULL DEFAULT false,
         "createdAt" timestamp NOT NULL DEFAULT now(),
         "updatedAt" timestamp NOT NULL DEFAULT now(),
-        "lastSignedIn" timestamp NOT NULL DEFAULT now()
+        "lastSignedIn" timestamp NOT NULL DEFAULT now(),
+        "lastAuthAt" timestamp
       );
     `);
 
@@ -150,6 +152,18 @@ async function ensureAuthSchema(pool: Pool) {
     await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS "users_email_unique"
       ON "users" ("email");
+    `);
+
+    await pool.query(`
+      ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "emailVerified" boolean NOT NULL DEFAULT false;
+    `);
+
+    await pool.query(`
+      UPDATE "users"
+      SET "emailVerified" = true
+      WHERE "emailVerified" = false
+        AND ("loginMethod" IS NULL OR "loginMethod" = 'email');
     `);
 
     await pool.query(`
@@ -215,6 +229,11 @@ async function ensureAuthSchema(pool: Pool) {
     await pool.query(`
       ALTER TABLE "users"
       ADD COLUMN IF NOT EXISTS "cancelAtPeriodEnd" boolean NOT NULL DEFAULT false;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "lastAuthAt" timestamp;
     `);
 
     await pool.query(`

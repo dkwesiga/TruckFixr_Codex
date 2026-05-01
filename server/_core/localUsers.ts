@@ -67,6 +67,7 @@ async function ensureSeededUsers() {
       email: demoEmail,
       passwordHash: await hashPassword(process.env.DEMO_PASSWORD ?? DEFAULT_DEMO_PASSWORD),
       loginMethod: "email",
+      emailVerified: true,
       role: "owner",
       managerEmail: null,
       managerUserId: null,
@@ -84,6 +85,7 @@ async function ensureSeededUsers() {
       createdAt,
       updatedAt: createdAt,
       lastSignedIn: createdAt,
+      lastAuthAt: createdAt,
     };
 
     storeUser(demoUser);
@@ -123,6 +125,7 @@ export async function createLocalEmailUser(input: {
     email: normalizedEmail,
     passwordHash: input.passwordHash,
     loginMethod: "email",
+    emailVerified: true,
     role: input.role ?? "driver",
     managerEmail: null,
     managerUserId: null,
@@ -140,6 +143,7 @@ export async function createLocalEmailUser(input: {
     createdAt: timestamp,
     updatedAt: timestamp,
     lastSignedIn: timestamp,
+    lastAuthAt: timestamp,
   };
 
   storeUser(user);
@@ -178,6 +182,7 @@ export async function upsertLocalUser(user: InsertUser) {
     email: user.email ? normalizeEmail(user.email) : (existing?.email ?? null),
     passwordHash: user.passwordHash ?? existing?.passwordHash ?? null,
     loginMethod: user.loginMethod ?? existing?.loginMethod ?? null,
+    emailVerified: user.emailVerified ?? existing?.emailVerified ?? false,
     role: user.role ?? existing?.role ?? "driver",
     managerEmail: user.managerEmail ? normalizeEmail(user.managerEmail) : (user.managerEmail === null ? null : (existing?.managerEmail ?? null)),
     managerUserId: user.managerUserId ?? (user.managerUserId === null ? null : (existing?.managerUserId ?? null)),
@@ -195,6 +200,7 @@ export async function upsertLocalUser(user: InsertUser) {
     createdAt: existing?.createdAt ?? timestamp,
     updatedAt: timestamp,
     lastSignedIn: user.lastSignedIn ?? existing?.lastSignedIn ?? timestamp,
+    lastAuthAt: user.lastAuthAt ?? existing?.lastAuthAt ?? null,
   };
 
   storeUser(nextUser);

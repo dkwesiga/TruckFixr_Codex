@@ -14,10 +14,30 @@ import {
   sendPasswordResetWithSupabaseEmail,
   signInWithSupabaseEmail,
   signUpWithSupabaseEmail,
+  resendSupabaseVerificationEmail,
   updateSupabasePasswordWithAccessToken,
 } from "./supabaseEmailAuth";
 import { ENV } from "./env";
 import { sdk } from "./sdk";
+import {
+  assertNotInLoginCooldown,
+  assertTruckFixrPassword,
+  clearFailedLogin,
+  GENERIC_LOGIN_ERROR,
+  GENERIC_RESET_SUCCESS,
+  LOGIN_COOLDOWN_ERROR,
+  recordFailedLogin,
+} from "./authSecurity";
+
+function getSessionDurationMs(role?: string | null) {
+  if (role === "owner" || role === "manager") return 7 * 24 * 60 * 60 * 1000;
+  return 30 * 24 * 60 * 60 * 1000;
+}
+
+function sendGenericLoginFailure(res: Response, email: string) {
+  recordFailedLogin(email);
+  res.status(401).json({ error: GENERIC_LOGIN_ERROR });
+}
 
 export function registerEmailAuthRoutes(app: Express) {
   const adoptInvitedDriverAccount = async (input: {
@@ -80,6 +100,13 @@ export function registerEmailAuthRoutes(app: Express) {
         return;
       }
 
+      try {
+        assertNotInLoginCooldown(normalizedEmail);
+      } catch {
+        res.status(429).json({ error: LOGIN_COOLDOWN_ERROR });
+        return;
+      }
+
       // Find user by email
       const userDb = await db.getDb();
       if (shouldUseLocalUsers(userDb)) {
@@ -93,7 +120,7 @@ export function registerEmailAuthRoutes(app: Express) {
             : null;
 
           if (!supabaseUser) {
-            res.status(401).json({ error: "Invalid email or password" });
+            sendGenericLoginFailure(res, normalizedEmail);
             return;
           }
 
@@ -104,16 +131,20 @@ export function registerEmailAuthRoutes(app: Express) {
             name: supabaseUser.name,
             loginMethod: "email",
             role: "driver",
+            emailVerified: true,
             lastSignedIn: new Date(),
+            lastAuthAt: new Date(),
           });
 
+          const sessionDurationMs = getSessionDurationMs("driver");
           const sessionToken = await sdk.createSessionToken(openId, {
             name: supabaseUser.name || "",
-            expiresInMs: ONE_YEAR_MS,
+            expiresInMs: sessionDurationMs,
           });
 
           const cookieOptions = getSessionCookieOptions(req);
-          res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+          res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: sessionDurationMs });
+          clearFailedLogin(normalizedEmail);
 
           res.json({
             success: true,
@@ -127,13 +158,20 @@ export function registerEmailAuthRoutes(app: Express) {
           return;
         }
 
+        if (!user.emailVerified) {
+          res.status(403).json({ error: "Please verify your email before signing in.", requiresVerification: true });
+          return;
+        }
+
+        const sessionDurationMs = getSessionDurationMs(user.role);
         const sessionToken = await sdk.createSessionToken(user.openId, {
           name: user.name || "",
-          expiresInMs: ONE_YEAR_MS,
+          expiresInMs: sessionDurationMs,
         });
 
         const cookieOptions = getSessionCookieOptions(req);
-        res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+        res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: sessionDurationMs });
+        clearFailedLogin(normalizedEmail);
 
         res.json({
           success: true,
@@ -173,7 +211,7 @@ export function registerEmailAuthRoutes(app: Express) {
           : null;
 
         if (!supabaseUser) {
-          res.status(401).json({ error: "Invalid email or password" });
+          sendGenericLoginFailure(res, normalizedEmail);
           return;
         }
 
@@ -184,7 +222,9 @@ export function registerEmailAuthRoutes(app: Express) {
           name: user?.name ?? supabaseUser.name,
           loginMethod: "email",
           role: user?.role ?? "driver",
+          emailVerified: true,
           lastSignedIn: new Date(),
+          lastAuthAt: new Date(),
         });
 
         const refreshedUser = await userDb
@@ -209,19 +249,26 @@ export function registerEmailAuthRoutes(app: Express) {
       }
 
       // Create session token using the SDK
+      if (!sessionUser.emailVerified) {
+        res.status(403).json({ error: "Please verify your email before signing in.", requiresVerification: true });
+        return;
+      }
+
+      const sessionDurationMs = getSessionDurationMs(sessionUser.role);
       const sessionToken = await sdk.createSessionToken(sessionUser.openId, {
         name: sessionUser.name || "",
-        expiresInMs: ONE_YEAR_MS,
+        expiresInMs: sessionDurationMs,
       });
 
       // Set session cookie
       const cookieOptions = getSessionCookieOptions(req);
-      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: sessionDurationMs });
+      clearFailedLogin(normalizedEmail);
 
       // Update lastSignedIn
       await userDb
         .update(users)
-        .set({ lastSignedIn: new Date() })
+        .set({ lastSignedIn: new Date(), lastAuthAt: new Date() })
         .where(eq(users.id, sessionUser.id));
 
       res.json({
@@ -254,6 +301,13 @@ export function registerEmailAuthRoutes(app: Express) {
         return;
       }
 
+      try {
+        assertTruckFixrPassword({ password, email: normalizedEmail, name });
+      } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : "Password rejected" });
+        return;
+      }
+
       const userDb = await db.getDb();
       if (hasSupabaseEmailAuth()) {
         const supabaseSignup = await signUpWithSupabaseEmail({
@@ -272,9 +326,10 @@ export function registerEmailAuthRoutes(app: Express) {
           const adoptedUser = await adoptInvitedDriverAccount({
             email: supabaseSignup.email,
             openId,
-            name: supabaseSignup.name,
-            loginMethod: "email",
-          });
+              name: supabaseSignup.name,
+              loginMethod: "email",
+              emailVerified: supabaseSignup.emailVerified,
+            });
 
           if (!adoptedUser) {
             await db.upsertUser({
@@ -283,17 +338,28 @@ export function registerEmailAuthRoutes(app: Express) {
               name: supabaseSignup.name,
               loginMethod: "email",
               role: "driver",
+              emailVerified: supabaseSignup.emailVerified,
               lastSignedIn: new Date(),
             });
           }
 
+          if (!supabaseSignup.emailVerified) {
+            res.json({
+              success: true,
+              requiresVerification: true,
+              message: "Check your email to verify your account before signing in.",
+            });
+            return;
+          }
+
+          const sessionDurationMs = getSessionDurationMs("driver");
           const sessionToken = await sdk.createSessionToken(openId, {
             name: supabaseSignup.name,
-            expiresInMs: ONE_YEAR_MS,
+            expiresInMs: sessionDurationMs,
           });
 
           const cookieOptions = getSessionCookieOptions(req);
-          res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+          res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: sessionDurationMs });
 
           res.json({
             success: true,
@@ -329,13 +395,14 @@ export function registerEmailAuthRoutes(app: Express) {
           return;
         }
 
+        const sessionDurationMs = getSessionDurationMs(user.role);
         const sessionToken = await sdk.createSessionToken(user.openId, {
           name: user.name || "",
-          expiresInMs: ONE_YEAR_MS,
+          expiresInMs: sessionDurationMs,
         });
 
         const cookieOptions = getSessionCookieOptions(req);
-        res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+        res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: sessionDurationMs });
 
         res.json({
           success: true,
@@ -383,8 +450,10 @@ export function registerEmailAuthRoutes(app: Express) {
             passwordHash,
             loginMethod: "email",
             openId,
+            emailVerified: true,
             updatedAt: new Date(),
             lastSignedIn: new Date(),
+            lastAuthAt: new Date(),
           })
           .where(eq(users.id, existingUser[0].id));
       } else {
@@ -395,18 +464,20 @@ export function registerEmailAuthRoutes(app: Express) {
           loginMethod: "email",
           role: "driver",
           openId,
+          emailVerified: true,
         });
       }
 
       // Create session token
+      const sessionDurationMs = getSessionDurationMs("driver");
       const sessionToken = await sdk.createSessionToken(openId, {
         name,
-        expiresInMs: ONE_YEAR_MS,
+        expiresInMs: sessionDurationMs,
       });
 
       // Set session cookie
       const cookieOptions = getSessionCookieOptions(req);
-      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: sessionDurationMs });
 
       res.json({
         success: true,
@@ -432,7 +503,10 @@ export function registerEmailAuthRoutes(app: Express) {
       }
 
       if (!hasSupabaseEmailAuth()) {
-        res.status(501).json({ error: "Password reset is not configured for this environment" });
+        res.json({
+          success: true,
+          message: GENERIC_RESET_SUCCESS,
+        });
         return;
       }
 
@@ -442,17 +516,40 @@ export function registerEmailAuthRoutes(app: Express) {
       });
 
       if (!success) {
-        res.status(502).json({ error: "Unable to send password reset email right now" });
-        return;
+        console.warn("[Email Auth] Supabase password reset returned false");
       }
 
       res.json({
         success: true,
-        message: "If that email exists, a password reset link has been sent.",
+        message: GENERIC_RESET_SUCCESS,
       });
     } catch (error) {
       console.error("[Email Auth] Forgot password failed", error);
       res.status(500).json({ error: "Unable to process password reset request" });
+    }
+  });
+
+  app.post("/api/email/resend-verification", async (req: Request, res: Response) => {
+    try {
+      const normalizedEmail = String(req.body?.email ?? "").trim().toLowerCase();
+      if (!normalizedEmail) {
+        res.status(400).json({ error: "email is required" });
+        return;
+      }
+
+      if (hasSupabaseEmailAuth()) {
+        await resendSupabaseVerificationEmail({ email: normalizedEmail }).catch((error) => {
+          console.warn("[Email Auth] Verification resend failed:", error);
+        });
+      }
+
+      res.json({
+        success: true,
+        message: "If verification is required for this email, a verification link has been sent.",
+      });
+    } catch (error) {
+      console.error("[Email Auth] Resend verification failed", error);
+      res.status(500).json({ error: "Unable to process verification request" });
     }
   });
 
@@ -466,8 +563,10 @@ export function registerEmailAuthRoutes(app: Express) {
         return;
       }
 
-      if (password.length < 8) {
-        res.status(400).json({ error: "Password must be at least 8 characters" });
+      try {
+        assertTruckFixrPassword({ password });
+      } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : "Password rejected" });
         return;
       }
 
@@ -488,6 +587,78 @@ export function registerEmailAuthRoutes(app: Express) {
     } catch (error) {
       console.error("[Email Auth] Reset password failed", error);
       res.status(500).json({ error: "Unable to reset password" });
+    }
+  });
+
+  app.post("/api/email/change-password", async (req: Request, res: Response) => {
+    try {
+      const currentPassword = String(req.body?.currentPassword ?? "");
+      const newPassword = String(req.body?.newPassword ?? "");
+      const confirmPassword = String(req.body?.confirmPassword ?? "");
+
+      if (!currentPassword || !newPassword || !confirmPassword) {
+        res.status(400).json({ error: "Current password, new password, and confirmation are required" });
+        return;
+      }
+
+      const authUser = await sdk.authenticateRequest(req);
+      if (!authUser?.id || !authUser.email) {
+        res.status(401).json({ error: "Sign in before changing your password." });
+        return;
+      }
+
+      try {
+        assertTruckFixrPassword({
+          password: newPassword,
+          confirmPassword,
+          email: authUser.email,
+          name: authUser.name,
+        });
+      } catch (error) {
+        res.status(400).json({ error: error instanceof Error ? error.message : "Password rejected" });
+        return;
+      }
+
+      if (currentPassword === newPassword) {
+        res.status(400).json({ error: "Choose a new password that is different from your current password." });
+        return;
+      }
+
+      const userDb = await db.getDb();
+      if (!userDb) {
+        res.status(503).json({ error: "Password changes are unavailable in this environment." });
+        return;
+      }
+
+      const { users } = await import("../../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const [user] = await userDb
+        .select()
+        .from(users)
+        .where(eq(users.id, authUser.id))
+        .limit(1);
+
+      if (!user?.passwordHash || !(await verifyPassword(currentPassword, user.passwordHash))) {
+        res.status(400).json({ error: "Current password is incorrect." });
+        return;
+      }
+
+      await userDb
+        .update(users)
+        .set({
+          passwordHash: await hashPassword(newPassword),
+          lastAuthAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, user.id));
+
+      res.json({
+        success: true,
+        message: "Your password has been updated successfully.",
+      });
+    } catch (error) {
+      console.error("[Email Auth] Change password failed", error);
+      res.status(500).json({ error: "Unable to update password" });
     }
   });
 }

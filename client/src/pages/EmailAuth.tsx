@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import AppLogo from "@/components/AppLogo";
+import PasswordChecklist from "@/components/PasswordChecklist";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -14,6 +15,8 @@ import {
   SUBSCRIPTION_PLANS,
   type SubscriptionTier,
 } from "../../../shared/billing";
+import { splitFullName, validateTruckFixrPassword } from "../../../shared/passwordPolicy";
+import { Eye, EyeOff } from "lucide-react";
 
 export default function EmailAuth() {
   const [location, setLocation] = useLocation();
@@ -29,19 +32,44 @@ export default function EmailAuth() {
   const [pilotCodeError, setPilotCodeError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isRecoveryMode, setIsRecoveryMode] = useState(false);
+  const [isForgotPasswordMode, setIsForgotPasswordMode] = useState(false);
   const [recoveryAccessToken, setRecoveryAccessToken] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [inviteContext, setInviteContext] = useState<{
     managerName: string;
     managerEmail: string;
     pilotCode: string;
     companyName: string;
   } | null>(null);
-  const isGoogleAuthEnabled = Boolean(import.meta.env.VITE_OAUTH_SERVER_URL);
   const utils = trpc.useUtils();
   const activateFreeMutation = trpc.subscriptions.activateFree.useMutation();
   const createCheckoutMutation = trpc.subscriptions.createCheckoutSession.useMutation();
   const redeemPilotAccessMutation = trpc.subscriptions.redeemPilotAccess.useMutation();
   const publicPlans = Object.values(SUBSCRIPTION_PLANS).filter((plan) => plan.publicSelectable);
+  const nameParts = useMemo(() => splitFullName(name), [name]);
+  const passwordValidation = useMemo(
+    () =>
+      validateTruckFixrPassword({
+        password,
+        confirmPassword: isSignup || isRecoveryMode ? confirmPassword : undefined,
+        email,
+        firstName: nameParts.firstName,
+        lastName: nameParts.lastName,
+        companyName: pilotCompanyName,
+      }),
+    [confirmPassword, email, isRecoveryMode, isSignup, nameParts.firstName, nameParts.lastName, password, pilotCompanyName]
+  );
+  const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const canSubmit =
+    !isLoading &&
+    (isForgotPasswordMode
+      ? isEmailValid
+      : isRecoveryMode
+        ? passwordValidation.isValid
+        : isSignup
+          ? isEmailValid && passwordValidation.isValid && name.trim().length > 0
+          : isEmailValid && password.length > 0);
 
   useEffect(() => {
     setIsSignup(location === "/signup");
@@ -158,9 +186,17 @@ export default function EmailAuth() {
     setPilotCodeError("");
 
     try {
+      if (isForgotPasswordMode) {
+        await handleForgotPassword(email);
+        toast.success("If an account exists for this email, a password reset link has been sent.");
+        setIsForgotPasswordMode(false);
+        setIsLoading(false);
+        return;
+      }
+
       if (isRecoveryMode) {
-        if (password !== confirmPassword) {
-          toast.error("Passwords do not match");
+        if (!passwordValidation.isValid) {
+          toast.error(passwordValidation.errors[0] ?? "Password does not meet TruckFixr security requirements.");
           setIsLoading(false);
           return;
         }
@@ -183,7 +219,21 @@ export default function EmailAuth() {
           setIsLoading(false);
           return;
         }
-        await handleSignup(email, password, name);
+        if (!passwordValidation.isValid) {
+          toast.error(passwordValidation.errors[0] ?? "Password does not meet TruckFixr security requirements.");
+          setIsLoading(false);
+          return;
+        }
+        const signupResult = await handleSignup(email, password, name);
+        if ((signupResult as any)?.requiresVerification) {
+          toast.success("Check your email to verify your account before signing in.");
+          setIsSignup(false);
+          setPassword("");
+          setConfirmPassword("");
+          setLocation("/auth/email");
+          setIsLoading(false);
+          return;
+        }
         await utils.auth.me.invalidate();
         await utils.auth.me.fetch();
         trackSignup('email', { email, name });
@@ -251,13 +301,23 @@ export default function EmailAuth() {
       }
     } catch (error: any) {
       // Extract the error message from tRPC error
-      const errorMessage = error?.data?.zodError?.[0]?.message || 
-                          error?.message || 
-                          "Authentication failed";
+      const rawErrorMessage = error?.data?.zodError?.[0]?.message || error?.message || "Authentication failed";
+      const errorMessage =
+        isForgotPasswordMode
+          ? "If an account exists for this email, a password reset link has been sent."
+        : !isSignup && !isRecoveryMode
+          ? rawErrorMessage.includes("Too many failed")
+            ? rawErrorMessage
+            : "Invalid email or password. Please try again or reset your password."
+          : rawErrorMessage;
       if (usePilotAccess && isSignup) {
         setPilotCodeError(errorMessage);
       }
-      toast.error(errorMessage);
+      if (isForgotPasswordMode) {
+        toast.success(errorMessage);
+      } else {
+        toast.error(errorMessage);
+      }
       console.error('[Auth Error]', { error, errorMessage });
     } finally {
       setIsLoading(false);
@@ -273,10 +333,12 @@ export default function EmailAuth() {
               <AppLogo imageClassName="h-14" frameClassName="p-2.5" href="/" />
             </div>
             <h1 className="text-2xl font-bold text-slate-900 mb-2">
-              {isRecoveryMode ? "Reset Password" : isSignup ? "Create Account" : "Sign In"}
+              {isForgotPasswordMode ? "Reset Password" : isRecoveryMode ? "Reset Password" : isSignup ? "Create Account" : "Sign In"}
             </h1>
             <p className="text-slate-600">
-              {isRecoveryMode
+              {isForgotPasswordMode
+                ? "Enter your email and we'll send reset instructions"
+                : isRecoveryMode
                 ? "Create a new password to finish recovery"
                 : isSignup
                 ? "Join TruckFixr to manage your fleet"
@@ -328,36 +390,52 @@ export default function EmailAuth() {
               </div>
             )}
 
+            {!isForgotPasswordMode && (
             <div>
               <Label htmlFor="password">{isRecoveryMode ? "New Password" : "Password"}</Label>
               <Input
                 id="password"
-                type="password"
+                type={showPassword ? "text" : "password"}
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 minLength={8}
               />
-              {(isSignup || isRecoveryMode) && (
-                <p className="text-xs text-slate-500 mt-1">
-                  Must be at least 8 characters
-                </p>
-              )}
+              <button
+                type="button"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-blue-700"
+                onClick={() => setShowPassword((current) => !current)}
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                {showPassword ? "Hide password" : "Show password"}
+              </button>
             </div>
+            )}
 
-            {isRecoveryMode && (
+            {(isRecoveryMode || isSignup) && (
               <div>
-                <Label htmlFor="confirm-password">Confirm New Password</Label>
+                <Label htmlFor="confirm-password">{isRecoveryMode ? "Confirm New Password" : "Confirm Password"}</Label>
                 <Input
                   id="confirm-password"
-                  type="password"
+                  type={showConfirmPassword ? "text" : "password"}
                   placeholder="Re-enter your new password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   required
                   minLength={8}
                 />
+                <button
+                  type="button"
+                  aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+                  className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-blue-700"
+                  onClick={() => setShowConfirmPassword((current) => !current)}
+                >
+                  {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  {showConfirmPassword ? "Hide password" : "Show password"}
+                </button>
+                <PasswordChecklist validation={passwordValidation} />
               </div>
             )}
 
@@ -461,11 +539,13 @@ export default function EmailAuth() {
             <Button
               type="submit"
               className="w-full bg-blue-600 hover:bg-blue-700"
-              disabled={isLoading}
+              disabled={!canSubmit}
             >
               {isLoading
                 ? "Loading..."
-                : isRecoveryMode
+                : isForgotPasswordMode
+                  ? "Send Reset Link"
+                  : isRecoveryMode
                   ? "Update Password"
                   : isSignup
                   ? usePilotAccess
@@ -475,23 +555,11 @@ export default function EmailAuth() {
             </Button>
           </form>
 
-          {!isRecoveryMode && !isSignup && (
+          {!isRecoveryMode && !isSignup && !isForgotPasswordMode && (
             <div className="mt-3 text-right">
               <button
                 type="button"
-                onClick={async () => {
-                  if (!email.trim()) {
-                    toast.error("Enter your email first, then try Forgot Password.");
-                    return;
-                  }
-
-                  try {
-                    const result = await handleForgotPassword(email);
-                    toast.success(result.message || "Password reset email sent.");
-                  } catch (error: any) {
-                    toast.error(error?.message || "Unable to send password reset email");
-                  }
-                }}
+                onClick={() => setIsForgotPasswordMode(true)}
                 className="text-sm font-medium text-blue-600 hover:text-blue-700"
               >
                 Forgot Password?
@@ -501,12 +569,13 @@ export default function EmailAuth() {
 
           <div className="mt-6 text-center">
             <p className="text-sm text-slate-600">
-              {isRecoveryMode ? "Remembered it?" : isSignup ? "Already have an account?" : "Don't have an account?"}{" "}
+              {isRecoveryMode || isForgotPasswordMode ? "Remembered it?" : isSignup ? "Already have an account?" : "Don't have an account?"}{" "}
               <button
                 type="button"
                 onClick={() => {
-                  if (isRecoveryMode) {
+                  if (isRecoveryMode || isForgotPasswordMode) {
                     setIsRecoveryMode(false);
+                    setIsForgotPasswordMode(false);
                     setRecoveryAccessToken("");
                     setPassword("");
                     setConfirmPassword("");
@@ -530,38 +599,10 @@ export default function EmailAuth() {
                 }}
                 className="text-blue-600 hover:text-blue-700 font-semibold"
               >
-                {isRecoveryMode ? "Back to Sign In" : isSignup ? "Sign In" : "Sign Up"}
+                {isRecoveryMode || isForgotPasswordMode ? "Back to Sign In" : isSignup ? "Sign In" : "Sign Up"}
               </button>
             </p>
           </div>
-
-          {!isRecoveryMode && (
-          <div className="mt-8 pt-6 border-t border-slate-200">
-            <p className="text-xs text-slate-500 text-center mb-4">
-              Or continue with Google
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full"
-              disabled={!isGoogleAuthEnabled}
-              onClick={() => {
-                if (!isGoogleAuthEnabled) {
-                  toast.error("Google sign-in is not configured for this environment");
-                  return;
-                }
-                window.location.href = getApiUrl("/api/oauth/login");
-              }}
-            >
-              {isGoogleAuthEnabled ? "Google" : "Google Unavailable"}
-            </Button>
-            {!isGoogleAuthEnabled && (
-              <p className="mt-2 text-center text-xs text-slate-500">
-                Add <code>OAUTH_SERVER_URL</code> and <code>VITE_OAUTH_SERVER_URL</code> to enable Google sign-in.
-              </p>
-            )}
-          </div>
-          )}
         </div>
       </Card>
     </div>

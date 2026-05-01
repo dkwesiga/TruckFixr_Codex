@@ -469,6 +469,7 @@ export const users = pgTable("users", {
   email: varchar("email", { length: 320 }).unique(),
   passwordHash: text("passwordHash"),
   loginMethod: varchar("loginMethod", { length: 64 }),
+  emailVerified: boolean("emailVerified").default(false).notNull(),
   role: userRoleEnum("role").default("driver").notNull(),
   managerEmail: varchar("managerEmail", { length: 320 }),
   managerUserId: integer("managerUserId"),
@@ -486,6 +487,7 @@ export const users = pgTable("users", {
   createdAt: dateTimestamp().defaultNow().notNull(),
   updatedAt: dateTimestamp().defaultNow().notNull(),
   lastSignedIn: dateTimestamp().defaultNow().notNull(),
+  lastAuthAt: dateTimestamp(),
 });
 
 export type User = typeof users.$inferSelect;

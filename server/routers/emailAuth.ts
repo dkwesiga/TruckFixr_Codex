@@ -19,23 +19,33 @@ import {
 import { sendPasswordResetEmail } from "../services/email";
 import { ENV } from "../_core/env";
 import { nanoid } from "nanoid";
+import {
+  assertNotInLoginCooldown,
+  assertTruckFixrPassword,
+  clearFailedLogin,
+  GENERIC_LOGIN_ERROR,
+  GENERIC_RESET_SUCCESS,
+  LOGIN_COOLDOWN_ERROR,
+  recordFailedLogin,
+} from "../_core/authSecurity";
 
 export const emailAuthRouter = router({
   signup: publicProcedure
     .input(
       z.object({
         email: z.string().email("Please enter a valid email address"),
-        password: z
-          .string()
-          .min(8, "Password must be at least 8 characters")
-          .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
-          .regex(/[0-9]/, "Password must contain at least one number"),
+        password: z.string().min(1, "Password is required"),
         name: z.string().min(2, "Name must be at least 2 characters"),
       })
     )
     .mutation(async ({ input }) => {
       const db = await getDb();
       const normalizedEmail = input.email.trim().toLowerCase();
+      assertTruckFixrPassword({
+        password: input.password,
+        email: normalizedEmail,
+        name: input.name,
+      });
 
       if (hasSupabaseEmailAuth()) {
         const supabaseSignup = await signUpWithSupabaseEmail({
@@ -138,6 +148,7 @@ export const emailAuthRouter = router({
           name: input.name,
           passwordHash,
           loginMethod: "email",
+          emailVerified: true,
           role: "driver",
         })
         .returning();
@@ -166,16 +177,23 @@ export const emailAuthRouter = router({
 
       const db = await getDb();
       const normalizedEmail = input.email.trim().toLowerCase();
+      try {
+        assertNotInLoginCooldown(normalizedEmail);
+      } catch {
+        throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: LOGIN_COOLDOWN_ERROR });
+      }
 
       if (shouldUseLocalUsers(db)) {
         const user = await verifyLocalCredentials(normalizedEmail, input.password);
 
         if (!user) {
+          recordFailedLogin(normalizedEmail);
           throw new TRPCError({
             code: "UNAUTHORIZED",
-            message: "Invalid credentials",
+            message: GENERIC_LOGIN_ERROR,
           });
         }
+        clearFailedLogin(normalizedEmail);
 
         return {
           success: true,
@@ -205,6 +223,7 @@ export const emailAuthRouter = router({
       const user = userRecord[0];
 
       if (user?.passwordHash && (await verifyPassword(input.password, user.passwordHash))) {
+        clearFailedLogin(normalizedEmail);
         await db
           .update(users)
           .set({ lastSignedIn: new Date() })
@@ -230,11 +249,13 @@ export const emailAuthRouter = router({
         : null;
 
       if (!supabaseUser) {
+        recordFailedLogin(normalizedEmail);
         throw new TRPCError({
           code: "UNAUTHORIZED",
-          message: "Invalid credentials",
+          message: GENERIC_LOGIN_ERROR,
         });
       }
+      clearFailedLogin(normalizedEmail);
 
       return {
         success: true,
@@ -258,16 +279,23 @@ export const emailAuthRouter = router({
     .mutation(async ({ input }) => {
       const db = await getDb();
       const normalizedEmail = input.email.trim().toLowerCase();
+      try {
+        assertNotInLoginCooldown(normalizedEmail);
+      } catch {
+        throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: LOGIN_COOLDOWN_ERROR });
+      }
 
       if (shouldUseLocalUsers(db)) {
         const user = await verifyLocalCredentials(normalizedEmail, input.password);
 
         if (!user) {
+          recordFailedLogin(normalizedEmail);
           throw new TRPCError({
             code: "UNAUTHORIZED",
-            message: "Invalid credentials",
+            message: GENERIC_LOGIN_ERROR,
           });
         }
+        clearFailedLogin(normalizedEmail);
 
         return {
           success: true,
@@ -297,6 +325,7 @@ export const emailAuthRouter = router({
       const user = userRecord[0];
 
       if (user?.passwordHash && (await verifyPassword(input.password, user.passwordHash))) {
+        clearFailedLogin(normalizedEmail);
         await db
           .update(users)
           .set({ lastSignedIn: new Date() })
@@ -322,11 +351,13 @@ export const emailAuthRouter = router({
         : null;
 
       if (!supabaseUser) {
+        recordFailedLogin(normalizedEmail);
         throw new TRPCError({
           code: "UNAUTHORIZED",
-          message: "Invalid credentials",
+          message: GENERIC_LOGIN_ERROR,
         });
       }
+      clearFailedLogin(normalizedEmail);
 
       return {
         success: true,
@@ -375,8 +406,7 @@ export const emailAuthRouter = router({
 
       return {
         success: true,
-        message:
-          "If an account exists with this email, you will receive a password reset link.",
+        message: GENERIC_RESET_SUCCESS,
       };
     }),
 
@@ -384,11 +414,7 @@ export const emailAuthRouter = router({
     .input(
       z.object({
         token: z.string().min(1, "Reset token is required"),
-        password: z
-          .string()
-          .min(8, "Password must be at least 8 characters")
-          .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
-          .regex(/[0-9]/, "Password must contain at least one number"),
+        password: z.string().min(1, "Password is required"),
       })
     )
     .mutation(async ({ input }) => {
@@ -424,6 +450,17 @@ export const emailAuthRouter = router({
           message: "Reset token has expired",
         });
       }
+
+      const [user] = await db
+        .select({ email: users.email, name: users.name })
+        .from(users)
+        .where(eq(users.id, resetRecord.userId))
+        .limit(1);
+      assertTruckFixrPassword({
+        password: input.password,
+        email: user?.email,
+        name: user?.name,
+      });
 
       const passwordHash = await hashPassword(input.password);
       await db

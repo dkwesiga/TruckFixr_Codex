@@ -3,15 +3,19 @@ import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import PasswordChecklist from "@/components/PasswordChecklist";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { useAuthContext } from "@/hooks/useAuthContext";
+import { getApiUrl, readApiPayload } from "@/lib/api";
 import {
   formatCad,
   SUBSCRIPTION_PLANS,
   type BillingCadence,
   type SubscriptionTier,
 } from "../../../shared/billing";
+import { splitFullName, validateTruckFixrPassword } from "../../../shared/passwordPolicy";
+import { Eye, EyeOff } from "lucide-react";
 
 export default function UserProfile() {
   const { user } = useAuthContext();
@@ -33,6 +37,13 @@ export default function UserProfile() {
     name: "",
     email: "",
   });
+  const [securityForm, setSecurityForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmNewPassword: "",
+  });
+  const [showSecurityPasswords, setShowSecurityPasswords] = useState(false);
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [fleetQuote, setFleetQuote] = useState({
     companyName: formData.company,
     contactName: formData.name,
@@ -62,6 +73,15 @@ export default function UserProfile() {
     { enabled: user?.role === "manager" || user?.role === "owner" }
   );
   const inviteDriverMutation = trpc.auth.createManagedDriverInvite.useMutation();
+  const profileNameParts = splitFullName(formData.name || user?.name || "");
+  const passwordValidation = validateTruckFixrPassword({
+    password: securityForm.newPassword,
+    confirmPassword: securityForm.confirmNewPassword,
+    email: user?.email,
+    firstName: profileNameParts.firstName,
+    lastName: profileNameParts.lastName,
+    companyName: formData.company,
+  });
 
   useEffect(() => {
     if (!user) return;
@@ -280,6 +300,37 @@ export default function UserProfile() {
     }
   };
 
+  const handleChangePassword = async () => {
+    if (!securityForm.currentPassword) {
+      toast.error("Enter your current password.");
+      return;
+    }
+    if (!passwordValidation.isValid) {
+      toast.error(passwordValidation.errors[0] ?? "Password does not meet TruckFixr security requirements.");
+      return;
+    }
+
+    setIsChangingPassword(true);
+    try {
+      const response = await fetch(getApiUrl("/api/email/change-password"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(securityForm),
+      });
+      const payload = await readApiPayload(response).catch(() => ({}));
+      if (!response.ok) {
+        throw new Error((payload as any).error || "Unable to update password");
+      }
+      setSecurityForm({ currentPassword: "", newPassword: "", confirmNewPassword: "" });
+      toast.success("Your password has been updated successfully.");
+    } catch (error: any) {
+      toast.error(error?.message || "Unable to update password");
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
   const subscription = subscriptionQuery.data;
   const visiblePlans = Object.values(SUBSCRIPTION_PLANS).filter(
     (plan) => plan.publicSelectable || plan.tier === subscription?.selectedPlan.tier
@@ -456,6 +507,58 @@ export default function UserProfile() {
         </Card>
 
         <div className="flex w-full flex-col gap-6">
+          <Card className="w-full">
+            <CardHeader>
+              <CardTitle>Security</CardTitle>
+              <CardDescription>Change your password using TruckFixr MVP password rules.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {[
+                ["currentPassword", "Current password"],
+                ["newPassword", "New password"],
+                ["confirmNewPassword", "Confirm new password"],
+              ].map(([key, label]) => (
+                <div key={key}>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">{label}</label>
+                  <div className="flex gap-2">
+                    <Input
+                      type={showSecurityPasswords ? "text" : "password"}
+                      value={securityForm[key as keyof typeof securityForm]}
+                      onChange={(event) =>
+                        setSecurityForm((current) => ({
+                          ...current,
+                          [key]: event.target.value,
+                        }))
+                      }
+                      placeholder={label}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      aria-label={showSecurityPasswords ? "Hide password" : "Show password"}
+                      onClick={() => setShowSecurityPasswords((current) => !current)}
+                    >
+                      {showSecurityPasswords ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </Button>
+                  </div>
+                </div>
+              ))}
+              <PasswordChecklist validation={passwordValidation} />
+              <Button
+                type="button"
+                className="w-full bg-blue-600 hover:bg-blue-700"
+                disabled={
+                  isChangingPassword ||
+                  !securityForm.currentPassword ||
+                  !passwordValidation.isValid
+                }
+                onClick={handleChangePassword}
+              >
+                {isChangingPassword ? "Updating..." : "Update password"}
+              </Button>
+            </CardContent>
+          </Card>
+
           <Card className="w-full">
             <CardHeader>
               <div className="flex flex-wrap items-center justify-between gap-3">
