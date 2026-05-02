@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { ChevronRight, ChevronLeft, CheckCircle } from "lucide-react";
 import { useAuthContext } from "@/hooks/useAuthContext";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
+import { loadCompanyName, saveCompanyName } from "@/lib/companyIdentity";
 
 type OnboardingStep = 
   | "fleet-creation"
@@ -37,7 +38,7 @@ function OnboardingContent() {
   const { user } = useAuthContext();
   const [currentStep, setCurrentStep] = useState<OnboardingStep>("fleet-creation");
   const [state, setState] = useState<OnboardingState>({
-    fleet: { name: "" },
+    fleet: { name: loadCompanyName() },
     trucks: [],
     teamMembers: [],
   });
@@ -56,10 +57,23 @@ function OnboardingContent() {
   const progress = ((currentStepIndex + 1) / steps.length) * 100;
 
   const handleNext = () => {
+    if (currentStep === "fleet-creation") {
+      saveCompanyName(state.fleet.name);
+    }
+
     if (currentStepIndex < steps.length - 1) {
       setCurrentStep(steps[currentStepIndex + 1]);
     }
   };
+
+  useEffect(() => {
+    const companyName = loadCompanyName();
+    if (!companyName) return;
+    setState((current) => ({
+      ...current,
+      fleet: current.fleet.name ? current.fleet : { ...current.fleet, name: companyName },
+    }));
+  }, []);
 
   const handlePrev = () => {
     if (currentStepIndex > 0) {
@@ -117,7 +131,7 @@ function OnboardingContent() {
                       fleet: { ...state.fleet, name: e.target.value },
                     })
                   }
-                  className="mt-2"
+                  className="mt-2 border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                 />
               </div>
               <p className="text-sm text-slate-600">

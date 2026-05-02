@@ -621,7 +621,7 @@ export async function requestFleetQuote(input: {
   });
 
   const salesRecipients = [
-    ENV.salesNotificationEmail.trim().toLowerCase(),
+    (ENV.salesNotificationEmail.trim().toLowerCase() || "info@truckfixr.com"),
     ...ENV.adminEmails
       .split(",")
       .map((value) => value.trim().toLowerCase())

@@ -510,6 +510,51 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
 
   return (
     <div className="app-shell min-h-screen">
+      <div className="fixed right-4 top-4 z-50 sm:right-6 sm:top-6">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              className="h-11 rounded-full border-slate-200 bg-white px-4 shadow-lg shadow-slate-200/60"
+            >
+              <Menu className="mr-2 h-4 w-4" />
+              Menu
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            className="w-56 rounded-2xl border-slate-200 p-2"
+          >
+            <DropdownMenuItem
+              className="cursor-pointer rounded-xl"
+              onClick={() => navigate("/profile")}
+            >
+              Profile settings
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="cursor-pointer rounded-xl"
+              onClick={() => navigate("/profile")}
+            >
+              Settings
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="cursor-pointer rounded-xl"
+              onClick={() => navigate("/profile?security=1")}
+            >
+              Change password
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={logout}
+              className="cursor-pointer rounded-xl text-destructive focus:text-destructive"
+            >
+              <LogOut className="mr-2 h-4 w-4" />
+              Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
       <header className="border-b border-[var(--fleet-outline)] bg-white/95 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
           <div className="flex items-start gap-4">
@@ -559,9 +604,9 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
                   Add vehicle
                 </Button>
               </DialogTrigger>
-              <DialogContent className="rounded-[24px] border-[var(--fleet-outline)] sm:max-w-xl">
+              <DialogContent className="max-h-[calc(100svh-1rem)] w-[calc(100vw-1rem)] overflow-hidden rounded-[28px] border-[var(--fleet-outline)] p-0 sm:max-h-[calc(100svh-2rem)] sm:max-w-2xl">
                 <VehicleCaptureFlow
-                fleetId={fleetId}
+                  fleetId={fleetId}
                   source="vehicles"
                   initialStep={vehicleCaptureInitialStep}
                   saveButtonLabel="Save vehicle"

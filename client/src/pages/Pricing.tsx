@@ -10,6 +10,7 @@ import { useAuthContext } from "@/hooks/useAuthContext";
 import { toast } from "sonner";
 import { Check, Info, LogOut, Menu } from "lucide-react";
 import { trpc } from "@/lib/trpc";
+import { loadCompanyName, saveCompanyName } from "@/lib/companyIdentity";
 import {
   calculateProPricing,
   formatCad,
@@ -26,9 +27,9 @@ export default function Pricing() {
   const [billingCadence, setBillingCadence] = useState<BillingCadence>("monthly");
   const [activeVehicles, setActiveVehicles] = useState(5);
   const [promoCode, setPromoCode] = useState("");
-  const [promoCompanyName, setPromoCompanyName] = useState("");
+  const [promoCompanyName, setPromoCompanyName] = useState(loadCompanyName());
   const [fleetQuote, setFleetQuote] = useState({
-    companyName: "",
+    companyName: loadCompanyName(),
     contactName: "",
     email: "",
     phone: "",
@@ -47,6 +48,9 @@ export default function Pricing() {
 
   const handleFleetQuote = async () => {
     try {
+      if (fleetQuote.companyName.trim()) {
+        saveCompanyName(fleetQuote.companyName);
+      }
       await quoteMutation.mutateAsync(fleetQuote);
       toast.success("Fleet quote request sent. Our team will follow up shortly.");
       setFleetQuote((current) => ({ ...current, mainNeeds: "", notes: "" }));
@@ -283,7 +287,7 @@ export default function Pricing() {
                   min={1}
                   value={activeVehicles}
                   onChange={(event) => setActiveVehicles(Number(event.target.value || PRO_MINIMUM_BILLABLE_ACTIVE_VEHICLES))}
-                  className="mt-2"
+                  className="mt-2 border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                 />
               </div>
               <div className="grid gap-4 md:grid-cols-2">
@@ -362,9 +366,14 @@ export default function Pricing() {
                 <Label htmlFor="promo-company">Fleet or company name</Label>
                 <Input
                   id="promo-company"
-                  className="mt-2"
+                  className="mt-2 border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                   value={promoCompanyName}
-                  onChange={(event) => setPromoCompanyName(event.target.value)}
+                  onChange={(event) => {
+                    setPromoCompanyName(event.target.value);
+                    if (event.target.value.trim()) {
+                      saveCompanyName(event.target.value);
+                    }
+                  }}
                   placeholder="Optional"
                 />
               </div>
@@ -401,16 +410,21 @@ export default function Pricing() {
                 <Label htmlFor="fleet-company">Company name</Label>
                 <Input
                   id="fleet-company"
-                  className="mt-2"
+                  className="mt-2 border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                   value={fleetQuote.companyName}
-                  onChange={(event) => setFleetQuote((current) => ({ ...current, companyName: event.target.value }))}
+                  onChange={(event) => {
+                    setFleetQuote((current) => ({ ...current, companyName: event.target.value }));
+                    if (event.target.value.trim()) {
+                      saveCompanyName(event.target.value);
+                    }
+                  }}
                 />
               </div>
               <div>
                 <Label htmlFor="fleet-contact">Contact name</Label>
                 <Input
                   id="fleet-contact"
-                  className="mt-2"
+                  className="mt-2 border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                   value={fleetQuote.contactName}
                   onChange={(event) => setFleetQuote((current) => ({ ...current, contactName: event.target.value }))}
                 />
@@ -419,7 +433,7 @@ export default function Pricing() {
                 <Label htmlFor="fleet-email">Email</Label>
                 <Input
                   id="fleet-email"
-                  className="mt-2"
+                  className="mt-2 border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                   value={fleetQuote.email}
                   onChange={(event) => setFleetQuote((current) => ({ ...current, email: event.target.value }))}
                 />
@@ -428,7 +442,7 @@ export default function Pricing() {
                 <Label htmlFor="fleet-phone">Phone</Label>
                 <Input
                   id="fleet-phone"
-                  className="mt-2"
+                  className="mt-2 border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                   value={fleetQuote.phone}
                   onChange={(event) => setFleetQuote((current) => ({ ...current, phone: event.target.value }))}
                 />
@@ -438,7 +452,7 @@ export default function Pricing() {
                 <Input
                   id="fleet-vehicles"
                   type="number"
-                  className="mt-2"
+                  className="mt-2 border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                   value={fleetQuote.vehicleCount}
                   onChange={(event) => setFleetQuote((current) => ({ ...current, vehicleCount: Number(event.target.value || 0) }))}
                 />
@@ -448,7 +462,7 @@ export default function Pricing() {
                 <Input
                   id="fleet-drivers"
                   type="number"
-                  className="mt-2"
+                  className="mt-2 border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                   value={fleetQuote.driverCount}
                   onChange={(event) => setFleetQuote((current) => ({ ...current, driverCount: Number(event.target.value || 0) }))}
                 />
@@ -457,7 +471,7 @@ export default function Pricing() {
                 <Label htmlFor="fleet-needs">Main needs / challenges</Label>
                 <Input
                   id="fleet-needs"
-                  className="mt-2"
+                  className="mt-2 border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                   value={fleetQuote.mainNeeds}
                   onChange={(event) => setFleetQuote((current) => ({ ...current, mainNeeds: event.target.value }))}
                   placeholder="Example: daily inspections, AI diagnostics, and better fleet visibility"
@@ -467,7 +481,7 @@ export default function Pricing() {
                 <Label htmlFor="fleet-notes">Optional notes</Label>
                 <Input
                   id="fleet-notes"
-                  className="mt-2"
+                  className="mt-2 border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                   value={fleetQuote.notes}
                   onChange={(event) => setFleetQuote((current) => ({ ...current, notes: event.target.value }))}
                 />

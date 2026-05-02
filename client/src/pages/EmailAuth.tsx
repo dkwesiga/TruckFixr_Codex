@@ -17,6 +17,7 @@ import {
 } from "../../../shared/billing";
 import { splitFullName, validateTruckFixrPassword } from "../../../shared/passwordPolicy";
 import { Eye, EyeOff } from "lucide-react";
+import { loadCompanyName, saveCompanyName } from "@/lib/companyIdentity";
 
 export default function EmailAuth() {
   const [location, setLocation] = useLocation();
@@ -28,7 +29,7 @@ export default function EmailAuth() {
   const [selectedTier, setSelectedTier] = useState<SubscriptionTier>("free");
   const [usePilotAccess, setUsePilotAccess] = useState(false);
   const [pilotCode, setPilotCode] = useState("");
-  const [pilotCompanyName, setPilotCompanyName] = useState("");
+  const [pilotCompanyName, setPilotCompanyName] = useState(loadCompanyName());
   const [pilotCodeError, setPilotCodeError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isRecoveryMode, setIsRecoveryMode] = useState(false);
@@ -92,6 +93,7 @@ export default function EmailAuth() {
     }
     if (companyName) {
       setPilotCompanyName(companyName);
+      saveCompanyName(companyName);
     }
 
     if (invite === "driver") {
@@ -107,6 +109,12 @@ export default function EmailAuth() {
       });
     }
   }, []);
+
+  useEffect(() => {
+    if (pilotCompanyName.trim()) {
+      saveCompanyName(pilotCompanyName);
+    }
+  }, [pilotCompanyName]);
 
   useEffect(() => {
     const hash = typeof window !== "undefined" ? window.location.hash.replace(/^#/, "") : "";
@@ -341,7 +349,7 @@ export default function EmailAuth() {
                 : isRecoveryMode
                 ? "Create a new password to finish recovery"
                 : isSignup
-                ? "Join TruckFixr to manage your fleet"
+                ? "Join TruckFixr to manage your fleet. We'll verify your email before app access is granted."
                 : "Welcome back to TruckFixr"}
             </p>
           </div>
@@ -350,7 +358,7 @@ export default function EmailAuth() {
             <div className="mb-6 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
               <p className="font-semibold">Driver invite ready</p>
               <p className="mt-1">
-                {inviteContext.managerName || inviteContext.managerEmail || "Your manager"} invited you to TruckFixr.
+                {inviteContext.managerName || inviteContext.managerEmail || "Your manager"} invited you to TruckFixr. This invite will be confirmed by email before access is granted.
               </p>
               {inviteContext.pilotCode ? (
                 <p className="mt-1">
@@ -372,6 +380,7 @@ export default function EmailAuth() {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   required
+                  className="border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                 />
               </div>
             )}
@@ -386,6 +395,7 @@ export default function EmailAuth() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
+                  className="border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                 />
               </div>
             )}
@@ -401,6 +411,7 @@ export default function EmailAuth() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 minLength={8}
+                className="border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
               />
               <button
                 type="button"
@@ -425,6 +436,7 @@ export default function EmailAuth() {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   required
                   minLength={8}
+                  className="border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                 />
                 <button
                   type="button"
@@ -509,7 +521,7 @@ export default function EmailAuth() {
                           value={pilotCode}
                           onChange={(e) => setPilotCode(e.target.value.toUpperCase())}
                           placeholder="TRUCKFIXR-PILOT"
-                          className="mt-2"
+                          className="mt-2 border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                           required={usePilotAccess}
                         />
                       </div>
@@ -518,9 +530,14 @@ export default function EmailAuth() {
                         <Input
                           id="pilot-company"
                           value={pilotCompanyName}
-                          onChange={(e) => setPilotCompanyName(e.target.value)}
+                          onChange={(e) => {
+                            setPilotCompanyName(e.target.value);
+                            if (e.target.value.trim()) {
+                              saveCompanyName(e.target.value);
+                            }
+                          }}
                           placeholder="Acme Logistics"
-                          className="mt-2"
+                          className="mt-2 border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                           required={usePilotAccess}
                         />
                       </div>

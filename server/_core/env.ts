@@ -19,7 +19,7 @@ export const ENV = {
   stripePriceProAnnual: readEnv("STRIPE_PRICE_PRO_ANNUAL"),
   stripePriceFleetMonthly: readEnv("STRIPE_PRICE_FLEET_MONTHLY"),
   adminEmails: readEnv("ADMIN_EMAILS"),
-  salesNotificationEmail: readEnv("SALES_NOTIFICATION_EMAIL"),
+  salesNotificationEmail: readEnv("SALES_NOTIFICATION_EMAIL") || "info@truckfixr.com",
   appBaseUrl:
     readEnv("APP_BASE_URL") ||
     readEnv("VITE_APP_BASE_URL") ||

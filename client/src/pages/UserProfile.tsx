@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { useAuthContext } from "@/hooks/useAuthContext";
 import { getApiUrl, readApiPayload } from "@/lib/api";
+import { loadCompanyName, saveCompanyName } from "@/lib/companyIdentity";
 import {
   formatCad,
   SUBSCRIPTION_PLANS,
@@ -24,14 +25,14 @@ export default function UserProfile() {
   const [formData, setFormData] = useState({
     name: user?.name || "",
     email: user?.email || "",
-    company: "",
+    company: loadCompanyName(),
     role: (user?.role || "driver") as "driver" | "owner_operator" | "manager" | "owner",
     managerEmail: user?.managerEmail || "",
   });
   const [isLoading, setIsLoading] = useState(false);
   const [step, setStep] = useState<"profile" | "fleet">("profile");
   const [pilotCode, setPilotCode] = useState("");
-  const [pilotCompanyName, setPilotCompanyName] = useState("");
+  const [pilotCompanyName, setPilotCompanyName] = useState(loadCompanyName());
   const [billingCadence, setBillingCadence] = useState<BillingCadence>("monthly");
   const [driverInvite, setDriverInvite] = useState({
     name: "",
@@ -43,6 +44,7 @@ export default function UserProfile() {
     confirmNewPassword: "",
   });
   const [showSecurityPasswords, setShowSecurityPasswords] = useState(false);
+  const [showSecurityCard, setShowSecurityCard] = useState(false);
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [fleetQuote, setFleetQuote] = useState({
     companyName: formData.company,
@@ -92,8 +94,17 @@ export default function UserProfile() {
       email: user.email || "",
       role: user.role,
       managerEmail: current.managerEmail || user.managerEmail || "",
+      company: current.company || loadCompanyName(),
     }));
   }, [user]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("security") === "1") {
+      setShowSecurityCard(true);
+    }
+  }, [location]);
 
   useEffect(() => {
     setFleetQuote((current) => ({
@@ -103,6 +114,12 @@ export default function UserProfile() {
       email: current.email || formData.email,
     }));
   }, [formData.company, formData.email, formData.name]);
+
+  useEffect(() => {
+    if (formData.company.trim()) {
+      saveCompanyName(formData.company);
+    }
+  }, [formData.company]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -131,6 +148,10 @@ export default function UserProfile() {
         toast.error("Please enter your company name");
         setIsLoading(false);
         return;
+      }
+
+      if (formData.company.trim()) {
+        saveCompanyName(formData.company);
       }
 
       if (formData.role === "driver" && !formData.managerEmail.trim()) {
@@ -185,6 +206,10 @@ export default function UserProfile() {
         name: `${formData.company} Fleet`,
       });
 
+      if (formData.company.trim()) {
+        saveCompanyName(formData.company);
+      }
+
       toast.success("Fleet created successfully!");
 
       // Track event
@@ -214,6 +239,9 @@ export default function UserProfile() {
   const handleUpgrade = async (tier: SubscriptionTier) => {
     try {
       if (tier === "fleet") {
+        if (fleetQuote.companyName.trim()) {
+          saveCompanyName(fleetQuote.companyName);
+        }
         await requestFleetQuoteMutation.mutateAsync({
           companyName: fleetQuote.companyName || formData.company || "Fleet request",
           contactName: fleetQuote.contactName || formData.name || "TruckFixr contact",
@@ -292,8 +320,8 @@ export default function UserProfile() {
       setDriverInvite({ name: "", email: "" });
       toast.success(result.invitation.message, {
         description: result.invitation.pilotCode
-          ? `Pilot Access code ${result.invitation.pilotCode} was included in the invite link.`
-          : undefined,
+          ? `Pilot Access code ${result.invitation.pilotCode} was included in the invite link. The invite was emailed to the driver for confirmation.`
+          : "The invite was emailed to the driver for confirmation.",
       });
     } catch (error: any) {
       toast.error(error?.message || "Unable to invite driver");
@@ -366,15 +394,16 @@ export default function UserProfile() {
                   <label className="block text-sm font-medium text-slate-700 mb-1">
                     Full Name
                   </label>
-                  <Input
-                    type="text"
-                    value={formData.name}
-                    onChange={(e) =>
-                      setFormData({ ...formData, name: e.target.value })
-                    }
-                    placeholder="Your name"
-                    required
-                  />
+                <Input
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) =>
+                    setFormData({ ...formData, name: e.target.value })
+                  }
+                  placeholder="Your name"
+                  required
+                  className="border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
+                />
                 </div>
 
                 <div>
@@ -394,19 +423,20 @@ export default function UserProfile() {
                   <label className="block text-sm font-medium text-slate-700 mb-1">
                     Company Name
                   </label>
-                  <Input
-                    type="text"
-                    value={formData.company}
-                    onChange={(e) =>
-                      setFormData({ ...formData, company: e.target.value })
-                    }
-                    placeholder={
-                      formData.role === "driver"
-                        ? "Your company name (optional)"
-                        : "Your company name"
-                    }
-                    required={formData.role === "manager" || formData.role === "owner"}
-                  />
+                <Input
+                  type="text"
+                  value={formData.company}
+                  onChange={(e) =>
+                    setFormData({ ...formData, company: e.target.value })
+                  }
+                  placeholder={
+                    formData.role === "driver"
+                      ? "Your company name (optional)"
+                      : "Your company name"
+                  }
+                  required={formData.role === "manager" || formData.role === "owner"}
+                  className="border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
+                />
                 </div>
 
                 <div>
@@ -440,6 +470,7 @@ export default function UserProfile() {
                       }
                       placeholder="manager@fleetcompany.com"
                       required
+                      className="border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                     />
                     <p className="text-xs text-slate-500 mt-1">
                       We’ll link your profile to this manager if they already have a TruckFixr account. Otherwise, we’ll save the address and send them an invite when email delivery is available.
@@ -509,54 +540,72 @@ export default function UserProfile() {
         <div className="flex w-full flex-col gap-6">
           <Card className="w-full">
             <CardHeader>
-              <CardTitle>Security</CardTitle>
-              <CardDescription>Change your password using TruckFixr MVP password rules.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {[
-                ["currentPassword", "Current password"],
-                ["newPassword", "New password"],
-                ["confirmNewPassword", "Confirm new password"],
-              ].map(([key, label]) => (
-                <div key={key}>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">{label}</label>
-                  <div className="flex gap-2">
-                    <Input
-                      type={showSecurityPasswords ? "text" : "password"}
-                      value={securityForm[key as keyof typeof securityForm]}
-                      onChange={(event) =>
-                        setSecurityForm((current) => ({
-                          ...current,
-                          [key]: event.target.value,
-                        }))
-                      }
-                      placeholder={label}
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      aria-label={showSecurityPasswords ? "Hide password" : "Show password"}
-                      onClick={() => setShowSecurityPasswords((current) => !current)}
-                    >
-                      {showSecurityPasswords ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </Button>
-                  </div>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <CardTitle>Security</CardTitle>
+                  <CardDescription>Hidden until you choose to change your password.</CardDescription>
                 </div>
-              ))}
-              <PasswordChecklist validation={passwordValidation} />
-              <Button
-                type="button"
-                className="w-full bg-blue-600 hover:bg-blue-700"
-                disabled={
-                  isChangingPassword ||
-                  !securityForm.currentPassword ||
-                  !passwordValidation.isValid
-                }
-                onClick={handleChangePassword}
-              >
-                {isChangingPassword ? "Updating..." : "Update password"}
-              </Button>
-            </CardContent>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setShowSecurityCard((current) => !current)}
+                >
+                  {showSecurityCard ? "Hide password form" : "Change password"}
+                </Button>
+              </div>
+            </CardHeader>
+            {showSecurityCard ? (
+              <CardContent className="space-y-4">
+                {[
+                  ["currentPassword", "Current password"],
+                  ["newPassword", "New password"],
+                  ["confirmNewPassword", "Confirm new password"],
+                ].map(([key, label]) => (
+                  <div key={key}>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">{label}</label>
+                    <div className="flex gap-2">
+                      <Input
+                        type={showSecurityPasswords ? "text" : "password"}
+                        value={securityForm[key as keyof typeof securityForm]}
+                        onChange={(event) =>
+                          setSecurityForm((current) => ({
+                            ...current,
+                            [key]: event.target.value,
+                          }))
+                        }
+                        placeholder={label}
+                        className="border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        aria-label={showSecurityPasswords ? "Hide password" : "Show password"}
+                        onClick={() => setShowSecurityPasswords((current) => !current)}
+                      >
+                        {showSecurityPasswords ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+                <PasswordChecklist validation={passwordValidation} />
+                <Button
+                  type="button"
+                  className="w-full bg-blue-600 hover:bg-blue-700"
+                  disabled={
+                    isChangingPassword ||
+                    !securityForm.currentPassword ||
+                    !passwordValidation.isValid
+                  }
+                  onClick={handleChangePassword}
+                >
+                  {isChangingPassword ? "Updating..." : "Update password"}
+                </Button>
+              </CardContent>
+            ) : (
+              <CardContent className="pt-0 text-sm text-slate-600">
+                Use the button above when you want to update your password.
+              </CardContent>
+            )}
           </Card>
 
           <Card className="w-full">
@@ -672,6 +721,7 @@ export default function UserProfile() {
                         value={pilotCode}
                         onChange={(e) => setPilotCode(e.target.value.toUpperCase())}
                         placeholder="TRUCKFIXR-PILOT"
+                        className="border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                       />
                     </div>
                     <div>
@@ -680,8 +730,14 @@ export default function UserProfile() {
                       </label>
                       <Input
                         value={pilotCompanyName}
-                        onChange={(e) => setPilotCompanyName(e.target.value)}
+                        onChange={(e) => {
+                          setPilotCompanyName(e.target.value);
+                          if (e.target.value.trim()) {
+                            saveCompanyName(e.target.value);
+                          }
+                        }}
                         placeholder={formData.company || "Acme Logistics"}
+                        className="border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                       />
                     </div>
                   </div>
@@ -824,6 +880,7 @@ export default function UserProfile() {
                       value={driverInvite.name}
                       onChange={(e) => setDriverInvite((current) => ({ ...current, name: e.target.value }))}
                       placeholder="Dixon K"
+                      className="border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                     />
                   </div>
                   <div>
@@ -835,12 +892,13 @@ export default function UserProfile() {
                       value={driverInvite.email}
                       onChange={(e) => setDriverInvite((current) => ({ ...current, email: e.target.value }))}
                       placeholder="driver@fleet.com"
+                      className="border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                     />
                   </div>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
                   <p>
-                    TruckFixr will send an email with a signup link and keep the driver linked to your profile automatically.
+                    TruckFixr will email the driver a signup link so they can confirm the invite and join your profile.
                   </p>
                   {subscription?.pilotAccess?.status === "active" ? (
                     <p className="mt-2">

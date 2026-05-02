@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type PointerEvent, type ReactNode, type SetStateAction } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -73,6 +73,7 @@ export default function VehicleCaptureFlow({
 }: Props) {
   const [step, setStep] = useState<FlowStep>(initialStep);
   const [imagePreview, setImagePreview] = useState("");
+  const [previewOffset, setPreviewOffset] = useState({ x: 0, y: 0 });
   const [ocrWarning, setOcrWarning] = useState("");
   const [vinInput, setVinInput] = useState("");
   const [decodeWarning, setDecodeWarning] = useState("");
@@ -87,6 +88,13 @@ export default function VehicleCaptureFlow({
   });
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
+  const previewDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    baseX: number;
+    baseY: number;
+  } | null>(null);
   const utils = trpc.useUtils();
   const createVehicleMutation = trpc.vehicles.create.useMutation();
 
@@ -100,6 +108,49 @@ export default function VehicleCaptureFlow({
         return "Add vehicle";
     }
   }, [source]);
+
+  useEffect(() => {
+    if (!imagePreview) {
+      setPreviewOffset({ x: 0, y: 0 });
+    }
+  }, [imagePreview]);
+
+  const clampPreviewOffset = (value: number, limit: number) =>
+    Math.max(-limit, Math.min(limit, value));
+
+  const handlePreviewPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    previewDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      baseX: previewOffset.x,
+      baseY: previewOffset.y,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handlePreviewPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const drag = previewDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    const nextX = drag.baseX + (event.clientX - drag.startX);
+    const nextY = drag.baseY + (event.clientY - drag.startY);
+    setPreviewOffset({
+      x: clampPreviewOffset(nextX, 180),
+      y: clampPreviewOffset(nextY, 120),
+    });
+  };
+
+  const finishPreviewDrag = (event?: PointerEvent<HTMLDivElement>) => {
+    if (event) {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        // Ignore capture release failures in browsers that do not support it fully.
+      }
+    }
+    previewDragRef.current = null;
+  };
 
   const persistVehicleLocally = (vehicle: {
     id: number;
@@ -380,7 +431,41 @@ export default function VehicleCaptureFlow({
         {step === "ocr_processing" ? (
           <div className="space-y-4">
             {imagePreview ? (
-              <img src={imagePreview} alt="VIN preview" className="max-h-56 w-full rounded-2xl object-cover" />
+              <div
+                className="relative h-72 overflow-hidden rounded-3xl border border-slate-200 bg-slate-950/95"
+                onPointerDown={handlePreviewPointerDown}
+                onPointerMove={handlePreviewPointerMove}
+                onPointerUp={finishPreviewDrag}
+                onPointerCancel={finishPreviewDrag}
+                onPointerLeave={finishPreviewDrag}
+              >
+                <img
+                  src={imagePreview}
+                  alt="VIN preview"
+                  className="absolute left-1/2 top-1/2 max-h-none max-w-none select-none"
+                  style={{
+                    transform: `translate(-50%, -50%) translate(${previewOffset.x}px, ${previewOffset.y}px) scale(1.18)`,
+                    touchAction: "none",
+                    userSelect: "none",
+                  }}
+                  draggable={false}
+                />
+                <div className="absolute inset-x-4 bottom-4 flex items-center justify-between gap-3 rounded-2xl bg-black/55 px-4 py-3 text-xs text-white backdrop-blur">
+                  <span>Drag the photo to center the VIN before saving.</span>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="h-8 rounded-full bg-white/90 text-slate-900 hover:bg-white"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setPreviewOffset({ x: 0, y: 0 });
+                    }}
+                  >
+                    Center
+                  </Button>
+                </div>
+              </div>
             ) : null}
             <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
               <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
