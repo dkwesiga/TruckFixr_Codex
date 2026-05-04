@@ -56,6 +56,7 @@ import {
   Clock3,
   LogOut,
   MapPin,
+  Menu,
   Plus,
   Search,
   ShieldCheck,
