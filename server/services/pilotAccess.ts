@@ -391,6 +391,7 @@ async function resolveOrCreateFleet(input: {
       ownerId: input.userId,
       premiumTadis: true,
       trialEndsAt: input.expiresAt,
+      salesStatus: "pilot_pending_email_verification",
       updatedAt: new Date(),
     })
     .returning();

@@ -5,6 +5,9 @@ import {
   createStripeCheckoutSession,
   createStripeCustomer,
   createStripePortalSession,
+  createTruckFixrCheckoutSession,
+  createTruckFixrCustomerPortalSession,
+  createTruckFixrPilotCheckoutSession,
   isStripeConfigured,
 } from "../services/stripeBilling";
 import {
@@ -27,6 +30,15 @@ import {
   SUBSCRIPTION_PLANS,
   SubscriptionTier,
 } from "../../shared/billing";
+import {
+  PUBLIC_PLAN_ORDER,
+  TRUCKFIXR_PLANS,
+  getPublicTruckFixrPlans,
+  getTruckFixrPlan,
+  getTruckFixrPlanPrice,
+  type BillingInterval as TruckFixrBillingInterval,
+  type PlanKey,
+} from "../../shared/truckfixrPricing";
 
 function getAbsoluteUrl(path: string) {
   const base = ENV.appBaseUrl.replace(/\/$/, "");
@@ -43,7 +55,7 @@ export const subscriptionsRouter = router({
     });
     return {
       ...getPlanSummary(state),
-      availablePlans: getPublicPlans().filter((plan) => plan.publicSelectable || plan.tier === state.tier),
+      availablePlans: getPublicTruckFixrPlans(),
       entitlements: entitlement,
       stripeConfigured: isStripeConfigured(),
     };
@@ -85,9 +97,90 @@ export const subscriptionsRouter = router({
 
   createCheckoutSession: protectedProcedure
     .input(
+      z.union([
+        z.object({
+          planKey: z.enum(["owner_operator", "small_fleet", "fleet_growth", "fleet_pro"]),
+          billingInterval: z.enum(["monthly", "annual"]),
+          extraTrailerQuantity: z.number().int().min(0).default(0).optional(),
+          successPath: z.string().default("/profile?subscription=success"),
+          cancelPath: z.string().default("/pricing?subscription=cancelled"),
+        }),
+        z.object({
+          tier: z.literal("pro"),
+          billingCadence: z.enum(["monthly", "annual"]).default("monthly"),
+          successPath: z.string().default("/profile?subscription=success"),
+          cancelPath: z.string().default("/pricing?subscription=cancelled"),
+        }),
+      ])
+    )
+    .mutation(async ({ ctx, input }) => {
+      const current = await getSubscriptionState(ctx.user.id);
+      const canManageBilling = await canManageCompanyBilling({
+        fleetId: current.activeFleetId,
+        user: ctx.user,
+      });
+      if (!canManageBilling) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Only the company owner can manage billing and subscription changes",
+        });
+      }
+
+      if (!isStripeConfigured()) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Stripe is not configured yet. Add Stripe environment variables to enable paid plans.",
+        });
+      }
+
+      if (!ctx.user.email) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "An email address is required before starting subscription checkout.",
+        });
+      }
+
+      let customerId = current.stripeCustomerId;
+
+      if (!customerId) {
+        const customer = await createStripeCustomer({
+          email: ctx.user.email,
+          name: ctx.user.name ?? undefined,
+          userId: ctx.user.id,
+        });
+        customerId = customer.id;
+        await ensureStripeCustomerId(ctx.user.id, customer.id);
+      }
+
+      const session =
+        "planKey" in input
+          ? await createTruckFixrCheckoutSession({
+              customerId,
+              companyId: current.activeFleetId,
+              planKey: input.planKey,
+              billingInterval: input.billingInterval,
+              extraTrailerQuantity: input.extraTrailerQuantity ?? 0,
+              successUrl: getAbsoluteUrl(input.successPath),
+              cancelUrl: getAbsoluteUrl(input.cancelPath),
+            })
+          : await createTruckFixrCheckoutSession({
+              customerId,
+              companyId: current.activeFleetId,
+              planKey: "small_fleet",
+              billingInterval: input.billingCadence,
+              extraTrailerQuantity: 0,
+              successUrl: getAbsoluteUrl(input.successPath),
+              cancelUrl: getAbsoluteUrl(input.cancelPath),
+            });
+
+      return {
+        checkoutUrl: session.url,
+      };
+    }),
+
+  createPilotCheckoutSession: protectedProcedure
+    .input(
       z.object({
-        tier: z.literal("pro"),
-        billingCadence: z.enum(["monthly", "annual"]).default("monthly"),
         successPath: z.string().default("/profile?subscription=success"),
         cancelPath: z.string().default("/pricing?subscription=cancelled"),
       })
@@ -119,18 +212,6 @@ export const subscriptionsRouter = router({
         });
       }
 
-      const entitlement = await getEntitlementState({
-        userId: ctx.user.id,
-        fleetId: current.activeFleetId,
-      });
-
-      if (!entitlement.canSelfServeUpgradeToPro && current.tier !== "pro") {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "This account cannot self-serve into Pro from its current plan.",
-        });
-      }
-
       let customerId = current.stripeCustomerId;
 
       if (!customerId) {
@@ -143,12 +224,9 @@ export const subscriptionsRouter = router({
         await ensureStripeCustomerId(ctx.user.id, customer.id);
       }
 
-      const session = await createStripeCheckoutSession({
+      const session = await createTruckFixrPilotCheckoutSession({
         customerId,
-        userId: ctx.user.id,
-        tier: "pro",
-        billingCadence: input.billingCadence,
-        activeVehicleCount: entitlement.usage.activeVehicleCount,
+        companyId: current.activeFleetId,
         successUrl: getAbsoluteUrl(input.successPath),
         cancelUrl: getAbsoluteUrl(input.cancelPath),
       });
@@ -241,7 +319,7 @@ export const subscriptionsRouter = router({
         });
       }
 
-      const session = await createStripePortalSession({
+      const session = await createTruckFixrCustomerPortalSession({
         customerId: current.stripeCustomerId,
         returnUrl: getAbsoluteUrl(input.returnPath),
       });
@@ -252,7 +330,7 @@ export const subscriptionsRouter = router({
     }),
 
   listPlans: protectedProcedure.query(() => {
-    return getPublicPlans();
+    return getPublicTruckFixrPlans();
   }),
 
   validateDowngrade: protectedProcedure

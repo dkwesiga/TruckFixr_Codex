@@ -11,7 +11,11 @@ const {
   createStripeCustomer,
   createStripeCheckoutSession,
   createStripePortalSession,
+  createTruckFixrCheckoutSession,
+  createTruckFixrCustomerPortalSession,
+  createTruckFixrPilotCheckoutSession,
   retrieveStripeSubscription,
+  getTruckFixrBillingSnapshotFromStripeSubscription,
   isStripeConfigured,
 } = vi.hoisted(() => ({
   getSubscriptionState: vi.fn(),
@@ -22,7 +26,11 @@ const {
   createStripeCustomer: vi.fn(),
   createStripeCheckoutSession: vi.fn(),
   createStripePortalSession: vi.fn(),
+  createTruckFixrCheckoutSession: vi.fn(),
+  createTruckFixrCustomerPortalSession: vi.fn(),
+  createTruckFixrPilotCheckoutSession: vi.fn(),
   retrieveStripeSubscription: vi.fn(),
+  getTruckFixrBillingSnapshotFromStripeSubscription: vi.fn(() => ({})),
   isStripeConfigured: vi.fn(() => true),
 }));
 
@@ -49,7 +57,11 @@ vi.mock("./services/stripeBilling", () => ({
   createStripeCustomer,
   createStripeCheckoutSession,
   createStripePortalSession,
+  createTruckFixrCheckoutSession,
+  createTruckFixrCustomerPortalSession,
+  createTruckFixrPilotCheckoutSession,
   retrieveStripeSubscription,
+  getTruckFixrBillingSnapshotFromStripeSubscription,
   isStripeConfigured,
   getSubscriptionSnapshotFromStripeSubscription: (subscription: any) => ({
     tier: subscription.metadata?.tier ?? "pro",
@@ -80,6 +92,10 @@ vi.mock("./services/pilotAccess", () => ({
   markPilotAccessConvertedToPaid: vi.fn(async () => undefined),
 }));
 
+vi.mock("./services/companyAccess", () => ({
+  canManageCompanyBilling: vi.fn(async () => true),
+}));
+
 import { appRouter } from "./routers";
 import { processStripeWebhookEvent } from "./_core/stripeBillingRoutes";
 
@@ -91,7 +107,7 @@ function createContext(): TrpcContext {
       email: "manager@truckfixr.com",
       name: "Manager Seven",
       loginMethod: "email",
-      role: "manager",
+      role: "owner",
       managerEmail: null,
       managerUserId: null,
       subscriptionTier: "free",
@@ -120,6 +136,12 @@ function createContext(): TrpcContext {
 describe("subscription billing flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    retrieveStripeSubscription.mockResolvedValue({
+      id: "sub_123",
+      customer: "cus_123",
+      status: "active",
+      metadata: {},
+    } as any);
     getSubscriptionState.mockResolvedValue({
       tier: "free",
       billingStatus: "active",
@@ -229,32 +251,39 @@ describe("subscription billing flow", () => {
     expect(result.pilotAccess?.fleetName).toBe("Pilot Fleet");
   });
 
-  it("does not expose Pilot Access as a normal public plan choice", async () => {
+  it("lists the revised TruckFixr public plans", async () => {
     const caller = appRouter.createCaller(createContext());
     const result = await caller.subscriptions.listPlans();
 
-    expect(result.map((plan) => plan.tier)).toEqual(["free", "pro", "fleet"]);
+    expect(result.map((plan: any) => plan.planKey)).toEqual([
+      "free_trial",
+      "owner_operator",
+      "small_fleet",
+      "fleet_growth",
+      "fleet_pro",
+      "custom_fleet",
+    ]);
   });
 
-  it("starts paid checkout for Pro and links the Stripe customer", async () => {
+  it("starts paid checkout for the revised plan model and links the Stripe customer", async () => {
     createStripeCustomer.mockResolvedValue({ id: "cus_123" });
-    createStripeCheckoutSession.mockResolvedValue({ url: "https://checkout.stripe.test/session_123" });
+    createTruckFixrCheckoutSession.mockResolvedValue({ url: "https://checkout.stripe.test/session_123" });
 
     const caller = appRouter.createCaller(createContext());
     const result = await caller.subscriptions.createCheckoutSession({
-      tier: "pro",
-      billingCadence: "monthly",
+      planKey: "small_fleet",
+      billingInterval: "monthly",
       successPath: "/profile?subscription=success",
       cancelPath: "/pricing?subscription=cancelled",
     });
 
     expect(createStripeCustomer).toHaveBeenCalled();
     expect(ensureStripeCustomerId).toHaveBeenCalledWith(7, "cus_123");
-    expect(createStripeCheckoutSession).toHaveBeenCalledWith(
+    expect(createTruckFixrCheckoutSession).toHaveBeenCalledWith(
       expect.objectContaining({
         customerId: "cus_123",
-        tier: "pro",
-        userId: 7,
+        companyId: 1,
+        planKey: "small_fleet",
       })
     );
     expect(result.checkoutUrl).toContain("checkout.stripe.test");

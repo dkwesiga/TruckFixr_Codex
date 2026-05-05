@@ -1,0 +1,68 @@
+// TruckFixr Fleet AI MVP - Assignment & Invitation Schema
+
+enum VehicleType {
+  truck
+  tractor
+  trailer
+  straight_truck
+  bus
+  van
+  reefer_trailer
+  flatbed_trailer
+  dry_van_trailer
+  other
+}
+
+enum AssignmentType {
+  permanent
+  temporary
+}
+
+enum AssignmentStatus {
+  active
+  expired
+  revoked
+}
+
+enum InvitationStatus {
+  pending
+  accepted
+  expired
+  revoked
+}
+
+model VehicleAssignment {
+  id                        String           @id @default(uuid())
+  fleet_id                  String
+  vehicle_id                String
+  driver_user_id            String?
+  driver_invitation_id      String?
+  assigned_by_user_id       String
+  access_type               AssignmentType
+  starts_at                 DateTime         @default(now())
+  expires_at                DateTime?
+  status                    AssignmentStatus @default(active)
+  revoked_at                DateTime?
+  revoked_by_user_id        String?
+  replaced_by_assignment_id String?
+  notes                     String?
+  created_at                DateTime         @default(now())
+  updated_at                DateTime         @updated_at
+}
+
+model DriverInvitation {
+  id                  String           @id @default(uuid())
+  fleet_id            String
+  email               String
+  first_name          String
+  last_name           String
+  phone               String?
+  role                String           @default("driver")
+  status              InvitationStatus @default(pending)
+  invited_by_user_id  String
+  accepted_by_user_id String?
+  accepted_at         DateTime?
+  expires_at          DateTime?
+  created_at          DateTime         @default(now())
+  updated_at          DateTime         @updated_at
+}

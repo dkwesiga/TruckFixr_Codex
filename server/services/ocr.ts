@@ -66,8 +66,9 @@ export async function extractPhotoEvidenceText(
 
   try {
     const result = await invoke({
-      preferredProvider: "openai",
-      fallbackProviders: ["gemini"],
+      feature: "ocr_photo_text",
+      preferredProvider: "openrouter",
+      fallbackProviders: ["openai", "gemini"],
       timeoutMs: input.timeoutMs ?? 10_000,
       maxTokens: 300,
       responseFormat: { type: "json_object" },
@@ -136,8 +137,9 @@ export async function extractVinFromImage(
 
   try {
     const result = await invoke({
-      preferredProvider: "openai",
-      fallbackProviders: ["gemini"],
+      feature: "ocr_vin",
+      preferredProvider: "openrouter",
+      fallbackProviders: ["openai", "gemini"],
       timeoutMs: input.timeoutMs ?? 12_000,
       maxTokens: 200,
       responseFormat: { type: "json_object" },

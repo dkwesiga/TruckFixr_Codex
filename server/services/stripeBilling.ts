@@ -6,6 +6,13 @@ import {
   PRO_MINIMUM_BILLABLE_ACTIVE_VEHICLES,
   SubscriptionTier,
 } from "../../shared/billing";
+import {
+  getTruckFixrPlan,
+  getTruckFixrPlanLimits,
+  getTruckFixrPlanPrice,
+  type BillingInterval as TruckFixrBillingInterval,
+  type PlanKey,
+} from "../../shared/truckfixrPricing";
 
 type StripeCustomer = {
   id: string;
@@ -48,6 +55,23 @@ type StripeSubscription = {
     }>;
   };
   metadata?: Record<string, string>;
+};
+
+type TruckFixrStripeCheckoutInput = {
+  customerId: string;
+  companyId: number;
+  planKey: PlanKey;
+  billingInterval: Exclude<TruckFixrBillingInterval, "trial" | "pilot" | "custom">;
+  extraTrailerQuantity?: number;
+  successUrl: string;
+  cancelUrl: string;
+};
+
+type TruckFixrPilotCheckoutInput = {
+  customerId: string;
+  companyId: number;
+  successUrl: string;
+  cancelUrl: string;
 };
 
 type StripeInvoice = {
@@ -125,6 +149,98 @@ export function getPriceIdForTier(tier: SubscriptionTier, cadence: BillingCadenc
   }
   if (tier === "fleet") return ENV.stripePriceFleetMonthly;
   return "";
+}
+
+function getTruckFixrPriceId(planKey: PlanKey, billingInterval: Exclude<TruckFixrBillingInterval, "trial" | "pilot" | "custom">) {
+  const plan = getTruckFixrPlan(planKey);
+  if (billingInterval === "annual") {
+    if (planKey === "owner_operator") return ENV.stripePriceOwnerOperatorAnnual;
+    if (planKey === "small_fleet") return ENV.stripePriceSmallFleetAnnual;
+    if (planKey === "fleet_growth") return ENV.stripePriceFleetGrowthAnnual;
+    if (planKey === "fleet_pro") return ENV.stripePriceFleetProAnnual;
+  } else {
+    if (planKey === "owner_operator") return ENV.stripePriceOwnerOperatorMonthly;
+    if (planKey === "small_fleet") return ENV.stripePriceSmallFleetMonthly;
+    if (planKey === "fleet_growth") return ENV.stripePriceFleetGrowthMonthly;
+    if (planKey === "fleet_pro") return ENV.stripePriceFleetProMonthly;
+  }
+
+  if (!plan.publicSelectable) {
+    return "";
+  }
+
+  return "";
+}
+
+export async function createTruckFixrCheckoutSession(input: TruckFixrStripeCheckoutInput) {
+  const priceId = getTruckFixrPriceId(input.planKey, input.billingInterval);
+  if (!priceId) {
+    throw new Error(`Stripe price is not configured for the ${input.planKey} plan.`);
+  }
+
+  const planLimits = getTruckFixrPlanLimits(input.planKey);
+  const extraTrailerQuantity = Math.max(0, Math.floor(input.extraTrailerQuantity ?? 0));
+  const form: Record<string, string | number | boolean | null | undefined> = {
+    mode: "subscription",
+    customer: input.customerId,
+    success_url: input.successUrl,
+    cancel_url: input.cancelUrl,
+    "line_items[0][price]": priceId,
+    "line_items[0][quantity]": 1,
+    allow_promotion_codes: true,
+    "subscription_data[metadata][company_id]": input.companyId,
+    "subscription_data[metadata][plan_key]": input.planKey,
+    "subscription_data[metadata][billing_interval]": input.billingInterval,
+    "subscription_data[metadata][product_context]": "truckfixr_fleet_ai",
+    "subscription_data[metadata][powered_vehicle_limit]": String(planLimits.poweredVehicleLimit ?? ""),
+    "subscription_data[metadata][included_trailer_limit]": String(planLimits.includedTrailerLimit ?? ""),
+    "subscription_data[metadata][extra_trailer_quantity]": String(extraTrailerQuantity),
+    "metadata[company_id]": input.companyId,
+    "metadata[plan_key]": input.planKey,
+    "metadata[billing_interval]": input.billingInterval,
+    "metadata[product_context]": "truckfixr_fleet_ai",
+    "metadata[powered_vehicle_limit]": String(planLimits.poweredVehicleLimit ?? ""),
+    "metadata[included_trailer_limit]": String(planLimits.includedTrailerLimit ?? ""),
+    "metadata[extra_trailer_quantity]": String(extraTrailerQuantity),
+  };
+
+  if (extraTrailerQuantity > 0 && ENV.stripePriceExtraTrailerMonthly && input.billingInterval === "monthly") {
+    form["line_items[1][price]"] = ENV.stripePriceExtraTrailerMonthly;
+    form["line_items[1][quantity]"] = extraTrailerQuantity;
+  }
+
+  return stripeRequest<StripeCheckoutSession>("/v1/checkout/sessions", {
+    form,
+  });
+}
+
+export async function createTruckFixrPilotCheckoutSession(input: TruckFixrPilotCheckoutInput) {
+  if (!ENV.stripePriceFleetPilot30Day) {
+    throw new Error("Stripe pilot price is not configured.");
+  }
+
+  return stripeRequest<StripeCheckoutSession>("/v1/checkout/sessions", {
+    form: {
+      mode: "payment",
+      customer: input.customerId,
+      success_url: input.successUrl,
+      cancel_url: input.cancelUrl,
+      "line_items[0][price]": ENV.stripePriceFleetPilot30Day,
+      "line_items[0][quantity]": 1,
+      allow_promotion_codes: true,
+      "metadata[company_id]": input.companyId,
+      "metadata[plan_key]": "fleet_growth",
+      "metadata[billing_interval]": "pilot",
+      "metadata[product_context]": "truckfixr_fleet_ai",
+    },
+  });
+}
+
+export async function createTruckFixrCustomerPortalSession(input: {
+  customerId: string;
+  returnUrl: string;
+}) {
+  return createStripePortalSession(input);
 }
 
 export async function createStripeCustomer(input: {
@@ -317,6 +433,41 @@ export function getSubscriptionSnapshotFromStripeSubscription(subscription: Stri
     trialEnd: subscription.trial_end ? new Date(subscription.trial_end * 1000) : null,
     cancelAtPeriodEnd: subscription.cancel_at_period_end ?? false,
     quantity,
+  };
+}
+
+export function getTruckFixrBillingSnapshotFromStripeSubscription(subscription: StripeSubscription) {
+  const planKey = (subscription.metadata?.plan_key as PlanKey | undefined) ?? "free_trial";
+  const billingInterval = (subscription.metadata?.billing_interval as TruckFixrBillingInterval | undefined) ?? "monthly";
+  const limits = getTruckFixrPlanLimits(planKey);
+  const extraTrailerQuantity = Number(subscription.metadata?.extra_trailer_quantity ?? "0") || 0;
+  const plan = getTruckFixrPlan(planKey);
+
+  return {
+    companyId: Number(subscription.metadata?.company_id ?? 0) || null,
+    planKey,
+    billingInterval,
+    billingStatus: (subscription.status as TruckFixrBillingStatus) ?? "active",
+    poweredVehicleLimit: limits.poweredVehicleLimit,
+    includedTrailerLimit: limits.includedTrailerLimit,
+    paidExtraTrailerQuantity: extraTrailerQuantity,
+    totalActiveTrailerLimit:
+      limits.includedTrailerLimit == null ? null : limits.includedTrailerLimit + extraTrailerQuantity,
+    aiSessionMonthlyLimit: limits.aiDiagnosticSessionLimit,
+    stripeCustomerId: subscription.customer ?? null,
+    stripeSubscriptionId: subscription.id,
+    stripePriceId: subscription.items?.data?.[0]?.price?.id ?? null,
+    subscriptionStartedAt: subscription.current_period_start
+      ? new Date(subscription.current_period_start * 1000)
+      : null,
+    subscriptionRenewsAt: subscription.current_period_end
+      ? new Date(subscription.current_period_end * 1000)
+      : null,
+    trialStartedAt: subscription.trial_start ? new Date(subscription.trial_start * 1000) : null,
+    trialEndsAt: subscription.trial_end ? new Date(subscription.trial_end * 1000) : null,
+    isTrial: billingInterval === "trial",
+    isPaidPilot: billingInterval === "pilot",
+    plan,
   };
 }
 

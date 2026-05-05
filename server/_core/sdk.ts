@@ -1,6 +1,5 @@
 import { AXIOS_TIMEOUT_MS, COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import { ForbiddenError } from "@shared/_core/errors";
-import axios, { type AxiosInstance } from "axios";
 import { parse as parseCookieHeader } from "cookie";
 import type { Request } from "express";
 import { SignJWT, jwtVerify } from "jose";
@@ -29,7 +28,7 @@ const GET_USER_INFO_PATH = `/webdev.v1.WebDevAuthPublicService/GetUserInfo`;
 const GET_USER_INFO_WITH_JWT_PATH = `/webdev.v1.WebDevAuthPublicService/GetUserInfoWithJwt`;
 
 class OAuthService {
-  constructor(private client: ReturnType<typeof axios.create>) {
+  constructor(private readonly baseUrl: string | null) {
     if (!ENV.oAuthServerUrl) {
       console.warn(
         "[OAuth] OAUTH_SERVER_URL is not configured. Google OAuth is disabled for this local session."
@@ -56,41 +55,54 @@ class OAuthService {
       redirectUri: this.decodeState(state),
     };
 
-    const { data } = await this.client.post<ExchangeTokenResponse>(
-      EXCHANGE_TOKEN_PATH,
-      payload
-    );
-
-    return data;
+    return this.postJson<ExchangeTokenResponse>(EXCHANGE_TOKEN_PATH, payload);
   }
 
   async getUserInfoByToken(
     token: ExchangeTokenResponse
   ): Promise<GetUserInfoResponse> {
-    const { data } = await this.client.post<GetUserInfoResponse>(
-      GET_USER_INFO_PATH,
-      {
-        accessToken: token.accessToken,
-      }
-    );
+    return this.postJson<GetUserInfoResponse>(GET_USER_INFO_PATH, {
+      accessToken: token.accessToken,
+    });
+  }
 
-    return data;
+  async postJson<T>(path: string, payload: unknown): Promise<T> {
+    if (!this.baseUrl) {
+      throw new Error("OAuth server URL is not configured");
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), AXIOS_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(`${this.baseUrl}${path}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(
+          `OAuth request failed (${response.status} ${response.statusText}): ${text.slice(0, 500)}`
+        );
+      }
+
+      return JSON.parse(text) as T;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }
 
-const createOAuthHttpClient = (): AxiosInstance =>
-  axios.create({
-    baseURL: ENV.oAuthServerUrl,
-    timeout: AXIOS_TIMEOUT_MS,
-  });
-
 class SDKServer {
-  private readonly client: AxiosInstance;
   private readonly oauthService: OAuthService;
 
-  constructor(client: AxiosInstance = createOAuthHttpClient()) {
-    this.client = client;
-    this.oauthService = new OAuthService(this.client);
+  constructor() {
+    this.oauthService = new OAuthService(ENV.oAuthServerUrl);
   }
 
   private deriveLoginMethod(
@@ -238,7 +250,7 @@ class SDKServer {
       projectId: ENV.appId,
     };
 
-    const { data } = await this.client.post<GetUserInfoWithJwtResponse>(
+    const data = await this.oauthService.postJson<GetUserInfoWithJwtResponse>(
       GET_USER_INFO_WITH_JWT_PATH,
       payload
     );

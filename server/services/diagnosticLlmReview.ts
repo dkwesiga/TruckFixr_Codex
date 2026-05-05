@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { ENV } from "../_core/env";
 import {
+  getEnabledProviders,
+  getFallbackProviders,
   invokeWithOrchestration,
   type AiProvider,
   type InvokeResult,
@@ -1463,35 +1465,20 @@ function nextAffordableTokenBudget(error: Error, requestedMaxTokens: number) {
 function buildDiagnosticProviderPlan(
   config: DiagnosticRuntimeConfig
 ): DiagnosticProviderPlan | null {
-  const hasOpenRouter = Boolean(ENV.openRouterApiKey);
+  const enabledProviders = getEnabledProviders();
+  const primaryProvider: AiProvider = ENV.openRouterApiKey
+    ? "openrouter"
+    : enabledProviders[0] ?? "openrouter";
+  const fallbackProviders = getFallbackProviders(primaryProvider);
+  const primaryModel = config.openRouterModel.trim() || "deepseek/deepseek-v4-flash";
 
-  if (hasOpenRouter) {
-    const expandOpenRouterModel = (model: string) => {
-      const normalized = model.trim().toLowerCase();
-      if (!normalized || normalized === "openrouter/free") {
-        return [
-          "google/gemma-4-26b-a4b-it:free",
-          "google/gemma-4-31b-it:free",
-          "minimax/minimax-m2.5-20260211:free",
-        ];
-      }
-
-      return [model.trim()];
-    };
-
-    const models = [
-      ...expandOpenRouterModel(config.openRouterModel),
-      ...expandOpenRouterModel(config.openRouterFallbackModel),
-    ]
-      .filter(Boolean)
-      .filter((model, index, values) => values.indexOf(model) === index);
-
+  if (enabledProviders.length > 0) {
     return {
-      preferredProvider: "openrouter",
-      fallbackProviders: [],
-      primaryModels: models,
-      defaultModel: models[0] ?? config.openRouterModel,
-      providerLabel: "OpenRouter",
+      preferredProvider: primaryProvider,
+      fallbackProviders,
+      primaryModels: [primaryModel],
+      defaultModel: primaryModel,
+      providerLabel: primaryProvider === "openrouter" ? "OpenRouter" : primaryProvider,
     };
   }
 
@@ -1508,6 +1495,7 @@ async function invokeSimpleClassificationWithModel(
   return invokeWithOrchestration({
     preferredProvider: providerPlan.preferredProvider,
     fallbackProviders: providerPlan.fallbackProviders,
+    feature: "tadis_classification",
     messages: [
       {
         role: "user" as const,
@@ -1531,6 +1519,7 @@ async function invokeSimpleDiagnosisWithModel(
   return invokeWithOrchestration({
     preferredProvider: providerPlan.preferredProvider,
     fallbackProviders: providerPlan.fallbackProviders,
+    feature: "tadis_diagnosis",
     messages: [
       {
         role: "user" as const,
@@ -1556,6 +1545,7 @@ async function invokeIntakeInterpretationWithModel(
   return invokeWithOrchestration({
     preferredProvider: providerPlan.preferredProvider,
     fallbackProviders: providerPlan.fallbackProviders,
+    feature: "tadis_intake_interpretation",
     messages: buildIntakeInterpretationMessages({
       intakePackage: compactIntakePackageForPrompt(request.intakePackage, compactLevel),
     }),
@@ -1808,6 +1798,7 @@ async function repairDiagnosticReviewWithModel(
   return invokeWithOrchestration({
     preferredProvider: providerPlan.preferredProvider,
     fallbackProviders: providerPlan.fallbackProviders,
+    feature: "tadis_review_repair",
     messages: [
       {
         role: "system" as const,
@@ -1839,6 +1830,7 @@ async function invokeReviewWithModel(
   return invokeWithOrchestration({
     preferredProvider: providerPlan.preferredProvider,
     fallbackProviders: providerPlan.fallbackProviders,
+    feature: "tadis_review",
     messages: buildMessages(request, maxTokens, compactLevel, providerPlan.providerLabel),
     responseFormat: useResponseFormat ? { type: "json_object" } : undefined,
     maxTokens,

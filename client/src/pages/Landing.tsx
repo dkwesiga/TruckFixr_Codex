@@ -4,6 +4,11 @@ import AppLogo from "@/components/AppLogo";
 import { Check, ChevronRight, Clock, Zap, BarChart3, AlertCircle, ArrowRight } from "lucide-react";
 import { getLoginUrl } from "@/const";
 import { useState } from "react";
+import {
+  formatTruckFixrCad,
+  getPublicTruckFixrPlans,
+  getTruckFixrPlanPrice,
+} from "../../../shared/truckfixrPricing";
 
 export default function Landing() {
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
@@ -15,7 +20,7 @@ export default function Landing() {
     },
     {
       question: "Can I start with a free trial?",
-      answer: "Yes. All new fleets get a 14-day free trial on the Starter plan. No credit card required. Upgrade anytime to access more trucks and premium TADIS features.",
+      answer: "Yes. New accounts can start on TruckFixr's 14-day free trial with 2 powered vehicles, 2 active trailers, and 10 total AI diagnostic sessions. No credit card is required.",
     },
     {
       question: "How do I add my team?",
@@ -23,7 +28,7 @@ export default function Landing() {
     },
     {
       question: "What if I have more than 20 trucks?",
-      answer: "The Fleet plan supports up to 20 trucks. For larger fleets, contact our sales team for custom pricing.",
+      answer: "TruckFixr Fleet Pro includes up to 20 powered vehicles. For 21+ powered vehicles or trailer-heavy operations, contact TruckFixr for custom fleet pricing.",
     },
     {
       question: "Is my data secure?",
@@ -31,7 +36,7 @@ export default function Landing() {
     },
   ];
 
-const pricingPlans = [
+const legacyPricingPlans = [
     {
       name: "Starter",
       trucks: "2–5 trucks",
@@ -81,6 +86,10 @@ const pricingPlans = [
       highlighted: false,
     },
   ];
+
+  const pricingPlans = getPublicTruckFixrPlans().filter((plan) =>
+    ["free_trial", "small_fleet", "fleet_growth", "fleet_pro"].includes(plan.planKey)
+  );
 
   const supporters = [
     {
@@ -151,7 +160,7 @@ const pricingPlans = [
               <a href="#how-it-works">See How It Works</a>
             </Button>
           </div>
-          <p className="text-sm text-slate-500">No credit card required. 14-day free trial on Starter plan.</p>
+          <p className="text-sm text-slate-500">No credit card required. Start with TruckFixr&apos;s 14-day free trial.</p>
         </div>
       </section>
 
@@ -291,40 +300,58 @@ const pricingPlans = [
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <h2 className="text-3xl sm:text-4xl font-bold text-slate-900 mb-4">Simple, Transparent Pricing</h2>
-            <p className="text-lg text-slate-600">All plans include a 14-day free trial. Upgrade anytime.</p>
+            <p className="text-lg text-slate-600">Plans are based on active powered vehicles, with matching trailer allowance built in.</p>
           </div>
-          <div className="grid md:grid-cols-3 gap-8">
-            {pricingPlans.map((plan, idx) => (
+          <div className="grid gap-8 md:grid-cols-2 xl:grid-cols-4">
+            {pricingPlans.map((plan) => (
               <Card
-                key={idx}
+                key={plan.planKey}
                 className={`flex flex-col ${
-                  plan.highlighted ? "border-blue-600 border-2 shadow-lg" : "border-slate-200"
+                  plan.recommended ? "border-blue-600 border-2 shadow-lg" : "border-slate-200"
                 }`}
               >
-                {plan.highlighted && (
+                {plan.recommended && (
                   <div className="bg-blue-600 text-white px-4 py-2 text-center text-sm font-semibold">
                     Most Popular
                   </div>
                 )}
                 <CardHeader>
                   <CardTitle>{plan.name}</CardTitle>
-                  <CardDescription>{plan.trucks}</CardDescription>
+                  <CardDescription>{plan.publicNote}</CardDescription>
                   <div className="mt-4">
-                    <span className="text-3xl font-bold text-slate-900">{plan.price}</span>
-                    <span className="text-slate-600">{plan.period}</span>
+                    <span className="text-3xl font-bold text-slate-900">
+                      {plan.billingInterval === "trial"
+                        ? "CAD $0"
+                        : formatTruckFixrCad(getTruckFixrPlanPrice(plan.planKey, "monthly"))}
+                    </span>
+                    <span className="text-slate-600">{plan.billingInterval === "trial" ? "/trial" : "/month"}</span>
                   </div>
                 </CardHeader>
                 <CardContent className="flex-1 space-y-4">
-                  <Button asChild className="w-full" variant={plan.highlighted ? "default" : "outline"}>
+                  <Button asChild className="w-full" variant={plan.recommended ? "default" : "outline"}>
                     <a href="/signup">{plan.cta}</a>
                   </Button>
                   <ul className="space-y-3">
-                    {plan.features.map((feature, fidx) => (
-                      <li key={fidx} className="flex gap-2 text-sm text-slate-600">
-                        <Check className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
-                        <span>{feature}</span>
-                      </li>
-                    ))}
+                    <li className="flex gap-2 text-sm text-slate-600">
+                      <Check className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
+                      <span>{plan.poweredVehicleLimit ?? "Custom"} powered vehicles included</span>
+                    </li>
+                    <li className="flex gap-2 text-sm text-slate-600">
+                      <Check className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
+                      <span>{plan.includedTrailerLimit ?? "Custom"} active trailers included</span>
+                    </li>
+                    <li className="flex gap-2 text-sm text-slate-600">
+                      <Check className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
+                      <span>{plan.aiDiagnosticSessionLimit ?? "Custom"} AI diagnostic sessions {plan.aiSessionLimitType === "total" ? "total" : "per month"}</span>
+                    </li>
+                    <li className="flex gap-2 text-sm text-slate-600">
+                      <Check className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
+                      <span>Driver assignments: {plan.driverAssignments === true ? "Included" : plan.driverAssignments}</span>
+                    </li>
+                    <li className="flex gap-2 text-sm text-slate-600">
+                      <Check className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
+                      <span>Fleet dashboard: {plan.fleetDashboard}</span>
+                    </li>
                   </ul>
                 </CardContent>
               </Card>
@@ -332,7 +359,7 @@ const pricingPlans = [
           </div>
           <div className="mt-12 p-6 bg-blue-50 rounded-lg border border-blue-200 text-center">
             <p className="text-slate-700">
-              <strong>Premium TADIS Add-on:</strong> $99/month for predictive maintenance, advanced telematics, and compliance insights.
+              <strong>Need more than 20 powered vehicles?</strong> TruckFixr can set up a custom fleet plan for larger or trailer-heavy operations.
             </p>
           </div>
         </div>

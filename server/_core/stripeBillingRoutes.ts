@@ -1,5 +1,6 @@
 import express, { type Express, type Request, type Response } from "express";
 import {
+  getTruckFixrBillingSnapshotFromStripeSubscription,
   getSubscriptionSnapshotFromStripeSubscription,
   isStripeConfigured,
   isStripeInvoiceEvent,
@@ -30,11 +31,41 @@ export async function processStripeWebhookEvent(event: {
 
       if (userId && subscriptionId) {
         const subscription = await retrieveStripeSubscription(subscriptionId);
-        const snapshot = getSubscriptionSnapshotFromStripeSubscription(subscription);
-        await syncSubscriptionState({
-          userId,
-          ...snapshot,
-        });
+        const truckfixrSnapshot = getTruckFixrBillingSnapshotFromStripeSubscription(subscription);
+        if (truckfixrSnapshot.companyId && truckfixrSnapshot.planKey) {
+          await syncSubscriptionState({
+            userId,
+            fleetId: truckfixrSnapshot.companyId,
+            tier: truckfixrSnapshot.planKey === "fleet_pro" || truckfixrSnapshot.planKey === "custom_fleet" ? "fleet" : truckfixrSnapshot.planKey === "free_trial" ? "free" : "pro",
+            billingCadence: truckfixrSnapshot.billingInterval === "annual" ? "annual" : "monthly",
+            billingStatus: truckfixrSnapshot.billingStatus === "trialing" ? "trialing" : "active",
+            stripeCustomerId: truckfixrSnapshot.stripeCustomerId,
+            stripeSubscriptionId: truckfixrSnapshot.stripeSubscriptionId,
+            stripePriceId: truckfixrSnapshot.stripePriceId,
+            currentPeriodStart: truckfixrSnapshot.subscriptionStartedAt,
+            currentPeriodEnd: truckfixrSnapshot.subscriptionRenewsAt,
+            trialStart: truckfixrSnapshot.trialStartedAt,
+            trialEnd: truckfixrSnapshot.trialEndsAt,
+            cancelAtPeriodEnd: subscription.cancel_at_period_end ?? false,
+            companyPlanKey: truckfixrSnapshot.planKey,
+            companyBillingInterval: truckfixrSnapshot.billingInterval,
+            poweredVehicleLimit: truckfixrSnapshot.poweredVehicleLimit,
+            includedTrailerLimit: truckfixrSnapshot.includedTrailerLimit,
+            paidExtraTrailerQuantity: truckfixrSnapshot.paidExtraTrailerQuantity,
+            totalActiveTrailerLimit: truckfixrSnapshot.totalActiveTrailerLimit,
+            aiSessionMonthlyLimit: truckfixrSnapshot.aiSessionMonthlyLimit,
+            subscriptionStartedAt: truckfixrSnapshot.subscriptionStartedAt,
+            subscriptionRenewsAt: truckfixrSnapshot.subscriptionRenewsAt,
+            isTrial: truckfixrSnapshot.isTrial,
+            isPaidPilot: truckfixrSnapshot.isPaidPilot,
+          });
+        } else {
+          const snapshot = getSubscriptionSnapshotFromStripeSubscription(subscription);
+          await syncSubscriptionState({
+            userId,
+            ...snapshot,
+          });
+        }
       }
       break;
     }
@@ -49,11 +80,41 @@ export async function processStripeWebhookEvent(event: {
         });
 
         if (userId) {
-          const snapshot = getSubscriptionSnapshotFromStripeSubscription(object);
-          await syncSubscriptionState({
-            userId,
-            ...snapshot,
-          });
+          const truckfixrSnapshot = getTruckFixrBillingSnapshotFromStripeSubscription(object);
+          if (truckfixrSnapshot.companyId && truckfixrSnapshot.planKey) {
+            await syncSubscriptionState({
+              userId,
+              fleetId: truckfixrSnapshot.companyId,
+              tier: truckfixrSnapshot.planKey === "fleet_pro" || truckfixrSnapshot.planKey === "custom_fleet" ? "fleet" : truckfixrSnapshot.planKey === "free_trial" ? "free" : "pro",
+              billingCadence: truckfixrSnapshot.billingInterval === "annual" ? "annual" : "monthly",
+              billingStatus: truckfixrSnapshot.billingStatus === "trialing" ? "trialing" : "active",
+              stripeCustomerId: truckfixrSnapshot.stripeCustomerId,
+              stripeSubscriptionId: truckfixrSnapshot.stripeSubscriptionId,
+              stripePriceId: truckfixrSnapshot.stripePriceId,
+              currentPeriodStart: truckfixrSnapshot.subscriptionStartedAt,
+              currentPeriodEnd: truckfixrSnapshot.subscriptionRenewsAt,
+              trialStart: truckfixrSnapshot.trialStartedAt,
+              trialEnd: truckfixrSnapshot.trialEndsAt,
+              cancelAtPeriodEnd: object.cancel_at_period_end ?? false,
+              companyPlanKey: truckfixrSnapshot.planKey,
+              companyBillingInterval: truckfixrSnapshot.billingInterval,
+              poweredVehicleLimit: truckfixrSnapshot.poweredVehicleLimit,
+              includedTrailerLimit: truckfixrSnapshot.includedTrailerLimit,
+              paidExtraTrailerQuantity: truckfixrSnapshot.paidExtraTrailerQuantity,
+              totalActiveTrailerLimit: truckfixrSnapshot.totalActiveTrailerLimit,
+              aiSessionMonthlyLimit: truckfixrSnapshot.aiSessionMonthlyLimit,
+              subscriptionStartedAt: truckfixrSnapshot.subscriptionStartedAt,
+              subscriptionRenewsAt: truckfixrSnapshot.subscriptionRenewsAt,
+              isTrial: truckfixrSnapshot.isTrial,
+              isPaidPilot: truckfixrSnapshot.isPaidPilot,
+            });
+          } else {
+            const snapshot = getSubscriptionSnapshotFromStripeSubscription(object);
+            await syncSubscriptionState({
+              userId,
+              ...snapshot,
+            });
+          }
         }
       }
       break;
@@ -102,20 +163,53 @@ export async function processStripeWebhookEvent(event: {
 
         if (userId) {
           const current = await getSubscriptionState(userId);
-          await syncSubscriptionState({
-            userId,
-            tier: current.tier,
-            billingCadence: current.billingCadence,
-            billingStatus: event.type === "invoice.payment_failed" ? "past_due" : "active",
-            stripeCustomerId: object.customer,
-            stripeSubscriptionId: object.subscription ?? current.stripeSubscriptionId,
-            stripePriceId: current.stripePriceId,
-            currentPeriodStart: current.currentPeriodStart,
-            currentPeriodEnd: current.currentPeriodEnd,
-            trialStart: current.trialStart,
-            trialEnd: current.trialEnd,
-            cancelAtPeriodEnd: current.cancelAtPeriodEnd,
-          });
+          if (object.subscription) {
+            const subscription = await retrieveStripeSubscription(object.subscription);
+            const truckfixrSnapshot = getTruckFixrBillingSnapshotFromStripeSubscription(subscription);
+            if (truckfixrSnapshot.companyId && truckfixrSnapshot.planKey) {
+              await syncSubscriptionState({
+                userId,
+                fleetId: truckfixrSnapshot.companyId,
+                tier: truckfixrSnapshot.planKey === "fleet_pro" || truckfixrSnapshot.planKey === "custom_fleet" ? "fleet" : truckfixrSnapshot.planKey === "free_trial" ? "free" : "pro",
+                billingCadence: truckfixrSnapshot.billingInterval === "annual" ? "annual" : "monthly",
+                billingStatus: event.type === "invoice.payment_failed" ? "past_due" : "active",
+                stripeCustomerId: object.customer,
+                stripeSubscriptionId: object.subscription ?? current.stripeSubscriptionId,
+                stripePriceId: truckfixrSnapshot.stripePriceId,
+                currentPeriodStart: truckfixrSnapshot.subscriptionStartedAt,
+                currentPeriodEnd: truckfixrSnapshot.subscriptionRenewsAt,
+                trialStart: truckfixrSnapshot.trialStartedAt,
+                trialEnd: truckfixrSnapshot.trialEndsAt,
+                cancelAtPeriodEnd: subscription.cancel_at_period_end ?? false,
+                companyPlanKey: truckfixrSnapshot.planKey,
+                companyBillingInterval: truckfixrSnapshot.billingInterval,
+                poweredVehicleLimit: truckfixrSnapshot.poweredVehicleLimit,
+                includedTrailerLimit: truckfixrSnapshot.includedTrailerLimit,
+                paidExtraTrailerQuantity: truckfixrSnapshot.paidExtraTrailerQuantity,
+                totalActiveTrailerLimit: truckfixrSnapshot.totalActiveTrailerLimit,
+                aiSessionMonthlyLimit: truckfixrSnapshot.aiSessionMonthlyLimit,
+                subscriptionStartedAt: truckfixrSnapshot.subscriptionStartedAt,
+                subscriptionRenewsAt: truckfixrSnapshot.subscriptionRenewsAt,
+                isTrial: truckfixrSnapshot.isTrial,
+                isPaidPilot: truckfixrSnapshot.isPaidPilot,
+              });
+            } else {
+              await syncSubscriptionState({
+                userId,
+                tier: current.tier,
+                billingCadence: current.billingCadence,
+                billingStatus: event.type === "invoice.payment_failed" ? "past_due" : "active",
+                stripeCustomerId: object.customer,
+                stripeSubscriptionId: object.subscription ?? current.stripeSubscriptionId,
+                stripePriceId: current.stripePriceId,
+                currentPeriodStart: current.currentPeriodStart,
+                currentPeriodEnd: current.currentPeriodEnd,
+                trialStart: current.trialStart,
+                trialEnd: current.trialEnd,
+                cancelAtPeriodEnd: current.cancelAtPeriodEnd,
+              });
+            }
+          }
         }
       }
       break;

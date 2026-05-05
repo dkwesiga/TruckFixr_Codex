@@ -1,5 +1,5 @@
 export type DriverVehicleRecord = {
-  id: number;
+  id: number | string;
   fleetId: number;
   label: string;
   vin: string;
@@ -45,6 +45,10 @@ export function createTemporaryDriverVehicleId(seed = Date.now()) {
 }
 
 function normalizeDriverVehicleId(value: unknown, fallbackSeed: number) {
+  if (typeof value === "string" && value.length > 0) {
+    return value;
+  }
+
   if (
     typeof value === "number" &&
     Number.isInteger(value) &&

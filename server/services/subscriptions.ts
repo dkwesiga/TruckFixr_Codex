@@ -38,6 +38,13 @@ import {
   SUBSCRIPTION_PLANS,
   SubscriptionTier,
 } from "../../shared/billing";
+import {
+  getTruckFixrPlan,
+  getTruckFixrPlanLimits,
+  type BillingInterval as TruckFixrBillingInterval,
+  type BillingStatus as TruckFixrBillingStatus,
+  type PlanKey,
+} from "../../shared/truckfixrPricing";
 
 export type SubscriptionState = {
   tier: SubscriptionTier;
@@ -55,7 +62,122 @@ export type SubscriptionState = {
   cancelAtPeriodEnd: boolean;
   pilotAccess: PilotAccessOverview | null;
   canManageBilling?: boolean;
+  companyPlanKey?: PlanKey;
+  companyBillingInterval?: TruckFixrBillingInterval;
+  companyBillingStatus?: TruckFixrBillingStatus;
+  poweredVehicleLimit?: number | null;
+  includedTrailerLimit?: number | null;
+  paidExtraTrailerQuantity?: number;
+  totalActiveTrailerLimit?: number | null;
+  aiSessionMonthlyLimit?: number | null;
+  aiSessionsUsedCurrentPeriod?: number;
+  aiSessionsResetAt?: Date | null;
 };
+
+type CompanyBillingRow = {
+  planName?: string | null;
+  billingInterval?: string | null;
+  billingStatus?: string | null;
+  poweredVehicleLimit?: number | null;
+  includedTrailerLimit?: number | null;
+  paidExtraTrailerQuantity?: number | null;
+  totalActiveTrailerLimit?: number | null;
+  aiSessionMonthlyLimit?: number | null;
+  aiSessionsUsedCurrentPeriod?: number | null;
+  aiSessionsResetAt?: Date | null;
+  trialStartedAt?: Date | null;
+  trialEndsAt?: Date | null;
+  subscriptionStartedAt?: Date | null;
+  subscriptionRenewsAt?: Date | null;
+  stripeCustomerId?: string | null;
+  stripeSubscriptionId?: string | null;
+  isTrial?: boolean | null;
+  isPaidPilot?: boolean | null;
+  paidPilotStartedAt?: Date | null;
+  paidPilotEndsAt?: Date | null;
+};
+
+function mapPlanKeyToLegacyTier(planKey: PlanKey): SubscriptionTier {
+  switch (planKey) {
+    case "owner_operator":
+    case "small_fleet":
+    case "fleet_growth":
+      return "pro";
+    case "fleet_pro":
+    case "custom_fleet":
+      return "fleet";
+    default:
+      return "free";
+  }
+}
+
+function normalizePlanKey(value: string | null | undefined): PlanKey {
+  if (value === "owner_operator") return "owner_operator";
+  if (value === "small_fleet") return "small_fleet";
+  if (value === "fleet_growth") return "fleet_growth";
+  if (value === "fleet_pro") return "fleet_pro";
+  if (value === "custom_fleet") return "custom_fleet";
+  return "free_trial";
+}
+
+function normalizeBillingInterval(value: string | null | undefined): TruckFixrBillingInterval {
+  if (value === "monthly") return "monthly";
+  if (value === "annual") return "annual";
+  if (value === "pilot") return "pilot";
+  if (value === "custom") return "custom";
+  return "trial";
+}
+
+function normalizeBillingStatus(value: string | null | undefined): TruckFixrBillingStatus {
+  if (value === "active") return "active";
+  if (value === "trialing") return "trialing";
+  if (value === "past_due") return "past_due";
+  if (value === "canceled") return "canceled";
+  if (value === "incomplete") return "incomplete";
+  if (value === "expired") return "expired";
+  return "custom";
+}
+
+function getCompanyBillingPlan(row: CompanyBillingRow | null | undefined) {
+  const planKey = normalizePlanKey(row?.planName ?? null);
+  const plan = getTruckFixrPlan(planKey);
+  const legacyTier = mapPlanKeyToLegacyTier(planKey);
+  const billingInterval = normalizeBillingInterval(row?.billingInterval ?? null);
+  const billingStatus = normalizeBillingStatus(row?.billingStatus ?? null);
+  const limits = getTruckFixrPlanLimits(planKey);
+  const poweredVehicleLimit = row?.poweredVehicleLimit ?? limits.poweredVehicleLimit ?? null;
+  const includedTrailerLimit = row?.includedTrailerLimit ?? limits.includedTrailerLimit ?? null;
+  const paidExtraTrailerQuantity = row?.paidExtraTrailerQuantity ?? 0;
+  const totalActiveTrailerLimit =
+    row?.totalActiveTrailerLimit ?? (includedTrailerLimit == null ? null : includedTrailerLimit + paidExtraTrailerQuantity);
+  const aiSessionMonthlyLimit = row?.aiSessionMonthlyLimit ?? limits.aiDiagnosticSessionLimit ?? null;
+  const aiSessionsUsedCurrentPeriod = row?.aiSessionsUsedCurrentPeriod ?? 0;
+
+  return {
+    planKey,
+    plan,
+    legacyTier,
+    billingInterval,
+    billingStatus,
+    poweredVehicleLimit,
+    includedTrailerLimit,
+    paidExtraTrailerQuantity,
+    totalActiveTrailerLimit,
+    aiSessionMonthlyLimit,
+    aiSessionsUsedCurrentPeriod,
+    aiSessionsResetAt: row?.aiSessionsResetAt ?? null,
+    trialStartedAt: row?.trialStartedAt ?? null,
+    trialEndsAt: row?.trialEndsAt ?? null,
+    subscriptionStartedAt: row?.subscriptionStartedAt ?? null,
+    subscriptionRenewsAt: row?.subscriptionRenewsAt ?? null,
+    stripeCustomerId: row?.stripeCustomerId ?? null,
+    stripeSubscriptionId: row?.stripeSubscriptionId ?? null,
+    isTrial: row?.isTrial ?? false,
+    isPaidPilot: row?.isPaidPilot ?? false,
+    paidPilotStartedAt: row?.paidPilotStartedAt ?? null,
+    paidPilotEndsAt: row?.paidPilotEndsAt ?? null,
+  };
+}
 
 function getMonthStart() {
   const now = new Date();
@@ -90,6 +212,34 @@ export async function getSubscriptionState(userId: number): Promise<Subscription
   const pilotAccess = await reconcilePilotAccessForUser(userId);
   const primaryFleetId = await getUserPrimaryFleetId(userId);
 
+  const [fleetRow] = await db
+    .select({
+      id: fleets.id,
+      planName: fleets.planName,
+      billingInterval: fleets.billingInterval,
+      billingStatus: fleets.billingStatus,
+      poweredVehicleLimit: fleets.poweredVehicleLimit,
+      includedTrailerLimit: fleets.includedTrailerLimit,
+      paidExtraTrailerQuantity: fleets.paidExtraTrailerQuantity,
+      totalActiveTrailerLimit: fleets.totalActiveTrailerLimit,
+      aiSessionMonthlyLimit: fleets.aiSessionMonthlyLimit,
+      aiSessionsUsedCurrentPeriod: fleets.aiSessionsUsedCurrentPeriod,
+      aiSessionsResetAt: fleets.aiSessionsResetAt,
+      trialStartedAt: fleets.trialStartedAt,
+      trialEndsAt: fleets.trialEndsAt,
+      subscriptionStartedAt: fleets.subscriptionStartedAt,
+      subscriptionRenewsAt: fleets.subscriptionRenewsAt,
+      stripeCustomerId: fleets.stripeCustomerId,
+      stripeSubscriptionId: fleets.stripeSubscriptionId,
+      isTrial: fleets.isTrial,
+      isPaidPilot: fleets.isPaidPilot,
+      paidPilotStartedAt: fleets.paidPilotStartedAt,
+      paidPilotEndsAt: fleets.paidPilotEndsAt,
+    })
+    .from(fleets)
+    .where(eq(fleets.id, primaryFleetId))
+    .limit(1);
+
   const [userRow] = await db
     .select({
       role: users.role,
@@ -123,24 +273,42 @@ export async function getSubscriptionState(userId: number): Promise<Subscription
       .limit(1)
   )[0];
 
-  const tier = normalizeSubscriptionTier(latestSubscription?.tier ?? userRow?.subscriptionTier ?? "free");
-  const billingCadence = (latestSubscription?.billingCadence ??
-    userRow?.billingCadence ??
-    "monthly") as BillingCadence;
-  const billingStatus = (latestSubscription?.billingStatus ??
-    userRow?.billingStatus ??
-    "active") as BillingStatus;
-  const stripeCustomerId = latestSubscription?.stripeCustomerId ?? userRow?.stripeCustomerId ?? null;
-  const stripeSubscriptionId =
-    latestSubscription?.stripeSubscriptionId ?? userRow?.stripeSubscriptionId ?? null;
+  const companyBilling = getCompanyBillingPlan(fleetRow);
+  const tier = fleetRow
+    ? companyBilling.legacyTier
+    : normalizeSubscriptionTier(latestSubscription?.tier ?? userRow?.subscriptionTier ?? "free");
+  const billingCadence = fleetRow
+    ? (companyBilling.billingInterval === "annual" ? "annual" : "monthly")
+    : (latestSubscription?.billingCadence ??
+      userRow?.billingCadence ??
+      "monthly") as BillingCadence;
+  const billingStatus = fleetRow
+    ? (companyBilling.billingStatus as BillingStatus)
+    : (latestSubscription?.billingStatus ??
+      userRow?.billingStatus ??
+      "active") as BillingStatus;
+  const stripeCustomerId = fleetRow
+    ? companyBilling.stripeCustomerId
+    : latestSubscription?.stripeCustomerId ?? userRow?.stripeCustomerId ?? null;
+  const stripeSubscriptionId = fleetRow
+    ? companyBilling.stripeSubscriptionId
+    : latestSubscription?.stripeSubscriptionId ?? userRow?.stripeSubscriptionId ?? null;
   const stripePriceId = latestSubscription?.stripePriceId ?? userRow?.stripePriceId ?? null;
-  const currentPeriodStart =
-    latestSubscription?.currentPeriodStart ?? userRow?.currentPeriodStart ?? null;
-  const currentPeriodEnd = latestSubscription?.currentPeriodEnd ?? userRow?.currentPeriodEnd ?? null;
-  const trialStart = latestSubscription?.trialStart ?? userRow?.trialStart ?? null;
-  const trialEnd = latestSubscription?.trialEnd ?? userRow?.trialEnd ?? null;
-  const cancelAtPeriodEnd =
-    latestSubscription?.cancelAtPeriodEnd ?? userRow?.cancelAtPeriodEnd ?? false;
+  const currentPeriodStart = fleetRow
+    ? companyBilling.subscriptionStartedAt ?? companyBilling.trialStartedAt ?? null
+    : latestSubscription?.currentPeriodStart ?? userRow?.currentPeriodStart ?? null;
+  const currentPeriodEnd = fleetRow
+    ? companyBilling.subscriptionRenewsAt ?? companyBilling.trialEndsAt ?? null
+    : latestSubscription?.currentPeriodEnd ?? userRow?.currentPeriodEnd ?? null;
+  const trialStart = fleetRow
+    ? companyBilling.trialStartedAt ?? null
+    : latestSubscription?.trialStart ?? userRow?.trialStart ?? null;
+  const trialEnd = fleetRow
+    ? companyBilling.trialEndsAt ?? null
+    : latestSubscription?.trialEnd ?? userRow?.trialEnd ?? null;
+  const cancelAtPeriodEnd = fleetRow
+    ? companyBilling.billingStatus === "canceled"
+    : latestSubscription?.cancelAtPeriodEnd ?? userRow?.cancelAtPeriodEnd ?? false;
   const activeFleetId = primaryFleetId || (await getDefaultFleetIdForUser(userId));
 
   if (tier === "pilot_access" && pilotAccess?.status !== "active") {
@@ -186,6 +354,16 @@ export async function getSubscriptionState(userId: number): Promise<Subscription
     }).catch(() => false),
     pilotAccess:
       pilotAccess ?? (tier === "pilot_access" ? await getPilotAccessOverview(userId) : null),
+    companyPlanKey: fleetRow ? companyBilling.planKey : undefined,
+    companyBillingInterval: fleetRow ? companyBilling.billingInterval : undefined,
+    companyBillingStatus: fleetRow ? companyBilling.billingStatus : undefined,
+    poweredVehicleLimit: fleetRow ? companyBilling.poweredVehicleLimit : undefined,
+    includedTrailerLimit: fleetRow ? companyBilling.includedTrailerLimit : undefined,
+    paidExtraTrailerQuantity: fleetRow ? companyBilling.paidExtraTrailerQuantity : undefined,
+    totalActiveTrailerLimit: fleetRow ? companyBilling.totalActiveTrailerLimit : undefined,
+    aiSessionMonthlyLimit: fleetRow ? companyBilling.aiSessionMonthlyLimit : undefined,
+    aiSessionsUsedCurrentPeriod: fleetRow ? companyBilling.aiSessionsUsedCurrentPeriod : undefined,
+    aiSessionsResetAt: fleetRow ? companyBilling.aiSessionsResetAt : undefined,
   };
 }
 
@@ -235,6 +413,19 @@ export async function syncSubscriptionState(input: {
   trialStart?: Date | null;
   trialEnd?: Date | null;
   cancelAtPeriodEnd?: boolean;
+  companyPlanKey?: PlanKey;
+  companyBillingInterval?: TruckFixrBillingInterval;
+  poweredVehicleLimit?: number | null;
+  includedTrailerLimit?: number | null;
+  paidExtraTrailerQuantity?: number;
+  totalActiveTrailerLimit?: number | null;
+  aiSessionMonthlyLimit?: number | null;
+  aiSessionsUsedCurrentPeriod?: number;
+  aiSessionsResetAt?: Date | null;
+  isTrial?: boolean;
+  isPaidPilot?: boolean;
+  subscriptionStartedAt?: Date | null;
+  subscriptionRenewsAt?: Date | null;
 }) {
   const db = await getDb();
   if (!db) {
@@ -305,6 +496,42 @@ export async function syncSubscriptionState(input: {
     })
     .where(eq(users.id, input.userId));
 
+  if (input.fleetId != null) {
+    const companyPlanKey = input.companyPlanKey ?? (input.tier === "free" ? "free_trial" : input.tier === "fleet" ? "custom_fleet" : "fleet_growth");
+    const companyPlan = getTruckFixrPlan(companyPlanKey);
+    const companyLimits = getTruckFixrPlanLimits(companyPlanKey);
+    await db
+      .update(fleets)
+      .set({
+        planName: companyPlanKey,
+        billingInterval: input.companyBillingInterval ?? (input.billingCadence === "annual" ? "annual" : input.tier === "free" ? "trial" : "monthly"),
+        billingStatus: input.billingStatus as BillingStatus,
+        poweredVehicleLimit: input.poweredVehicleLimit ?? companyLimits.poweredVehicleLimit,
+        includedTrailerLimit: input.includedTrailerLimit ?? companyLimits.includedTrailerLimit,
+        paidExtraTrailerQuantity: input.paidExtraTrailerQuantity ?? 0,
+        totalActiveTrailerLimit:
+          input.totalActiveTrailerLimit ??
+          (companyLimits.includedTrailerLimit == null
+            ? null
+            : companyLimits.includedTrailerLimit + (input.paidExtraTrailerQuantity ?? 0)),
+        aiSessionMonthlyLimit: input.aiSessionMonthlyLimit ?? companyLimits.aiDiagnosticSessionLimit,
+        aiSessionsUsedCurrentPeriod: input.aiSessionsUsedCurrentPeriod ?? 0,
+        aiSessionsResetAt: input.aiSessionsResetAt ?? null,
+        trialStartedAt: input.trialStart ?? null,
+        trialEndsAt: input.trialEnd ?? null,
+        subscriptionStartedAt: input.subscriptionStartedAt ?? input.currentPeriodStart ?? null,
+        subscriptionRenewsAt: input.subscriptionRenewsAt ?? input.currentPeriodEnd ?? null,
+        stripeCustomerId: input.stripeCustomerId ?? null,
+        stripeSubscriptionId: input.stripeSubscriptionId ?? null,
+        isTrial: input.isTrial ?? input.billingStatus === "trialing",
+        isPaidPilot: input.isPaidPilot ?? input.companyBillingInterval === "pilot",
+        paidPilotStartedAt: input.companyBillingInterval === "pilot" ? input.trialStart ?? input.currentPeriodStart ?? null : null,
+        paidPilotEndsAt: input.companyBillingInterval === "pilot" ? input.trialEnd ?? input.currentPeriodEnd ?? null : null,
+        updatedAt: now,
+      })
+      .where(eq(fleets.id, input.fleetId));
+  }
+
   if (currentTier === "pilot_access" && (input.tier === "pro" || input.tier === "fleet")) {
     await markPilotAccessConvertedToPaid({
       userId: input.userId,
@@ -356,7 +583,14 @@ export async function getUsageSummary(userId: number, fleetId?: number) {
 
   const activeVehicleRows = fleetId
     ? await db
-        .select({ id: vehicles.id, status: vehicles.status, assetRecordStatus: vehicles.assetRecordStatus })
+        .select({
+          id: vehicles.id,
+          status: vehicles.status,
+          assetRecordStatus: vehicles.assetRecordStatus,
+          assetCategory: vehicles.assetCategory,
+          isPoweredVehicle: vehicles.isPoweredVehicle,
+          isTrailer: vehicles.isTrailer,
+        })
         .from(vehicles)
         .where(eq(vehicles.fleetId, fleetId))
     : [];
@@ -375,11 +609,21 @@ export async function getUsageSummary(userId: number, fleetId?: number) {
   const activeAssets = activeVehicleRows.filter(
     (row) => row.assetRecordStatus === "active" && row.status === "active"
   );
+  const activePoweredVehicles = activeAssets.filter(
+    (row) =>
+      row.assetCategory === "powered_vehicle" ||
+      row.isPoweredVehicle === true ||
+      (row.isTrailer !== true && row.assetCategory !== "trailer")
+  );
+  const activeTrailers = activeAssets.filter(
+    (row) => row.assetCategory === "trailer" || row.isTrailer === true
+  );
 
   return {
     diagnosticsThisMonth: diagnosticRows.length,
-    activeVehicleCount: activeAssets.length,
-    billableVehicleCount: activeAssets.length,
+    activeVehicleCount: activePoweredVehicles.length,
+    billableVehicleCount: activePoweredVehicles.length,
+    activeTrailerCount: activeTrailers.length,
     managedDriverCount: managedDriverRows.length,
   };
 }
@@ -388,32 +632,45 @@ export async function getEntitlementState(input: { userId: number; fleetId: numb
   const subscription = await getSubscriptionState(input.userId);
   const plan = SUBSCRIPTION_PLANS[subscription.effectiveTier];
   const usage = await getUsageSummary(input.userId, input.fleetId);
-  const activeVehicleLimit = subscription.pilotAccess?.maxVehicles ?? plan.limits.activeVehicleCount;
+  const activeVehicleLimit =
+    subscription.poweredVehicleLimit ??
+    subscription.pilotAccess?.maxVehicles ??
+    plan.limits.activeVehicleCount;
+  const trailerLimit = subscription.totalActiveTrailerLimit ?? subscription.includedTrailerLimit ?? null;
   const driverLimit = subscription.pilotAccess?.maxUsers ?? plan.limits.driverCount;
 
   const canAddVehicle =
     activeVehicleLimit === null || usage.activeVehicleCount < activeVehicleLimit;
+  const canAddTrailer = trailerLimit === null || usage.activeTrailerCount < trailerLimit;
   const canInviteDriver =
     driverLimit === null || usage.managedDriverCount < driverLimit;
   const canRunDiagnostics =
-    plan.limits.diagnosticsPerMonth === null ||
-    usage.diagnosticsThisMonth < plan.limits.diagnosticsPerMonth;
+    (subscription.aiSessionMonthlyLimit ?? plan.limits.diagnosticsPerMonth) === null ||
+    usage.diagnosticsThisMonth <
+      (subscription.aiSessionMonthlyLimit ?? plan.limits.diagnosticsPerMonth ?? Number.MAX_SAFE_INTEGER);
 
   const trialActive =
     subscription.billingStatus === "trialing" &&
-    Boolean(subscription.trialEnd && subscription.trialEnd.getTime() > Date.now());
+    Boolean(
+      (subscription.trialEnd && subscription.trialEnd.getTime() > Date.now()) ||
+      (subscription.companyBillingStatus === "trialing" &&
+        subscription.trialEnd &&
+        subscription.trialEnd.getTime() > Date.now())
+    );
 
   return {
     subscription,
     plan,
     usage,
     activeVehicleLimit,
+    trailerLimit,
     driverLimit,
     billableVehicleCount:
       subscription.effectiveTier === "pro"
         ? Math.max(PRO_MINIMUM_BILLABLE_ACTIVE_VEHICLES, usage.billableVehicleCount)
         : usage.billableVehicleCount,
     canAddVehicle,
+    canAddTrailer,
     canInviteDriver,
     canRunDiagnostics,
     canRunInspections: true,
@@ -532,6 +789,15 @@ export async function recordDiagnosticUsage(input: {
         : String(input.estimatedCostUsd),
     metadata: input.metadata ?? null,
   });
+
+  await db
+    .update(fleets)
+    .set({
+      aiSessionsUsedCurrentPeriod: sql`${fleets.aiSessionsUsedCurrentPeriod} + 1`,
+      updatedAt: new Date(),
+    })
+    .where(eq(fleets.id, input.fleetId))
+    .catch(() => null);
 }
 
 export async function getDowngradeRequirements(input: {
@@ -762,6 +1028,8 @@ export async function getAdminBillingDashboard(input: { query?: string | null })
 export function getPlanSummary(state: SubscriptionState) {
   const effectivePlan = SUBSCRIPTION_PLANS[state.effectiveTier];
   const selectedPlan = SUBSCRIPTION_PLANS[state.tier];
+  const currentPlanKey = state.companyPlanKey ?? "free_trial";
+  const currentTruckFixrPlan = getTruckFixrPlan(currentPlanKey);
   const pricing =
     state.effectiveTier === "pro"
       ? calculateProPricing({
@@ -774,6 +1042,8 @@ export function getPlanSummary(state: SubscriptionState) {
     ...state,
     selectedPlan,
     effectivePlan,
+    currentPlanKey,
+    currentTruckFixrPlan,
     pricing,
     restrictedBecauseOfBilling: state.tier !== "free" && state.effectiveTier === "free",
   };

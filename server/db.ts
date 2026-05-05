@@ -76,6 +76,26 @@ async function ensureAuthSchema(pool: Pool) {
     await pool.query(`
       DO $$
       BEGIN
+        CREATE TYPE lead_interest_type AS ENUM ('book_a_demo', 'beta_access', 'pilot_inquiry', 'general_inquiry');
+      EXCEPTION
+        WHEN duplicate_object THEN NULL;
+      END
+      $$;
+    `);
+
+    await pool.query(`
+      DO $$
+      BEGIN
+        CREATE TYPE lead_status AS ENUM ('new', 'contacted', 'qualified', 'converted', 'closed', 'spam');
+      EXCEPTION
+        WHEN duplicate_object THEN NULL;
+      END
+      $$;
+    `);
+
+    await pool.query(`
+      DO $$
+      BEGIN
         CREATE TYPE pilot_access_code_status AS ENUM ('active', 'expired', 'revoked');
       EXCEPTION
         WHEN duplicate_object THEN NULL;
@@ -419,6 +439,111 @@ async function ensureAuthSchema(pool: Pool) {
     await pool.query(`
       ALTER TABLE "fleets"
       ADD COLUMN IF NOT EXISTS "subscriptionStatus" billing_status NOT NULL DEFAULT 'active';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "planName" varchar(64) NOT NULL DEFAULT 'free_trial';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "billingInterval" varchar(16) NOT NULL DEFAULT 'trial';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "billingStatus" billing_status NOT NULL DEFAULT 'trialing';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "poweredVehicleLimit" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "includedTrailerLimit" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "paidExtraTrailerQuantity" integer NOT NULL DEFAULT 0;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "totalActiveTrailerLimit" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "aiSessionMonthlyLimit" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "aiSessionsUsedCurrentPeriod" integer NOT NULL DEFAULT 0;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "aiSessionsResetAt" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "trialStartedAt" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "premiumTadis" boolean DEFAULT false;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "subscriptionStartedAt" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "subscriptionRenewsAt" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "stripeCustomerId" varchar(255);
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "stripeSubscriptionId" varchar(255);
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "isTrial" boolean NOT NULL DEFAULT false;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "isPaidPilot" boolean NOT NULL DEFAULT false;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "paidPilotStartedAt" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "paidPilotEndsAt" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "salesStatus" varchar(64) DEFAULT 'none';
     `);
 
     await pool.query(`
@@ -954,6 +1079,32 @@ async function ensureAuthSchema(pool: Pool) {
         "mainNeeds" text NOT NULL,
         "notes" text,
         "status" varchar(64) NOT NULL DEFAULT 'pending_fleet_review',
+        "createdAt" timestamp NOT NULL DEFAULT now(),
+        "updatedAt" timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "lead_submissions" (
+        "id" serial PRIMARY KEY,
+        "full_name" varchar(255) NOT NULL,
+        "company_name" varchar(255) NOT NULL,
+        "email" varchar(320) NOT NULL,
+        "phone" varchar(50),
+        "fleet_size" varchar(64) NOT NULL,
+        "vehicle_types" text,
+        "location" varchar(255),
+        "biggest_maintenance_challenge" text NOT NULL,
+        "interest_type" lead_interest_type NOT NULL DEFAULT 'book_a_demo',
+        "preferred_demo_time" varchar(255),
+        "source_page" varchar(255),
+        "utm_source" varchar(255),
+        "utm_medium" varchar(255),
+        "utm_campaign" varchar(255),
+        "utm_content" varchar(255),
+        "utm_term" varchar(255),
+        "referrer" text,
+        "status" lead_status NOT NULL DEFAULT 'new',
         "createdAt" timestamp NOT NULL DEFAULT now(),
         "updatedAt" timestamp NOT NULL DEFAULT now()
       );

@@ -16,6 +16,7 @@ import { AlertCircle, CheckCircle, Eye, Plus, SearchCode, Stethoscope, Truck } f
 
 type DriverVehicle = {
   id: number;
+  fleetId: number;
   label: string;
   vin: string;
   licensePlate: string;
@@ -45,6 +46,7 @@ type RecentActivityItem = {
 const initialVehicles: DriverVehicle[] = [
   {
     id: 42,
+    fleetId: 1,
     label: getVehicleDisplayLabel({ vin: "1XPWD49X91D487964", vehicleId: 42 }),
     vin: "1XPWD49X91D487964",
     licensePlate: "ABC-1234",
@@ -135,10 +137,11 @@ function DriverDashboardContent() {
     setActiveVehicleId(vehicle.id);
     saveLastDriverVehicleContext({
       id: vehicle.id,
+      fleetId: vehicle.fleetId,
       label: vehicle.label,
       vin: vehicle.vin,
     });
-    window.location.href = `/inspection?vehicle=${encodeURIComponent(String(vehicle.id))}&mode=daily`;
+    window.location.href = `/inspection?vehicle=${encodeURIComponent(String(vehicle.id))}&fleet=${encodeURIComponent(String(vehicle.fleetId))}&mode=daily`;
   };
 
   const startDiagnosis = (vehicle: DriverVehicle) => {
@@ -150,10 +153,11 @@ function DriverDashboardContent() {
     setActiveVehicleId(vehicle.id);
     saveLastDriverVehicleContext({
       id: vehicle.id,
+      fleetId: vehicle.fleetId,
       label: vehicle.label,
       vin: vehicle.vin,
     });
-    window.location.href = `/diagnosis?vehicle=${encodeURIComponent(String(vehicle.id))}&label=${encodeURIComponent(vehicle.label)}&vin=${encodeURIComponent(vehicle.vin)}`;
+    window.location.href = `/diagnosis?vehicle=${encodeURIComponent(String(vehicle.id))}&fleet=${encodeURIComponent(String(vehicle.fleetId))}&label=${encodeURIComponent(vehicle.label)}&vin=${encodeURIComponent(vehicle.vin)}`;
   };
 
   const decodeVin = async () => {
@@ -227,6 +231,7 @@ function DriverDashboardContent() {
 
     const nextVehicle: DriverVehicle = {
       id: createTemporaryDriverVehicleId(),
+      fleetId: 1,
       label,
       vin,
       licensePlate,

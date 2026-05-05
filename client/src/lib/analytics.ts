@@ -1,84 +1,54 @@
-import posthog from 'posthog-js';
+type AnalyticsProperties = Record<string, unknown> | undefined;
+
+function logAnalyticsEvent(eventName: string, properties?: AnalyticsProperties) {
+  if (import.meta.env.DEV) {
+    console.debug(`[Analytics] ${eventName}`, properties ?? {});
+  }
+}
 
 /**
- * Initialize PostHog analytics
- * Called once on app startup
+ * Analytics is intentionally a no-op in the MVP security build.
+ * This keeps the app from loading extra client-side telemetry bundles
+ * while preserving the same call sites across the app.
  */
 export function initializeAnalytics() {
-  const apiKey = import.meta.env.VITE_POSTHOG_API_KEY;
-  const apiHost = import.meta.env.VITE_POSTHOG_API_HOST || 'https://us.posthog.com';
-
-  if (!apiKey) {
-    console.warn('[Analytics] PostHog API key not configured');
-    return;
-  }
-
-  posthog.init(apiKey, {
-    api_host: apiHost,
-    loaded: (ph) => {
-      console.log('[Analytics] PostHog initialized');
-    },
-  });
+  return;
 }
 
-/**
- * Identify a user for analytics tracking
- */
-export function identifyUser(userId: string, properties?: Record<string, any>) {
-  posthog.identify(userId, {
-    ...properties,
-  });
+export function identifyUser(_userId: string, _properties?: AnalyticsProperties) {
+  return;
 }
 
-/**
- * Track a custom event
- */
-export function trackEvent(eventName: string, properties?: Record<string, any>) {
-  posthog.capture(eventName, properties);
+export function trackEvent(eventName: string, properties?: AnalyticsProperties) {
+  logAnalyticsEvent(eventName, properties);
 }
 
-/**
- * Track user signup event
- */
-export function trackSignup(method: 'oauth' | 'email', properties?: Record<string, any>) {
+export function trackSignup(method: 'oauth' | 'email', properties?: AnalyticsProperties) {
   trackEvent('user_signup', {
     signup_method: method,
     ...properties,
   });
 }
 
-/**
- * Track user login event
- */
-export function trackLogin(method: 'oauth' | 'email', properties?: Record<string, any>) {
+export function trackLogin(method: 'oauth' | 'email', properties?: AnalyticsProperties) {
   trackEvent('user_login', {
     login_method: method,
     ...properties,
   });
 }
 
-/**
- * Track user logout event
- */
 export function trackLogout() {
   trackEvent('user_logout');
-  posthog.reset();
 }
 
-/**
- * Track fleet creation
- */
-export function trackFleetCreated(fleetId: number, properties?: Record<string, any>) {
+export function trackFleetCreated(fleetId: number, properties?: AnalyticsProperties) {
   trackEvent('fleet_created', {
     fleet_id: fleetId,
     ...properties,
   });
 }
 
-/**
- * Track vehicle/truck added to fleet
- */
-export function trackVehicleAdded(vehicleId: number, fleetId: number, properties?: Record<string, any>) {
+export function trackVehicleAdded(vehicleId: number, fleetId: number, properties?: AnalyticsProperties) {
   trackEvent('vehicle_added', {
     vehicle_id: vehicleId,
     fleet_id: fleetId,
@@ -86,10 +56,7 @@ export function trackVehicleAdded(vehicleId: number, fleetId: number, properties
   });
 }
 
-/**
- * Track inspection started
- */
-export function trackInspectionStarted(inspectionId: number, vehicleId: number, properties?: Record<string, any>) {
+export function trackInspectionStarted(inspectionId: number, vehicleId: number, properties?: AnalyticsProperties) {
   trackEvent('inspection_started', {
     inspection_id: inspectionId,
     vehicle_id: vehicleId,
@@ -97,10 +64,7 @@ export function trackInspectionStarted(inspectionId: number, vehicleId: number, 
   });
 }
 
-/**
- * Track inspection submitted
- */
-export function trackInspectionSubmitted(inspectionId: number, defectCount: number, properties?: Record<string, any>) {
+export function trackInspectionSubmitted(inspectionId: number, defectCount: number, properties?: AnalyticsProperties) {
   trackEvent('inspection_submitted', {
     inspection_id: inspectionId,
     defect_count: defectCount,
@@ -108,10 +72,7 @@ export function trackInspectionSubmitted(inspectionId: number, defectCount: numb
   });
 }
 
-/**
- * Track defect created
- */
-export function trackDefectCreated(defectId: number, severity: string, properties?: Record<string, any>) {
+export function trackDefectCreated(defectId: number, severity: string, properties?: AnalyticsProperties) {
   trackEvent('defect_created', {
     defect_id: defectId,
     severity,
@@ -119,10 +80,7 @@ export function trackDefectCreated(defectId: number, severity: string, propertie
   });
 }
 
-/**
- * Track defect action (acknowledge, assign, resolve)
- */
-export function trackDefectAction(defectId: number, action: string, properties?: Record<string, any>) {
+export function trackDefectAction(defectId: number, action: string, properties?: AnalyticsProperties) {
   trackEvent('defect_action', {
     defect_id: defectId,
     action,
@@ -130,38 +88,24 @@ export function trackDefectAction(defectId: number, action: string, properties?:
   });
 }
 
-/**
- * Track onboarding step completion
- */
-export function trackOnboardingStepCompleted(stepName: string, properties?: Record<string, any>) {
+export function trackOnboardingStepCompleted(stepName: string, properties?: AnalyticsProperties) {
   trackEvent('onboarding_step_completed', {
     step_name: stepName,
     ...properties,
   });
 }
 
-/**
- * Track feature view/access
- */
-export function trackFeatureAccessed(featureName: string, properties?: Record<string, any>) {
+export function trackFeatureAccessed(featureName: string, properties?: AnalyticsProperties) {
   trackEvent('feature_accessed', {
     feature_name: featureName,
     ...properties,
   });
 }
 
-/**
- * Set user properties for segmentation
- */
-export function setUserProperties(properties: Record<string, any>) {
-  posthog.people.set(properties);
+export function setUserProperties(properties: Record<string, unknown>) {
+  logAnalyticsEvent('user_properties', properties);
 }
 
-/**
- * Increment user property (e.g., inspection count)
- */
 export function incrementUserProperty(property: string, value: number = 1) {
-  // PostHog JS SDK uses set_once or set for properties
-  // Increment is available in server-side SDKs
-  posthog.people.set({ [property]: value });
+  logAnalyticsEvent('user_property_increment', { property, value });
 }

@@ -70,7 +70,12 @@ export default function EmailAuth() {
         ? passwordValidation.isValid
         : isSignup
           ? isEmailValid && passwordValidation.isValid && name.trim().length > 0
-          : isEmailValid && password.length > 0);
+      : isEmailValid && password.length > 0);
+
+  const markSessionActivity = () => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("truckfixr:last-activity-at", String(Date.now()));
+  };
 
   useEffect(() => {
     setIsSignup(location === "/signup");
@@ -242,6 +247,7 @@ export default function EmailAuth() {
           setIsLoading(false);
           return;
         }
+        markSessionActivity();
         await utils.auth.me.invalidate();
         await utils.auth.me.fetch();
         trackSignup('email', { email, name });
@@ -294,6 +300,7 @@ export default function EmailAuth() {
             throw new Error("Sign-in completed, but your session was not restored. Please try again.");
           }
 
+          markSessionActivity();
           trackLogin('email', { email });
           toast.success("Signed in successfully!");
           // Redirect based on the authenticated user so we don't rely on stale response data.

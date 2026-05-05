@@ -14,16 +14,66 @@ function renderBootError(message: string) {
   const root = document.getElementById("root");
   if (!root) return;
 
-  root.innerHTML = `
-    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:linear-gradient(180deg,#f8fafc 0%,#eef3f8 100%);font-family:Inter,Segoe UI,Arial,sans-serif;">
-      <div style="max-width:640px;width:100%;border:1px solid #e2e8f0;border-radius:24px;background:#ffffff;box-shadow:0 18px 48px -32px rgba(15,23,42,.35);padding:32px;">
-        <p style="margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#64748b;">TruckFixr</p>
-        <h1 style="margin:0 0 12px;font-size:28px;line-height:1.2;color:#0f172a;">The app hit a startup error.</h1>
-        <p style="margin:0 0 18px;font-size:14px;line-height:1.6;color:#475569;">Reload the page to try again. If it keeps happening, this message helps us avoid a blank screen while we trace the failing module.</p>
-        <pre style="margin:0;overflow:auto;border-radius:16px;background:#f8fafc;padding:16px;font-size:12px;line-height:1.5;color:#334155;white-space:pre-wrap;">${message}</pre>
-      </div>
-    </div>
-  `;
+  root.replaceChildren();
+
+  const page = document.createElement("div");
+  page.style.minHeight = "100vh";
+  page.style.display = "flex";
+  page.style.alignItems = "center";
+  page.style.justifyContent = "center";
+  page.style.padding = "24px";
+  page.style.background = "linear-gradient(180deg,#f8fafc 0%,#eef3f8 100%)";
+  page.style.fontFamily = "Inter,Segoe UI,Arial,sans-serif";
+
+  const card = document.createElement("div");
+  card.style.maxWidth = "640px";
+  card.style.width = "100%";
+  card.style.border = "1px solid #e2e8f0";
+  card.style.borderRadius = "24px";
+  card.style.background = "#ffffff";
+  card.style.boxShadow = "0 18px 48px -32px rgba(15,23,42,.35)";
+  card.style.padding = "32px";
+
+  const eyebrow = document.createElement("p");
+  eyebrow.textContent = "TruckFixr";
+  eyebrow.style.margin = "0 0 8px";
+  eyebrow.style.fontSize = "12px";
+  eyebrow.style.fontWeight = "700";
+  eyebrow.style.letterSpacing = ".12em";
+  eyebrow.style.textTransform = "uppercase";
+  eyebrow.style.color = "#64748b";
+
+  const heading = document.createElement("h1");
+  heading.textContent = "The app hit a startup error.";
+  heading.style.margin = "0 0 12px";
+  heading.style.fontSize = "28px";
+  heading.style.lineHeight = "1.2";
+  heading.style.color = "#0f172a";
+
+  const description = document.createElement("p");
+  description.textContent =
+    "Reload the page to try again. If it keeps happening, this message helps us avoid a blank screen while we trace the failing module.";
+  description.style.margin = "0 0 18px";
+  description.style.fontSize = "14px";
+  description.style.lineHeight = "1.6";
+  description.style.color = "#475569";
+
+  const pre = document.createElement("pre");
+  pre.textContent = message;
+  pre.style.margin = "0";
+  pre.style.overflow = "auto";
+  pre.style.borderRadius = "16px";
+  pre.style.background = "#f8fafc";
+  pre.style.padding = "16px";
+  pre.style.fontSize = "12px";
+  pre.style.lineHeight = "1.5";
+  pre.style.color = "#334155";
+  pre.style.whiteSpace = "pre-wrap";
+  pre.style.wordBreak = "break-word";
+
+  card.append(eyebrow, heading, description, pre);
+  page.append(card);
+  root.append(page);
 }
 
 try {

@@ -153,7 +153,7 @@ export default function VehicleCaptureFlow({
   };
 
   const persistVehicleLocally = (vehicle: {
-    id: number;
+    id: string | number;
     fleetId: number;
     vin: string;
     licensePlate?: string | null;
@@ -163,7 +163,7 @@ export default function VehicleCaptureFlow({
     engineMake?: string | null;
   }) => {
     const localVehicle: DriverVehicleRecord = {
-      id: vehicle.id,
+      id: vehicle.id, // Keep the ID as returned (likely a string per schema)
       fleetId: vehicle.fleetId,
       label: getVehicleDisplayLabel({
         label: vehicleForm.label.trim(),
@@ -171,7 +171,7 @@ export default function VehicleCaptureFlow({
         vehicleId: vehicle.id,
       }),
       vin: vehicle.vin,
-      licensePlate: vehicle.licensePlate?.trim() || "UNKNOWN",
+      licensePlate: vehicle.licensePlate?.trim() || vehicleForm.licensePlate.trim() || "UNKNOWN",
       make: vehicle.make?.trim() || vehicleForm.make.trim() || "Truck",
       engineMake: vehicle.engineMake?.trim() || vehicleForm.engineMake.trim(),
       model: vehicle.model?.trim() || vehicleForm.model.trim() || "Unit",
@@ -311,10 +311,10 @@ export default function VehicleCaptureFlow({
         fleetId,
         unitNumber: normalizedDraft.label || getFallbackUnitNumber(vin),
         vin,
-        licensePlate: normalizedDraft.licensePlate || undefined,
+        licensePlate: normalizedDraft.licensePlate.trim() || "UNKNOWN", // Satisfy DB notNull constraint
         make: normalizedDraft.make || undefined,
         model: normalizedDraft.model || undefined,
-        year: normalizedDraft.year ? Number(normalizedDraft.year) : undefined,
+        year: (normalizedDraft.year && !isNaN(Number(normalizedDraft.year))) ? Number(normalizedDraft.year) : null,
         engineMake: normalizedDraft.engineMake || undefined,
       });
 
@@ -329,14 +329,14 @@ export default function VehicleCaptureFlow({
   };
 
   return (
-    <Card className="h-full max-h-full overflow-hidden rounded-3xl border-slate-200 shadow-none">
-      <CardHeader className="flex-none">
+    <Card className="flex flex-col h-full max-h-[min(700px,85vh)] overflow-hidden rounded-3xl border-slate-200 shadow-none">
+      <CardHeader className="shrink-0 pb-4">
         <CardTitle>{titleBySource}</CardTitle>
         <CardDescription>
           Capture the VIN manually or by photo, confirm it, review the decoded details, then save the vehicle before returning to your workflow.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-5 overflow-y-auto pb-2">
+      <CardContent className="flex-1 min-h-0 space-y-5 overflow-y-auto pb-6">
         {step === "entry" ? (
           <div className="grid gap-3 sm:grid-cols-2">
             <Button type="button" variant="outline" className="h-auto justify-start rounded-2xl border-slate-200 px-4 py-4" onClick={() => setStep("manual")}>

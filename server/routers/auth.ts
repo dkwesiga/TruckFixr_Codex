@@ -16,40 +16,21 @@ import {
   createCompanyInvitationRecord,
   ensureCompanyMembership,
 } from "../services/companyAccess";
+import { buildDriverInviteUrl } from "../services/access";
 
 function normalizeEmail(value: string) {
   return value.trim().toLowerCase();
 }
 
 function buildDriverInviteLink(input: {
+  token: string;
   email: string;
   managerEmail?: string | null;
   managerName?: string | null;
   pilotCode?: string | null;
   companyName?: string | null;
 }) {
-  const baseUrl = ENV.appBaseUrl.replace(/\/$/, "");
-  const params = new URLSearchParams();
-  params.set("invite", "driver");
-  params.set("email", input.email);
-
-  if (input.managerEmail) {
-    params.set("managerEmail", input.managerEmail);
-  }
-
-  if (input.managerName) {
-    params.set("managerName", input.managerName);
-  }
-
-  if (input.pilotCode) {
-    params.set("pilotCode", input.pilotCode);
-  }
-
-  if (input.companyName) {
-    params.set("companyName", input.companyName);
-  }
-
-  return `${baseUrl}/signup?${params.toString()}`;
+  return `${ENV.appBaseUrl.replace(/\/$/, "")}${buildDriverInviteUrl(input)}`;
 }
 
 export const authRouter = router({
@@ -455,6 +436,7 @@ export const authRouter = router({
       let invitationStatus: "invited" | "invite_skipped" | "invite_failed" = "invite_skipped";
       let invitationMessage = `Driver saved for ${normalizedDriverEmail}. Email delivery is not configured yet, so no invite was sent.`;
       const inviteLink = buildDriverInviteLink({
+        token: invitation.inviteToken,
         email: normalizedDriverEmail,
         managerEmail: normalizedManagerEmail,
         managerName: ctx.user.name ?? null,

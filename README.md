@@ -42,6 +42,24 @@ TruckFixr is a fleet operations platform for inspections, AI diagnostics, compli
 
 Local development serves the frontend and backend from the same origin, so `VITE_API_BASE_URL` can stay blank locally.
 
+## Public Homepage, SEO, and Demo Leads
+
+The public homepage at `/` is intentionally crawlable at initial load. The app shell includes semantic marketing content, metadata, `robots.txt`, and `sitemap.xml` so search engines can index the core homepage copy even before the React bundle finishes loading.
+
+### Demo Request Flow
+
+- Primary CTA: `Book a Demo`
+- Demo requests post to the public `leads.submitDemoRequest` tRPC mutation
+- Submissions are stored in `lead_submissions`
+- Notification email: `info@truckfixr.com`
+- The demo form is on the homepage under the `#book-demo` section
+
+### Helpful URLs
+
+- Homepage: `/`
+- Pricing: `/pricing`
+- Demo form: `/#book-demo`
+
 ## Render Deployment
 
 This repo now uses a Render Blueprint in [render.yaml](C:\Users\dkwes\TruckFixr\Codex\render.yaml) for a split deployment:
@@ -174,3 +192,73 @@ Diagnostic LLM defaults:
 
 - `pnpm check`
 - `pnpm test`
+
+## Demo Asset Workflow
+
+TruckFixr includes a developer-only demo asset workflow for presentation screenshots and a basic demo video package.
+
+### Safety Rules
+
+- Demo seeding is allowed only when `DEMO_CAPTURE_ENV` is set to `local`, `staging`, or `demo`
+- Production demo seeding is blocked unless `ALLOW_DEMO_PRODUCTION_SEED=true` is explicitly set
+- The workflow uses fictional demo data only
+- Demo exports are written to `exports/demo-assets`
+- Downloadable copies are also synced to `client/public/demo-assets` when the framework allows it
+
+### Required Environment Variables
+
+- `DEMO_CAPTURE_ENV=local|staging|demo`
+- `LOCAL_BASE_URL=http://localhost:3000`
+- `STAGING_BASE_URL=https://your-staging-url.com`
+
+Optional but useful:
+
+- `ALLOW_DEMO_PRODUCTION_SEED=true` only for a protected demo sandbox
+- `ALLOW_DEMO_REMOTE_SEED=true` only when the target database is a controlled staging/demo database
+- `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`
+- `CHROME_PATH`
+- `GOOGLE_CHROME_PATH`
+
+### Available Commands
+
+- `pnpm demo:seed`
+  Seeds the fictional Brampton Transit Inc. demo fleet
+- `pnpm screenshots:local`
+  Seeds demo data and captures local desktop/mobile screenshots
+- `pnpm screenshots:staging`
+  Seeds demo data and captures staging desktop/mobile screenshots
+- `pnpm demo:video`
+  Captures the silent demo MP4 flow
+- `pnpm demo:assets`
+  Runs the full workflow: seed, screenshots, video, captions, gallery, metadata, ZIP
+
+### Generated Output
+
+The workflow writes files like:
+
+- `exports/demo-assets/desktop/*.png`
+- `exports/demo-assets/mobile/*.png`
+- `exports/demo-assets/extra-routes/*`
+- `exports/demo-assets/screenshot-gallery.html`
+- `exports/demo-assets/demo-metadata.json`
+- `exports/demo-assets/demo-script.md`
+- `exports/demo-assets/captions.srt`
+- `exports/demo-assets/truckfixr-demo-video.mp4`
+- `exports/demo-assets/truckfixr-demo-assets.zip`
+
+Supported downloadable copies are synced to:
+
+- `client/public/demo-assets`
+
+### Verification Checklist
+
+1. Confirm `DEMO_CAPTURE_ENV` is set before running any demo command.
+2. Confirm the demo seed creates Brampton Transit Inc. only.
+3. Confirm no real customer data is modified.
+4. Confirm desktop screenshots are created.
+5. Confirm mobile screenshots are created.
+6. Confirm the gallery opens from `exports/demo-assets/screenshot-gallery.html`.
+7. Confirm the ZIP file exists.
+8. Confirm the MP4 file exists.
+9. Confirm captions and demo script are generated.
+10. Confirm extra routes are listed separately in metadata when unavailable.

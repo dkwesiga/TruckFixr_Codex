@@ -11,12 +11,12 @@ import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import VehicleAccessRequestDialog from "@/components/VehicleAccessRequestDialog";
 import { getBrowserStorage, loadInspectionDraft } from "@/lib/inspectionDrafts";
 import { trackEvent, trackInspectionStarted } from "@/lib/analytics";
-import { saveLastDriverVehicleContext } from "@/lib/driverVehicleContext";
-import { trpc } from "@/lib/trpc";
 import {
-  loadDriverVehicles,
-  type DriverVehicleRecord,
-} from "@/lib/driverVehicles";
+  loadLastDriverVehicleContext,
+  saveLastDriverVehicleContext,
+} from "@/lib/driverVehicleContext";
+import { trpc } from "@/lib/trpc";
+import { type DriverVehicleRecord } from "@/lib/driverVehicles";
 import { formatDistanceKm } from "@/lib/vehicleDisplay";
 import { AlertCircle, CheckCircle2, Eye, Gauge, Info, LogOut, Menu, SearchCode, ShieldCheck, Stethoscope, Truck } from "lucide-react";
 
@@ -86,17 +86,19 @@ function formatReportTimestamp(value: unknown) {
 function DriverDashboardContent() {
   const { user, logout } = useAuthContext();
   const [, navigate] = useLocation();
-  const localVehicles = useMemo(() => loadDriverVehicles(), []);
-  const [activeVehicleId, setActiveVehicleId] = useState(() => localVehicles[0]?.id ?? 0);
+  const storedVehicle = useMemo(() => loadLastDriverVehicleContext(), []);
+  const [activeVehicleId, setActiveVehicleId] = useState<number | string>(
+    () => storedVehicle?.id ?? 0
+  );
   const [selectedReport, setSelectedReport] = useState<InspectionReport | null>(null);
   const storage = useMemo(() => getBrowserStorage(), []);
   const subscriptionQuery = trpc.subscriptions.getCurrent.useQuery();
   const trackPilotEventMutation = trpc.subscriptions.trackPilotEvent.useMutation();
   const activeFleetId = subscriptionQuery.data?.activeFleetId ?? (user as any)?.fleetId ?? 0;
-  const vehiclesQuery = trpc.vehicles.listByFleet.useQuery(
-    { fleetId: activeFleetId },
-    { staleTime: 30_000, enabled: activeFleetId > 0 }
-  );
+  const vehiclesQuery = trpc.vehicles.listMine.useQuery(undefined, {
+    staleTime: 30_000,
+    enabled: Boolean(user?.id),
+  });
   const myRequestsQuery = trpc.vehicleAccess.listMyRequests.useQuery(
     { fleetId: activeFleetId },
     { staleTime: 15_000, enabled: activeFleetId > 0 }
@@ -138,7 +140,7 @@ function DriverDashboardContent() {
       vehicles
         .map((vehicle) => ({
           vehicle,
-          draft: loadInspectionDraft(storage, vehicle.id),
+          draft: typeof vehicle.id === "number" ? loadInspectionDraft(storage, vehicle.id) : null,
         }))
         .filter(
           (entry) =>
@@ -153,7 +155,8 @@ function DriverDashboardContent() {
   const alternateVehicle = vehicles.find((vehicle) => vehicle.id !== activeVehicleId) ?? null;
   const pendingRequests = myRequestsQuery.data ?? [];
   const hasVehicles = vehicles.length > 0;
-  const resolvedFleetId = activeVehicle?.fleetId ?? vehicles[0]?.fleetId ?? activeFleetId;
+  const resolvedFleetId =
+    activeVehicle?.fleetId ?? vehicles[0]?.fleetId ?? storedVehicle?.fleetId ?? activeFleetId;
 
   useEffect(() => {
     if (!vehicles.length) {
@@ -212,7 +215,14 @@ function DriverDashboardContent() {
   }, [activeFleetId, pilotAccess, trackPilotEventMutation]);
 
   const startInspection = (vehicle: DriverVehicle) => {
-    trackInspectionStarted(Date.now(), vehicle.id, { source: "driver_dashboard", vehicle_label: vehicle.label, flow: "daily_inspection" });
+    const numericVehicleId = Number(vehicle.id);
+    if (Number.isFinite(numericVehicleId)) {
+      trackInspectionStarted(Date.now(), numericVehicleId, {
+        source: "driver_dashboard",
+        vehicle_label: vehicle.label,
+        flow: "daily_inspection",
+      });
+    }
     setActiveVehicleId(vehicle.id);
     saveLastDriverVehicleContext({
       id: vehicle.id,
@@ -224,6 +234,8 @@ function DriverDashboardContent() {
       model: vehicle.model,
       year: vehicle.year,
       engineMake: vehicle.engineMake,
+      mileage: vehicle.mileage,
+      status: vehicle.status,
     });
     window.location.href = `/inspection?vehicle=${encodeURIComponent(String(vehicle.id))}&fleet=${encodeURIComponent(String(resolvedFleetId))}&mode=daily`;
   };
@@ -241,6 +253,8 @@ function DriverDashboardContent() {
       model: vehicle.model,
       year: vehicle.year,
       engineMake: vehicle.engineMake,
+      mileage: vehicle.mileage,
+      status: vehicle.status,
     });
     window.location.href = `/diagnosis?vehicle=${encodeURIComponent(String(vehicle.id))}&fleet=${encodeURIComponent(String(resolvedFleetId))}&label=${encodeURIComponent(vehicle.label)}&vin=${encodeURIComponent(vehicle.vin)}`;
   };

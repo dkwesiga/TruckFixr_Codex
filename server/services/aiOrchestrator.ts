@@ -76,6 +76,7 @@ export type OrchestratorInput = {
   maxTokens?: number;
   temperature?: number;
   responseFormat?: ResponseFormat;
+  feature?: string;
   preferredProvider?: AiProvider;
   fallbackProviders?: AiProvider[];
   model?: string;
@@ -158,12 +159,34 @@ type PriceCard = {
   outputPerMillion: number;
 };
 
+type AiErrorCategory =
+  | "timeout"
+  | "rate_limit"
+  | "insufficient_credits"
+  | "provider_unavailable"
+  | "model_unavailable"
+  | "invalid_model_response"
+  | "unsupported_input"
+  | "not_configured"
+  | "network_failure"
+  | "unknown";
+
+export type AiProviderStatus = {
+  configured: boolean;
+  primaryProvider: AiProvider;
+  primaryModel: string;
+  fallbackProviders: AiProvider[];
+  enabledProviders: AiProvider[];
+  openRouterConfigured: boolean;
+  fallbackConfigured: boolean;
+};
+
 const DEFAULT_TIMEOUT_MS = 18_000;
 const DEFAULT_MODELS: Record<AiProvider, string> = {
   openai: "gpt-4.1-mini",
   anthropic: "claude-sonnet-4-20250514",
   gemini: "gemini-2.5-flash",
-  openrouter: "openrouter/free",
+  openrouter: "deepseek/deepseek-v4-flash",
   groq: "qwen/qwen3-32b",
 };
 
@@ -235,7 +258,7 @@ function resolveProviderConfig(provider: AiProvider): ProviderConfig {
     case "openrouter":
       return {
         key: ENV.openRouterApiKey,
-        model: ENV.openRouterModel || DEFAULT_MODELS.openrouter,
+        model: ENV.openRouterModelPrimary || ENV.openRouterModel || DEFAULT_MODELS.openrouter,
         supportsImages: false,
         supportsTools: false,
         supportsJsonSchema: false,
@@ -251,19 +274,12 @@ function resolveProviderConfig(provider: AiProvider): ProviderConfig {
   }
 }
 
-function getEnabledProviders() {
-  return (["groq", "openrouter", "openai", "anthropic", "gemini"] as const).filter((provider) => {
-    const config = resolveProviderConfig(provider);
-    return Boolean(config.key);
-  });
-}
-
 function getProviderOrder(input: OrchestratorInput) {
   const configuredProviders = getEnabledProviders();
 
   if (configuredProviders.length === 0) {
     throw new Error(
-      "No AI providers are configured. Set GROQ_API_KEY, OPENROUTER_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY."
+      "No AI providers are configured. Set OPENROUTER_API_KEY, GROQ_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY."
     );
   }
 
@@ -276,7 +292,12 @@ function getProviderOrder(input: OrchestratorInput) {
     return explicitlyRequested.filter((provider, index) => explicitlyRequested.indexOf(provider) === index);
   }
 
-  return configuredProviders;
+  const primaryProvider = getPrimaryProvider();
+  const fallbackProviders = getFallbackProviders(primaryProvider);
+
+  return [primaryProvider, ...fallbackProviders].filter(
+    (provider, index, values) => values.indexOf(provider) === index && configuredProviders.includes(provider)
+  );
 }
 
 function getPriceCard(provider: AiProvider) {
@@ -300,6 +321,64 @@ function getPriceCard(provider: AiProvider) {
     outputPerMillion: Number.isFinite(outputOverride)
       ? outputOverride
       : DEFAULT_PRICE_CARDS[provider].outputPerMillion,
+  };
+}
+
+function isValidProvider(value: string | undefined): value is AiProvider {
+  return value === "openrouter" || value === "groq" || value === "openai" || value === "anthropic" || value === "gemini";
+}
+
+function getPrimaryProvider(): AiProvider {
+  const configuredPrimary = ENV.primaryAiProvider.trim().toLowerCase();
+  if (isValidProvider(configuredPrimary)) {
+    return configuredPrimary;
+  }
+
+  return ENV.openRouterApiKey
+    ? "openrouter"
+    : ENV.groqApiKey
+      ? "groq"
+      : ENV.openAiApiKey
+        ? "openai"
+        : ENV.anthropicApiKey
+          ? "anthropic"
+          : "gemini";
+}
+
+export function getEnabledProviders() {
+  return (["openrouter", "groq", "openai", "anthropic", "gemini"] as const).filter((provider) => {
+    const config = resolveProviderConfig(provider);
+    return Boolean(config.key);
+  });
+}
+
+export function getFallbackProviders(primaryProvider: AiProvider) {
+  const configuredProviders = getEnabledProviders();
+  const configuredFallback = ENV.fallbackAiProvider.trim().toLowerCase();
+
+  if (configuredFallback && configuredFallback !== "existing" && isValidProvider(configuredFallback)) {
+    return [configuredFallback as AiProvider, ...configuredProviders].filter(
+      (provider, index, values) => provider !== primaryProvider && values.indexOf(provider) === index
+    );
+  }
+
+  return configuredProviders.filter((provider) => provider !== primaryProvider);
+}
+
+export function getAiProviderStatus(): AiProviderStatus {
+  const primaryProvider = getPrimaryProvider();
+  const primaryConfig = resolveProviderConfig(primaryProvider);
+  const enabledProviders = getEnabledProviders();
+  const fallbackProviders = getFallbackProviders(primaryProvider);
+
+  return {
+    configured: enabledProviders.length > 0,
+    primaryProvider,
+    primaryModel: primaryConfig.model,
+    fallbackProviders,
+    enabledProviders,
+    openRouterConfigured: Boolean(ENV.openRouterApiKey),
+    fallbackConfigured: fallbackProviders.length > 0,
   };
 }
 
@@ -567,7 +646,8 @@ async function invokeOpenRouter(
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${config.key}`,
-        "X-Title": "TruckFixr",
+        "HTTP-Referer": ENV.appBaseUrl || "https://truckfixr.com",
+        "X-Title": "TruckFixr Fleet AI",
       },
       body: JSON.stringify(buildOpenAiPayload(input, config.model)),
     },
@@ -829,6 +909,43 @@ function validateProviderCompatibility(provider: AiProvider, input: Orchestrator
   return null;
 }
 
+function categorizeAiError(error: unknown): AiErrorCategory {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const normalized = message.toLowerCase();
+
+  if (/timed out|aborterror/.test(normalized)) return "timeout";
+  if (/429|rate limit|too many requests/.test(normalized)) return "rate_limit";
+  if (/402|credits|payment required/.test(normalized)) return "insufficient_credits";
+  if (/not configured/.test(normalized)) return "not_configured";
+  if (/unsupported|not supported|image_inputs_not_supported|tool_calls_not_supported|json_schema_not_supported/.test(normalized)) {
+    return "unsupported_input";
+  }
+  if (/no endpoints found|model unavailable|invalid model|unknown_model|bad request/.test(normalized)) {
+    return "model_unavailable";
+  }
+  if (/invalid json|unable to parse ai response|unexpected end of json|json/.test(normalized)) {
+    return "invalid_model_response";
+  }
+  if (/network|fetch failed|econnrefused|enotfound/.test(normalized)) return "network_failure";
+  if (/service unavailable|503|502|504/.test(normalized)) return "provider_unavailable";
+
+  return "unknown";
+}
+
+function buildControlledFallbackChoice(input: OrchestratorInput) {
+  const fallbackText =
+    "AI analysis is temporarily unavailable. Please retry safely, review the fault codes and inspection findings, and contact maintenance if the issue is safety-critical.";
+
+  if (input.responseFormat?.type === "json_object" || input.responseFormat?.type === "json_schema") {
+    return JSON.stringify({
+      status: "unavailable",
+      message: fallbackText,
+    });
+  }
+
+  return fallbackText;
+}
+
 function logAttempt(attempt: ProviderAttempt) {
   const summary = {
     provider: attempt.provider,
@@ -845,17 +962,100 @@ function logAttempt(attempt: ProviderAttempt) {
   console.info("[AI Orchestrator]", summary);
 }
 
+function logCallSummary(summary: {
+  timestamp: string;
+  feature: string;
+  primaryProvider: AiProvider;
+  primaryModel: string;
+  providerUsed: AiProvider | "fallback";
+  modelUsed: string;
+  fallbackUsed: boolean;
+  status: "success" | "fallback";
+  latencyMs: number;
+  errorCategory: AiErrorCategory | null;
+}) {
+  console.info("[AI Orchestrator]", summary);
+}
+
+export async function probeAiProviderStatus(
+  input?: {
+    fetcher?: FetchLike;
+    timeoutMs?: number;
+    feature?: string;
+  }
+): Promise<
+  | { configured: false; reason: string }
+  | { configured: true; provider: AiProvider; model: string; ok: true }
+  | { configured: true; provider: AiProvider; model: string; ok: false; reason: string; errorCategory: AiErrorCategory }
+> {
+  const primaryProvider = getPrimaryProvider();
+  const config = resolveProviderConfig(primaryProvider);
+
+  if (!config.key) {
+    return {
+      configured: false,
+      reason: `Primary provider ${primaryProvider} is not configured.`,
+    };
+  }
+
+  const fetcher = input?.fetcher ?? fetch;
+
+  try {
+    const minimalPrompt: OrchestratorInput = {
+      feature: input?.feature ?? "ai_provider_probe",
+      preferredProvider: primaryProvider,
+      fallbackProviders: [],
+      maxTokens: 16,
+      temperature: 0,
+      messages: [{ role: "user", content: "Reply with ok." }],
+    };
+
+    await (
+      primaryProvider === "openrouter"
+        ? invokeOpenRouter(minimalPrompt, config, fetcher, input?.timeoutMs ?? 8_000)
+        : primaryProvider === "groq"
+          ? invokeGroq(minimalPrompt, config, fetcher, input?.timeoutMs ?? 8_000)
+          : primaryProvider === "openai"
+            ? invokeOpenAi(minimalPrompt, config, fetcher, input?.timeoutMs ?? 8_000)
+            : primaryProvider === "anthropic"
+              ? invokeAnthropic(minimalPrompt, config, fetcher, input?.timeoutMs ?? 8_000)
+              : invokeGemini(minimalPrompt, config, fetcher, input?.timeoutMs ?? 8_000)
+    );
+
+    return {
+      configured: true,
+      provider: primaryProvider,
+      model: config.model,
+      ok: true,
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error ?? "unknown_error");
+    return {
+      configured: true,
+      provider: primaryProvider,
+      model: config.model,
+      ok: false,
+      reason,
+      errorCategory: categorizeAiError(error),
+    };
+  }
+}
+
 export async function invokeWithOrchestration(
   input: OrchestratorInput,
   options?: {
     fetcher?: FetchLike;
   }
 ): Promise<InvokeResult> {
+  const overallStartedAt = Date.now();
   const providers = getProviderOrder(input);
   const attempts: ProviderAttempt[] = [];
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const fetcher = options?.fetcher ?? fetch;
   let lastError: Error | null = null;
+  const feature = input.feature ?? "general";
+  const primaryProvider = providers[0] ?? getPrimaryProvider();
+  const primaryModel = resolveProviderConfig(primaryProvider).model;
 
   for (const provider of providers) {
     const incompatibility = validateProviderCompatibility(provider, input);
@@ -908,6 +1108,18 @@ export async function invokeWithOrchestration(
 
       attempts.push(successfulAttempt);
       logAttempt(successfulAttempt);
+      logCallSummary({
+        timestamp: new Date().toISOString(),
+        feature,
+        primaryProvider,
+        primaryModel,
+        providerUsed: provider,
+        modelUsed: response.model,
+        fallbackUsed: attempts.length > 1 || provider !== primaryProvider,
+        status: "success",
+        latencyMs: Date.now() - overallStartedAt,
+        errorCategory: null,
+      });
 
       return {
         ...response.result,
@@ -933,13 +1145,50 @@ export async function invokeWithOrchestration(
     }
   }
 
-  const fallbackSummary = attempts
-    .map((attempt) => `${attempt.provider}:${attempt.reason ?? "failed"}`)
-    .join(", ");
+  const errorCategory = categorizeAiError(lastError);
+  const fallbackLatencyMs = Date.now() - overallStartedAt;
+  const fallbackContent = buildControlledFallbackChoice(input);
+  const fallbackProvider = attempts[attempts.length - 1]?.provider ?? primaryProvider;
+  const fallbackModel = attempts[attempts.length - 1]?.model ?? primaryModel;
 
-  throw new Error(
-    `AI orchestration failed after ${attempts.length} attempt(s). ${fallbackSummary}${
-      lastError ? ` Last error: ${lastError.message}` : ""
-    }`
-  );
+  logCallSummary({
+    timestamp: new Date().toISOString(),
+    feature,
+    primaryProvider,
+    primaryModel,
+    providerUsed: "fallback",
+    modelUsed: fallbackModel,
+    fallbackUsed: true,
+    status: "fallback",
+    latencyMs: fallbackLatencyMs,
+    errorCategory,
+  });
+
+  return {
+    id: randomUUID(),
+    created: Math.floor(Date.now() / 1000),
+    model: fallbackModel,
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: "assistant",
+          content: fallbackContent,
+        },
+        finish_reason: "stop",
+      },
+    ],
+    usage: {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0,
+    },
+    orchestration: {
+      provider: fallbackProvider,
+      model: fallbackModel,
+      latencyMs: fallbackLatencyMs,
+      estimatedCostUsd: null,
+      attempts,
+    },
+  };
 }

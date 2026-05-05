@@ -14,22 +14,32 @@ import { trpc } from "@/lib/trpc";
 import { getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
 import { toast } from "sonner";
 import { AlertTriangle, ChevronLeft, CheckCircle2, Sparkles, Stethoscope, Truck, Wrench } from "lucide-react";
+import { getDemoDiagnosisCase, type DemoDiagnosisResult } from "../../../shared/demoAssets";
 
 function DriverDiagnosisContent() {
   const { user } = useAuthContext();
+  const subscriptionQuery = trpc.subscriptions.getCurrent.useQuery();
   const params = useMemo(
     () => new URLSearchParams(window.location.search),
     []
   );
   const storedVehicle = useMemo(() => loadLastDriverVehicleContext(), []);
+  const demoCase = params.get("demoCase");
+  const demoDiagnosisPreset = useMemo(() => getDemoDiagnosisCase(demoCase), [demoCase]);
   const vehicleId = params.get("vehicle") ?? (storedVehicle ? String(storedVehicle.id) : null);
-  const fleetId = params.get("fleet") ?? (storedVehicle?.fleetId ? String(storedVehicle.fleetId) : "1");
+  const fleetId = useMemo(() => {
+    const urlFleet = params.get("fleet");
+    if (urlFleet && urlFleet.trim()) return String(Math.max(1, Number(urlFleet)));
+    if (storedVehicle?.fleetId) return String(Math.max(1, storedVehicle.fleetId));
+    const subscriptionFleetId = subscriptionQuery.data?.activeFleetId;
+    return subscriptionFleetId ? String(Math.max(1, subscriptionFleetId)) : "1";
+  }, [params, storedVehicle, subscriptionQuery.data?.activeFleetId]);
   const vehicleLabel = getVehicleDisplayLabel({
     label: params.get("label") ?? storedVehicle?.label,
     vin: params.get("vin") ?? storedVehicle?.vin,
     vehicleId: vehicleId ?? undefined,
   });
-  const isOwnerOperator = user?.role === "owner_operator" || user?.role === "owner" || user?.role === "manager";
+  const isOwnerOperator = user?.role === "owner" || user?.role === "manager";
 
   const [symptom, setSymptom] = useState("");
   const [faultCode, setFaultCode] = useState("");
@@ -38,15 +48,16 @@ function DriverDiagnosisContent() {
   const [diagnosisStarted, setDiagnosisStarted] = useState(false);
   const [clarificationHistory, setClarificationHistory] = useState<Array<{ question: string; answer: string }>>([]);
   const [clarificationAnswer, setClarificationAnswer] = useState("");
+  const [demoDiagnosis, setDemoDiagnosis] = useState<DemoDiagnosisResult | null>(null);
   const diagnoseMutation = trpc.diagnostics.analyze.useMutation();
-  const vehiclesQuery = trpc.vehicles.listByFleet.useQuery(
-    { fleetId: Number(fleetId) },
-    { staleTime: 30_000 }
-  );
+  const vehiclesQuery = trpc.vehicles.listMine.useQuery(undefined, {
+    staleTime: 30_000,
+    enabled: Boolean(user?.id),
+  });
 
   const hasDiagnosisInput =
     symptom.trim().length > 0 || faultCode.trim().length > 0 || driverNotes.trim().length > 0;
-  const diagnosis = diagnoseMutation.data;
+  const diagnosis = demoDiagnosis ?? diagnoseMutation.data;
   const activeClarifyingQuestion = diagnosis?.clarifying_question?.trim() ?? "";
   const isAwaitingClarification =
     diagnosisStarted &&
@@ -80,7 +91,7 @@ function DriverDiagnosisContent() {
         model: vehicle.model || "Unit",
         year: vehicle.year ?? null,
         mileage: vehicle.mileage ?? 0,
-        assetType: vehicle.assetType,
+        assetType: vehicle.assetType === "tractor" || vehicle.assetType === "straight_truck" || vehicle.assetType === "trailer" ? vehicle.assetType : "other",
         status: vehicle.complianceStatus === "red" || vehicle.status === "maintenance" ? "Needs Review" : "Operational",
       })),
     [vehiclesQuery.data]
@@ -90,6 +101,7 @@ function DriverDiagnosisContent() {
     () => vehicleChoices.find((vehicle) => String(vehicle.id) === vehicleId) ?? null,
     [vehicleChoices, vehicleId]
   );
+  const resolvedFleetId = selectedVehicle?.fleetId ?? Number(fleetId);
   const isBlockedVehicleSelection =
     Boolean(vehicleId) && !selectedVehicle && !vehiclesQuery.isLoading;
   const clarificationPanelRef = useRef<HTMLDivElement | null>(null);
@@ -135,6 +147,13 @@ function DriverDiagnosisContent() {
       clarification_rounds: nextClarificationHistory.length,
     });
 
+    if (demoDiagnosisPreset) {
+      setDemoDiagnosis(demoDiagnosisPreset.result);
+      setDiagnosisStarted(true);
+      setClarificationAnswer("");
+      return;
+    }
+
     const normalizedFaultCodes = faultCode
       .split(/[,\s]+/)
       .map((code) => code.trim().toUpperCase())
@@ -142,7 +161,7 @@ function DriverDiagnosisContent() {
 
     try {
       await diagnoseMutation.mutateAsync({
-        fleetId: Number(fleetId),
+        fleetId: resolvedFleetId,
         vehicleId: String(vehicleId),
         vehicleContext: selectedVehicle
           ? {
@@ -182,7 +201,7 @@ function DriverDiagnosisContent() {
               <CardDescription>
                     {isOwnerOperator
                       ? "TADIS needs a vehicle before it can build context and evaluate compliance impact. Select a unit from your operation to resume."
-                      : "TADIS needs a vehicle before it can build context, pull similar cases, and evaluate compliance impact. Select an existing truck or add one inline, then diagnostics will resume automatically."}
+                      : "TADIS needs a vehicle before it can build context, pull similar cases, and evaluate compliance impact. Select one of your assigned units to continue."}
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
@@ -193,14 +212,14 @@ function DriverDiagnosisContent() {
                       <button
                         key={vehicle.id}
                         type="button"
-                        onClick={() => {
-                          saveLastDriverVehicleContext(vehicle);
-                          window.location.href = `/diagnosis?vehicle=${encodeURIComponent(
-                            String(vehicle.id)
-                          )}&fleet=${encodeURIComponent(String(vehicle.fleetId))}&label=${encodeURIComponent(
-                            vehicle.label
-                          )}&vin=${encodeURIComponent(vehicle.vin)}`;
-                        }}
+                      onClick={() => {
+                        saveLastDriverVehicleContext(vehicle);
+                        window.location.href = `/diagnosis?vehicle=${encodeURIComponent(
+                          String(vehicle.id)
+                        )}&fleet=${encodeURIComponent(String(vehicle.fleetId))}&label=${encodeURIComponent(
+                          vehicle.label
+                        )}&vin=${encodeURIComponent(vehicle.vin)}`;
+                      }}
                         className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left transition hover:border-blue-200 hover:bg-blue-50"
                       >
                         <div className="flex items-center gap-3">
@@ -209,7 +228,7 @@ function DriverDiagnosisContent() {
                           </div>
                           <div>
                             <p className="font-medium text-slate-900">{vehicle.label}</p>
-                            <p className="text-sm text-slate-500">{vehicle.make} {vehicle.model} · {vehicle.vin}</p>
+                            <p className="text-sm text-slate-500">{vehicle.make} {vehicle.model} | {vehicle.vin}</p>
                           </div>
                         </div>
                         <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
@@ -231,7 +250,7 @@ function DriverDiagnosisContent() {
                     <Button onClick={() => (window.location.href = "/driver")}>Add a Vehicle</Button>
                   ) : (
                     <VehicleAccessRequestDialog
-                      fleetId={Number(fleetId)}
+                      fleetId={resolvedFleetId}
                       triggerLabel="Request Vehicle Access"
                       triggerVariant="default"
                     />
@@ -270,7 +289,7 @@ function DriverDiagnosisContent() {
             <CardContent className="flex flex-wrap gap-3">
               {!isOwnerOperator && (
                 <VehicleAccessRequestDialog
-                  fleetId={Number(fleetId)}
+                  fleetId={resolvedFleetId}
                   triggerLabel="Request Vehicle Access"
                   triggerVariant="default"
                 />
@@ -359,7 +378,7 @@ function DriverDiagnosisContent() {
                 variant="outline"
                 className="fleet-secondary-btn flex-1"
                 onClick={() => {
-                  window.location.href = `/inspection?vehicle=${encodeURIComponent(vehicleId)}&fleet=${encodeURIComponent(fleetId)}&mode=daily`;
+                  window.location.href = `/inspection?vehicle=${encodeURIComponent(vehicleId)}&fleet=${encodeURIComponent(String(resolvedFleetId))}&mode=daily`;
                 }}
               >
                 Start Daily Inspection Instead
@@ -658,7 +677,7 @@ function DriverDiagnosisContent() {
                                 </p>
                               </div>
                               <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
-                                Fit {Math.round(item.cause_library_fit_score)}%
+                                Fit {Math.round(item.cause_library_fit_score ?? item.probability)}%
                               </div>
                             </div>
                             {item.evidence_summary?.length ? (
@@ -677,11 +696,9 @@ function DriverDiagnosisContent() {
                               <div className="mt-3">
                                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Why it ranks here</p>
                                 <div className="mt-2 space-y-2">
-                                  {item.ranking_rationale.map((reason) => (
-                                    <div key={reason} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-                                      {reason}
+                                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                                      {item.ranking_rationale}
                                     </div>
-                                  ))}
                                 </div>
                               </div>
                             ) : null}
@@ -760,3 +777,4 @@ export default function DriverDiagnosis() {
     </RoleBasedRoute>
   );
 }
+

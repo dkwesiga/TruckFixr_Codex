@@ -20,6 +20,11 @@ const EmailAuth = lazy(() => import("./pages/EmailAuth"));
 const UserProfile = lazy(() => import("./pages/UserProfile"));
 const AdminBillingDashboard = lazy(() => import("./pages/AdminBillingDashboard"));
 const InspectionReportDvir = lazy(() => import("./pages/InspectionReportDvir"));
+const AccessGateway = lazy(() => import("./pages/AccessGateway"));
+const AccessStartTrial = lazy(() => import("./pages/AccessStartTrial"));
+const AccessPilotCode = lazy(() => import("./pages/AccessPilotCode"));
+const AccessDriverInvite = lazy(() => import("./pages/AccessDriverInvite"));
+const PilotRedirect = lazy(() => import("./pages/PilotRedirect"));
 
 function RouteFallback() {
   return (
@@ -35,6 +40,11 @@ function Router() {
   return (
     <Suspense fallback={<RouteFallback />}>
       <Switch>
+        <Route path={"/access/start-trial"} component={AccessStartTrial} />
+        <Route path={"/access/pilot-code"} component={AccessPilotCode} />
+        <Route path={"/access/driver-invite"} component={AccessDriverInvite} />
+        <Route path={"/access"} component={AccessGateway} />
+        <Route path={"/pilot"} component={PilotRedirect} />
         <Route path={"/signup"} component={EmailAuth} />
         <Route path={"/auth/email"} component={EmailAuth} />
         <Route path={"/profile"} component={UserProfile} />

@@ -17,6 +17,7 @@ import {
   listDriverAccessibleVehiclesAcrossFleets,
   verifyDriverBelongsToFleet,
 } from "../services/vehicleAccess";
+import { getUserPrimaryFleetId } from "../services/companyAccess";
 import { assignDriver } from "../../vehicle.controller";
 
 export const vehiclesRouter = router({
@@ -250,9 +251,33 @@ export const vehiclesRouter = router({
         return scopedVehicles;
       }
 
-      return listDriverAccessibleVehiclesAcrossFleets({
-        driverUserId: ctx.user.id,
+      return [];
+    }),
+
+  listMine: protectedProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) return [];
+
+    if (ctx.user.role === "owner" || ctx.user.role === "manager") {
+      const fleetId = await getUserPrimaryFleetId(ctx.user.id);
+      const allowed = await canManageVehicleAccess({
+        fleetId,
+        user: ctx.user,
       });
+
+      if (!allowed) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You do not have access to this fleet",
+        });
+      }
+
+      return db.select().from(vehicles).where(eq(vehicles.fleetId, fleetId));
+    }
+
+    return listDriverAccessibleVehiclesAcrossFleets({
+      driverUserId: ctx.user.id,
+    });
     }),
 
   /**

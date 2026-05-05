@@ -30,6 +30,9 @@ export function useAuthContext() {
 
   const logout = async () => {
     trackLogout();
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem("truckfixr:last-activity-at");
+    }
     await logoutMutation.mutateAsync();
     window.location.href = "/";
   };

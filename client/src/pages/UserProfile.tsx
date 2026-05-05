@@ -10,12 +10,16 @@ import { useAuthContext } from "@/hooks/useAuthContext";
 import { getApiUrl, readApiPayload } from "@/lib/api";
 import { loadCompanyName, saveCompanyName } from "@/lib/companyIdentity";
 import {
-  formatCad,
-  SUBSCRIPTION_PLANS,
   type BillingCadence,
-  type SubscriptionTier,
 } from "../../../shared/billing";
 import { splitFullName, validateTruckFixrPassword } from "../../../shared/passwordPolicy";
+import {
+  formatTruckFixrCad,
+  getPublicTruckFixrPlans,
+  getTruckFixrPlanPrice,
+  TRUCKFIXR_PLANS,
+  type PlanKey,
+} from "../../../shared/truckfixrPricing";
 import { Eye, EyeOff } from "lucide-react";
 
 export default function UserProfile() {
@@ -63,6 +67,7 @@ export default function UserProfile() {
     enabled: Boolean(user),
   });
   const createCheckoutMutation = trpc.subscriptions.createCheckoutSession.useMutation();
+  const createPilotCheckoutMutation = trpc.subscriptions.createPilotCheckoutSession.useMutation();
   const createPortalMutation = trpc.subscriptions.createPortalSession.useMutation();
   const redeemPilotAccessMutation = trpc.subscriptions.redeemPilotAccess.useMutation();
   const requestFleetQuoteMutation = trpc.subscriptions.requestFleetQuote.useMutation();
@@ -162,7 +167,7 @@ export default function UserProfile() {
 
       const updatedUser = await updateProfileMutation.mutateAsync({
         name: formData.name.trim(),
-        role: formData.role,
+        role: formData.role as any,
         managerEmail:
           formData.role === "driver" ? formData.managerEmail.trim().toLowerCase() : undefined,
       });
@@ -236,9 +241,14 @@ export default function UserProfile() {
     window.location.href = redirectPath;
   };
 
-  const handleUpgrade = async (tier: SubscriptionTier) => {
+  const handleUpgrade = async (planKey: PlanKey) => {
     try {
-      if (tier === "fleet") {
+      if (planKey === "free_trial") {
+        await handleManageBilling();
+        return;
+      }
+
+      if (planKey === "custom_fleet") {
         if (fleetQuote.companyName.trim()) {
           saveCompanyName(fleetQuote.companyName);
         }
@@ -258,12 +268,19 @@ export default function UserProfile() {
         return;
       }
 
-      const result = await createCheckoutMutation.mutateAsync({
-        tier: "pro",
-        billingCadence,
-        successPath: "/profile?subscription=success",
-        cancelPath: "/profile?subscription=cancelled",
-      });
+      const result =
+        planKey === "fleet_growth"
+          ? await createPilotCheckoutMutation.mutateAsync({
+              successPath: "/profile?subscription=success",
+              cancelPath: "/profile?subscription=cancelled",
+            })
+          : await createCheckoutMutation.mutateAsync({
+              planKey,
+              billingInterval: billingCadence,
+              extraTrailerQuantity: 0,
+              successPath: "/profile?subscription=success",
+              cancelPath: "/profile?subscription=cancelled",
+            });
       if (!result.checkoutUrl) {
         throw new Error("Checkout session could not be created.");
       }
@@ -360,9 +377,9 @@ export default function UserProfile() {
   };
 
   const subscription = subscriptionQuery.data;
-  const visiblePlans = Object.values(SUBSCRIPTION_PLANS).filter(
-    (plan) => plan.publicSelectable || plan.tier === subscription?.selectedPlan.tier
-  );
+  const visiblePlans = subscription?.availablePlans ?? getPublicTruckFixrPlans();
+  const currentPlanKey = subscription?.currentPlanKey ?? "free_trial";
+  const currentTruckFixrPlan = subscription?.currentTruckFixrPlan ?? TRUCKFIXR_PLANS.free_trial;
 
   if (!user) {
     return (
@@ -473,7 +490,7 @@ export default function UserProfile() {
                       className="border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                     />
                     <p className="text-xs text-slate-500 mt-1">
-                      We’ll link your profile to this manager if they already have a TruckFixr account. Otherwise, we’ll save the address and send them an invite when email delivery is available.
+                      We'll link your profile to this manager if they already have a TruckFixr account. Otherwise, we’ll save the address and send them an invite when email delivery is available.
                     </p>
                   </div>
                 ) : null}
@@ -614,47 +631,68 @@ export default function UserProfile() {
                 <div>
                   <CardTitle>Subscription Management</CardTitle>
                   <CardDescription>
-                    View your current plan, billing state, and feature limits.
+                    View your current TruckFixr plan, live usage, and checkout options.
                   </CardDescription>
                 </div>
                 <span className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-white">
-                  {subscription?.selectedPlan.label ?? "Free"}
+                  {currentTruckFixrPlan.name}
                 </span>
               </div>
             </CardHeader>
             <CardContent className="space-y-5">
               <div className="grid gap-4 md:grid-cols-3">
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Current tier</p>
+                  <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Current plan</p>
                   <p className="mt-2 text-2xl font-semibold text-slate-950">
-                    {subscription?.selectedPlan.label ?? "Free"}
+                    {currentTruckFixrPlan.name}
                   </p>
                   <p className="mt-1 text-sm text-slate-600">
-                    Billing status: {subscription?.billingStatus ?? "active"}
+                    Billing status: {subscription?.companyBillingStatus ?? subscription?.billingStatus ?? "active"}
                   </p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Billing cadence</p>
                   <p className="mt-2 text-2xl font-semibold text-slate-950">
-                    {subscription?.billingCadence === "annual" ? "Annual" : "Monthly"}
+                    {subscription?.companyBillingInterval === "annual" || subscription?.billingCadence === "annual"
+                      ? "Annual"
+                      : currentTruckFixrPlan.billingInterval === "trial"
+                        ? "Trial"
+                        : currentTruckFixrPlan.billingInterval === "pilot"
+                          ? "Pilot"
+                          : "Monthly"}
                   </p>
                   <p className="mt-1 text-sm text-slate-600">
                     Next renewal: {subscription?.currentPeriodEnd ? new Date(subscription.currentPeriodEnd).toLocaleDateString() : "Not scheduled"}
                   </p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                  <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Billable usage</p>
+                  <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Live limits</p>
                   <p className="mt-2 text-sm font-semibold text-slate-900">
-                    Diagnostics: {subscription?.effectivePlan.limits.diagnosticsPerMonth ?? "Unlimited"} / month
+                    Powered vehicles: {subscription?.entitlements?.usage.activeVehicleCount ?? 0} / {subscription?.entitlements?.activeVehicleLimit ?? currentTruckFixrPlan.poweredVehicleLimit ?? "Custom"}
                   </p>
                   <p className="mt-1 text-sm text-slate-600">
-                    Active vehicles: {subscription?.entitlements?.usage.activeVehicleCount ?? 0}
+                    Active trailers: {subscription?.entitlements?.usage.activeTrailerCount ?? 0} / {subscription?.entitlements?.trailerLimit ?? currentTruckFixrPlan.includedTrailerLimit ?? "Custom"}
                   </p>
                   <p className="mt-1 text-sm text-slate-600">
-                    Billable vehicles: {subscription?.entitlements?.billableVehicleCount ?? 0}
+                    AI diagnostics: {subscription?.entitlements?.usage.diagnosticsThisMonth ?? 0} / {subscription?.aiSessionMonthlyLimit ?? currentTruckFixrPlan.aiDiagnosticSessionLimit ?? "Custom"}
                   </p>
                   <p className="mt-1 text-sm text-slate-600">
-                    Linked drivers: {subscription?.entitlements?.usage.managedDriverCount ?? 0}
+                    Driver invites in use: {subscription?.entitlements?.usage.managedDriverCount ?? 0}
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-sm font-semibold text-slate-900">Plan allowances</p>
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <p className="text-sm text-slate-600">
+                    Included trailers: {currentTruckFixrPlan.includedTrailerLimit ?? "Custom"}
+                    {currentTruckFixrPlan.extraTrailerPriceCadMonthly != null
+                      ? ` with extra active trailers at ${formatTruckFixrCad(currentTruckFixrPlan.extraTrailerPriceCadMonthly)}/month each.`
+                      : "."}
+                  </p>
+                  <p className="text-sm text-slate-600">
+                    Dashboard: {currentTruckFixrPlan.fleetDashboard}. Reports: {currentTruckFixrPlan.reports}. Driver assignments: {currentTruckFixrPlan.driverAssignments === true ? "Included" : currentTruckFixrPlan.driverAssignments}.
                   </p>
                 </div>
               </div>
@@ -675,7 +713,7 @@ export default function UserProfile() {
 
               {subscription?.pilotAccess?.status === "expired" ? (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                  Pilot Access has expired. Your plan is now Free. Upgrade to Pro or Fleet to keep premium workflows active.
+                  Pilot Access has expired. Your plan is now back on the free trial limits. Choose a paid TruckFixr plan to keep premium workflows active.
                 </div>
               ) : null}
 
@@ -699,14 +737,14 @@ export default function UserProfile() {
                         Users enabled: {subscription.pilotAccess.usersUsed} / {subscription.pilotAccess.maxUsers}
                       </p>
                     </div>
-                    <Button className="bg-blue-600 hover:bg-blue-700" onClick={() => handleUpgrade("pro")}>
-                      Upgrade to Pro
+                    <Button className="bg-blue-600 hover:bg-blue-700" onClick={() => handleUpgrade("fleet_growth")}>
+                      Start Fleet Pilot Checkout
                     </Button>
                   </div>
                 </div>
               ) : null}
 
-              {subscription?.selectedPlan.tier === "free" ? (
+              {currentPlanKey === "free_trial" ? (
                 <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
                   <p className="text-sm font-semibold text-slate-900">Have a Pilot Access code?</p>
                   <p className="mt-1 text-sm text-slate-600">
@@ -774,13 +812,13 @@ export default function UserProfile() {
                   ))}
                 </div>
                 <p className="text-sm text-slate-500">
-                  Pro billing is based on active vehicles only. Archived vehicles do not count.
+                  Plans are based on active powered vehicles. Each powered vehicle includes matching trailer allowance, and extra active trailers are billed separately where available.
                 </p>
               </div>
 
               {downgradeQuery.data && !downgradeQuery.data.canDowngrade ? (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                  <p className="font-semibold">Free downgrade requirements</p>
+                  <p className="font-semibold">Free-trial limit requirements</p>
                   <ul className="mt-2 space-y-1">
                     {downgradeQuery.data.requiredActions.map((item) => (
                       <li key={item}>- {item}</li>
@@ -789,42 +827,54 @@ export default function UserProfile() {
                 </div>
               ) : null}
 
-              <div className="grid gap-4 lg:grid-cols-3">
+              <div className="grid gap-4 lg:grid-cols-2">
                 {visiblePlans.map((plan) => {
-                  const isCurrent = subscription?.selectedPlan.tier === plan.tier;
+                  const isCurrent = currentPlanKey === plan.planKey;
+                  const price = getTruckFixrPlanPrice(plan.planKey, billingCadence);
                   const priceLabel =
-                    plan.tier === "free"
-                      ? "CAD $0"
-                      : plan.tier === "pro"
-                        ? billingCadence === "annual"
-                          ? `${formatCad(plan.annualPriceCad ?? 0)} / active vehicle / year`
-                          : `${formatCad(plan.monthlyPriceCad ?? 0)} / active vehicle / month`
-                        : plan.publicPriceAnchor;
+                    plan.planKey === "custom_fleet"
+                      ? "Custom pricing"
+                      : plan.billingInterval === "trial"
+                        ? "CAD $0"
+                        : `${formatTruckFixrCad(price)} / ${billingCadence === "annual" ? "year" : "month"}`;
                   return (
-                    <div key={plan.tier} className="rounded-xl border border-slate-200 p-4">
-                      <p className="text-sm font-semibold text-slate-900">{plan.label}</p>
-                      <p className="mt-1 text-xs text-slate-600">{plan.description}</p>
+                    <div key={plan.planKey} className={`rounded-xl border p-4 ${plan.recommended ? "border-blue-200 bg-blue-50/40" : "border-slate-200"}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">{plan.name}</p>
+                          <p className="mt-1 text-xs text-slate-600">{plan.description}</p>
+                        </div>
+                        {plan.recommended ? (
+                          <span className="rounded-full bg-blue-600 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white">
+                            Recommended
+                          </span>
+                        ) : null}
+                      </div>
                       <p className="mt-3 text-lg font-semibold text-slate-950">
                         {priceLabel}
                       </p>
                       <ul className="mt-3 space-y-1 text-xs text-slate-600">
-                        <li>Diagnostics: {plan.limits.diagnosticsPerMonth ?? "Unlimited"}</li>
-                        <li>Active vehicles: {plan.limits.activeVehicleCount ?? "Unlimited"}</li>
-                        <li>Driver accounts: {plan.limits.driverCount ?? "Included"}</li>
-                        <li>{plan.features.fleetReporting ? "Fleet reporting enabled" : "Fleet reporting locked"}</li>
+                        <li>Powered vehicles: {plan.poweredVehicleLimit ?? "Custom"}</li>
+                        <li>Included trailers: {plan.includedTrailerLimit ?? "Custom"}</li>
+                        <li>AI diagnostics: {plan.aiDiagnosticSessionLimit ?? "Custom"}</li>
+                        <li>Dashboard: {plan.fleetDashboard}</li>
                       </ul>
                       <div className="mt-4">
                         {isCurrent ? (
                           <Button variant="outline" className="w-full" disabled>
                             Current plan
                           </Button>
-                        ) : plan.tier === "free" ? (
+                        ) : plan.planKey === "free_trial" ? (
                           <Button variant="outline" className="w-full" onClick={handleManageBilling}>
-                            Downgrade / Cancel
+                            Manage downgrade
                           </Button>
                         ) : (
-                          <Button className="w-full bg-blue-600 hover:bg-blue-700" onClick={() => handleUpgrade(plan.tier)}>
-                            {plan.tier === "fleet" ? "Request Fleet plan" : `Upgrade to ${plan.label}`}
+                          <Button className="w-full bg-blue-600 hover:bg-blue-700" onClick={() => handleUpgrade(plan.planKey)}>
+                            {plan.planKey === "custom_fleet"
+                              ? "Request Fleet Quote"
+                              : plan.planKey === "fleet_growth"
+                                ? "Start 30-Day Fleet Pilot"
+                                : `Choose ${plan.name}`}
                           </Button>
                         )}
                       </div>
@@ -838,21 +888,21 @@ export default function UserProfile() {
                   Manage billing
                 </Button>
                 <p className="text-sm text-slate-500">
-                  Restricted features explain why access is blocked and route back to checkout when needed.
+                  Use the Stripe portal for payment updates, renewals, or subscription cancellation.
                 </p>
               </div>
 
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold text-slate-900">Need Fleet instead?</p>
+                    <p className="text-sm font-semibold text-slate-900">Need a custom fleet rollout?</p>
                     <p className="mt-1 text-sm text-slate-600">
-                      Fleet is best for larger or more operationally complex fleets. Send a quote request and our team will follow up.
+                      For 21+ powered vehicles or trailer-heavy operations, send a quote request and our team will follow up.
                     </p>
                   </div>
                   <Button
                     className="bg-slate-900 hover:bg-slate-800"
-                    onClick={() => handleUpgrade("fleet")}
+                    onClick={() => handleUpgrade("custom_fleet")}
                     disabled={requestFleetQuoteMutation.isPending}
                   >
                     {requestFleetQuoteMutation.isPending ? "Sending..." : "Request Fleet quote"}
@@ -949,3 +999,4 @@ export default function UserProfile() {
     </div>
   );
 }
+

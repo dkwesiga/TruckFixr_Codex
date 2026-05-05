@@ -279,6 +279,7 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   });
 
   return invokeWithOrchestration({
+    feature: "general_llm",
     messages: params.messages,
     tools: params.tools,
     toolChoice: params.toolChoice || params.tool_choice,

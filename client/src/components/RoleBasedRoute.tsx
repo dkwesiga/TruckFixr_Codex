@@ -31,9 +31,23 @@ export function RoleBasedRoute({
     if (!isAuthenticated || typeof window === "undefined") return;
     const key = "truckfixr:last-activity-at";
     const timeoutMs = 24 * 60 * 60 * 1000;
-    const lastActivityAt = Number(window.localStorage.getItem(key) ?? Date.now());
+    const now = Date.now();
+    const storedActivityAt = Number(window.localStorage.getItem(key) ?? "");
+    const hasStoredActivity = Number.isFinite(storedActivityAt) && storedActivityAt > 0;
+    const sessionStartedAtValue = user?.lastAuthAt ?? user?.lastSignedIn ?? null;
+    const sessionStartedAt = sessionStartedAtValue ? new Date(sessionStartedAtValue).getTime() : NaN;
 
-    if (Number.isFinite(lastActivityAt) && Date.now() - lastActivityAt > timeoutMs) {
+    if (!hasStoredActivity) {
+      window.localStorage.setItem(key, String(now));
+      return;
+    }
+
+    if (Number.isFinite(sessionStartedAt) && sessionStartedAt > 0 && storedActivityAt < sessionStartedAt) {
+      window.localStorage.setItem(key, String(now));
+      return;
+    }
+
+    if (now - storedActivityAt > timeoutMs) {
       toast.error("Your session has expired for security. Please sign in again.");
       void logout();
       return;
@@ -51,7 +65,7 @@ export function RoleBasedRoute({
       window.removeEventListener("keydown", markActivity);
       window.removeEventListener("touchstart", markActivity);
     };
-  }, [isAuthenticated, logout]);
+  }, [isAuthenticated, logout, user?.lastAuthAt, user?.lastSignedIn]);
 
   if (isLoading) {
     return (

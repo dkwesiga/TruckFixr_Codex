@@ -26,6 +26,9 @@ export function useAuth(options?: UseAuthOptions) {
 
   const logout = useCallback(async () => {
     try {
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem("truckfixr:last-activity-at");
+      }
       await logoutMutation.mutateAsync();
     } catch (error: unknown) {
       if (

@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import SignaturePad from "@/components/SignaturePad";
 import { Textarea } from "@/components/ui/textarea";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
-import VehicleCaptureFlow from "@/components/VehicleCaptureFlow";
+import VehicleAccessRequestDialog from "@/components/VehicleAccessRequestDialog";
 import { useAuthContext } from "@/hooks/useAuthContext";
 import {
   clearInspectionDraft,
@@ -22,7 +22,7 @@ import {
   type InspectionDraftItemResponse,
 } from "@/lib/inspectionDrafts";
 import { loadLastDriverVehicleContext, saveLastDriverVehicleContext } from "@/lib/driverVehicleContext";
-import { loadDriverVehicles, type DriverVehicleRecord } from "@/lib/driverVehicles";
+import { type DriverVehicleRecord } from "@/lib/driverVehicles";
 import { trpc } from "@/lib/trpc";
 import { trackInspectionSubmitted } from "@/lib/analytics";
 import { getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
@@ -78,18 +78,22 @@ function downloadBase64Pdf(fileName: string, base64: string, mimeType = "applica
 
 function DriverInspectionContent() {
   const { user } = useAuthContext();
+  const subscriptionQuery = trpc.subscriptions.getCurrent.useQuery();
   const searchParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const storedVehicle = useMemo(() => loadLastDriverVehicleContext(), []);
   const rawVehicleId = searchParams.get("vehicle") ?? (storedVehicle ? String(storedVehicle.id) : null);
   const hasVehicleSelection = rawVehicleId !== null && Number.isFinite(Number(rawVehicleId));
   const vehicleId = hasVehicleSelection ? Number(rawVehicleId) : -1;
-  const fleetId = Number(searchParams.get("fleet") ?? (storedVehicle?.fleetId ? String(storedVehicle.fleetId) : "1"));
+  const fleetId = useMemo(() => {
+    const urlFleet = searchParams.get("fleet");
+    if (urlFleet && urlFleet.trim()) return Math.max(1, Number(urlFleet));
+    if (storedVehicle?.fleetId) return Math.max(1, storedVehicle.fleetId);
+    return Math.max(1, subscriptionQuery.data?.activeFleetId ?? 1);
+  }, [searchParams, storedVehicle, subscriptionQuery.data?.activeFleetId]);
   const driverName = user?.name?.trim() || user?.email?.trim() || "Driver";
-  const isOwnerOperator = user?.role === "owner_operator" || user?.role === "owner" || user?.role === "manager";
+  const isOwnerOperator =
+    String(user?.role) === "owner_operator" || user?.role === "owner" || user?.role === "manager";
   const storage = useMemo(() => getBrowserStorage(), []);
-  const [vehicleChoices, setVehicleChoices] = useState<DriverVehicleRecord[]>(() => loadDriverVehicles());
-  const [showVehicleCapture, setShowVehicleCapture] = useState(false);
-  const [vehicleCaptureInitialStep, setVehicleCaptureInitialStep] = useState<"entry" | "manual" | "scan_source">("entry");
   const restoredDraft = useMemo(() => loadInspectionDraft(storage, vehicleId), [storage, vehicleId]);
   const storedChecklistSnapshot = useMemo(
     () => loadChecklistSnapshot(storage, vehicleId),
@@ -129,7 +133,44 @@ function DriverInspectionContent() {
     { vehicleId },
     { staleTime: 60_000, enabled: hasVehicleSelection }
   );
+  const vehiclesQuery = trpc.vehicles.listMine.useQuery(undefined, {
+    staleTime: 30_000,
+    enabled: Boolean(user?.id),
+  });
   const submitMutation = trpc.inspections.create.useMutation();
+  const vehicleChoices = useMemo<DriverVehicleRecord[]>(
+    () =>
+      (vehiclesQuery.data ?? []).map((vehicle) => ({
+        id: vehicle.id,
+        fleetId: vehicle.fleetId,
+        label: vehicle.unitNumber?.trim() || vehicle.licensePlate?.trim() || vehicle.vin,
+        vin: vehicle.vin,
+        licensePlate: vehicle.licensePlate || "UNKNOWN",
+        make: vehicle.make || "Truck",
+        engineMake: vehicle.engineMake || "",
+        model: vehicle.model || "Unit",
+        year: vehicle.year ?? null,
+        mileage: vehicle.mileage ?? 0,
+        assetType:
+          vehicle.assetType === "tractor" ||
+          vehicle.assetType === "straight_truck" ||
+          vehicle.assetType === "trailer"
+            ? vehicle.assetType
+            : "other",
+        status:
+          vehicle.complianceStatus === "red" || vehicle.status === "maintenance"
+            ? "Needs Review"
+            : "Operational",
+      })),
+    [vehiclesQuery.data]
+  );
+  const selectedVehicle = useMemo(
+    () => vehicleChoices.find((vehicle) => Number(vehicle.id) === vehicleId) ?? null,
+    [vehicleChoices, vehicleId]
+  );
+  const resolvedFleetId = selectedVehicle?.fleetId ?? storedVehicle?.fleetId ?? fleetId;
+  const isBlockedVehicleSelection =
+    hasVehicleSelection && !selectedVehicle && !vehiclesQuery.isLoading;
 
   const checklistData = useMemo(() => {
     if (!checklistQuery.data) return offlineChecklist ?? null;
@@ -523,7 +564,7 @@ function DriverInspectionContent() {
             <CardHeader>
               <CardTitle>Select a vehicle to start inspection</CardTitle>
               <CardDescription>
-                Inspections require a vehicle first. Choose an existing truck, add one manually, or scan the VIN and TruckFixr will reopen the daily inspection with that vehicle already selected.
+                Inspections require a vehicle first. Choose one of your assigned units and TruckFixr will reopen the daily inspection with that vehicle already selected.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
@@ -546,7 +587,7 @@ function DriverInspectionContent() {
                           </div>
                           <div>
                             <p className="font-medium text-slate-900">{vehicle.label}</p>
-                            <p className="text-sm text-slate-500">{vehicle.make} {vehicle.model} · {vehicle.vin}</p>
+                            <p className="text-sm text-slate-500">{vehicle.make} {vehicle.model} | {vehicle.vin}</p>
                           </div>
                         </div>
                         <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
@@ -558,31 +599,19 @@ function DriverInspectionContent() {
                   </div>
                 ) : (
                   <div className="rounded-2xl border border-dashed border-amber-300 bg-white p-5 text-sm text-slate-700">
-                    No vehicles are available yet. Add one now to unlock inspections.
+                    {isOwnerOperator
+                      ? "No vehicles are available in your operation yet."
+                      : "No assigned vehicles are available yet. Request access from your fleet manager or owner, then inspection will unlock automatically."}
                   </div>
                 )}
                 <div className="flex flex-wrap gap-3">
-                  {isOwnerOperator && (
-                    <Button
-                      type="button"
-                      onClick={() => {
-                        setVehicleCaptureInitialStep("entry");
-                        setShowVehicleCapture(true);
-                      }}
-                    >
-                      Add Vehicle
-                    </Button>
-                  )}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => {
-                      setVehicleCaptureInitialStep("scan_source");
-                      setShowVehicleCapture(true);
-                    }}
-                  >
-                    Scan VIN
-                  </Button>
+                  {!isOwnerOperator ? (
+                    <VehicleAccessRequestDialog
+                      fleetId={resolvedFleetId}
+                      triggerLabel="Request Vehicle Access"
+                      triggerVariant="default"
+                    />
+                  ) : null}
                 </div>
                 <Button type="button" variant="outline" onClick={() => { window.location.href = "/driver"; }}>
                   <ChevronLeft className="h-4 w-4" />
@@ -590,39 +619,49 @@ function DriverInspectionContent() {
                 </Button>
               </div>
               <div>
-                {showVehicleCapture ? (
-                  <VehicleCaptureFlow
-                    fleetId={fleetId}
-                    source="inspection"
-                    initialStep={vehicleCaptureInitialStep}
-                    onCancel={() => setShowVehicleCapture(false)}
-                    onSaved={(vehicle) => {
-                      setVehicleChoices((current) => [vehicle, ...current.filter((item) => item.id !== vehicle.id)]);
-                      saveLastDriverVehicleContext({
-                        id: vehicle.id,
-                        fleetId: vehicle.fleetId,
-                        label: vehicle.label,
-                        vin: vehicle.vin,
-                        licensePlate: vehicle.licensePlate,
-                        make: vehicle.make,
-                        model: vehicle.model,
-                        year: vehicle.year,
-                        engineMake: vehicle.engineMake,
-                      });
-                      window.location.href = `/inspection?vehicle=${encodeURIComponent(String(vehicle.id))}&fleet=${encodeURIComponent(String(vehicle.fleetId))}&mode=daily`;
-                    }}
-                  />
-                ) : (
-                  <Card className="rounded-2xl border border-slate-200 bg-white">
-                    <CardHeader>
-                      <CardTitle className="text-base">VIN-first vehicle setup</CardTitle>
-                      <CardDescription>
-                        Scan the VIN or enter it manually, review the decoded details, save the vehicle, and TruckFixr will reopen inspection with that vehicle already selected.
-                      </CardDescription>
-                    </CardHeader>
-                  </Card>
-                )}
+                <Card className="rounded-2xl border border-slate-200 bg-white">
+                  <CardHeader>
+                    <CardTitle className="text-base">Assigned access only</CardTitle>
+                    <CardDescription>
+                      {isOwnerOperator
+                        ? "Add or assign vehicles from the fleet management workspace, then return here to run the daily inspection."
+                        : "Drivers can only inspect vehicles and trailers that have already been assigned to them."}
+                    </CardDescription>
+                  </CardHeader>
+                </Card>
               </div>
+            </CardContent>
+          </Card>
+        </main>
+      </div>
+    );
+  }
+
+  if (isBlockedVehicleSelection) {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <main className="mx-auto max-w-4xl px-4 py-12 sm:px-6 lg:px-8">
+          <Card className="border-amber-200 bg-amber-50">
+            <CardHeader>
+              <CardTitle>{isOwnerOperator ? "Vehicle not found" : "You do not currently have access to this vehicle"}</CardTitle>
+              <CardDescription>
+                {isOwnerOperator
+                  ? "Select another active unit from your dashboard to continue."
+                  : "Drivers can only inspect vehicles and trailers assigned to them. Request access from your fleet manager or owner to continue."}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-3">
+              {!isOwnerOperator ? (
+                <VehicleAccessRequestDialog
+                  fleetId={resolvedFleetId}
+                  triggerLabel="Request Vehicle Access"
+                  triggerVariant="default"
+                />
+              ) : null}
+              <Button type="button" variant="outline" onClick={() => { window.location.href = "/driver"; }}>
+                <ChevronLeft className="h-4 w-4" />
+                Return to Dashboard
+              </Button>
             </CardContent>
           </Card>
         </main>
@@ -661,40 +700,9 @@ function DriverInspectionContent() {
   }
 
   const { vehicle: checklistVehicle, latestInspection } = checklistData;
-  const localVehicle =
-    vehicleChoices.find((item) => item.id === vehicleId) ??
-    (storedVehicle && storedVehicle.id === vehicleId
-      ? {
-          id: storedVehicle.id,
-          fleetId: storedVehicle.fleetId ?? fleetId,
-          label: storedVehicle.label ?? "",
-          vin: storedVehicle.vin ?? "",
-          licensePlate: storedVehicle.licensePlate ?? "",
-          make: storedVehicle.make ?? "",
-          model: storedVehicle.model ?? "",
-          year: storedVehicle.year ?? null,
-          engineMake: storedVehicle.engineMake ?? "",
-          mileage: 0,
-          status: "Operational" as const,
-        }
-      : null);
-  const shouldUseLocalVehicleDetails =
-    checklistVehicle.licensePlate === "UNKNOWN" ||
-    checklistVehicle.make === "Truck" ||
-    checklistVehicle.model === "Unit" ||
-    vehicleId < 0;
-  const vehicle = localVehicle && shouldUseLocalVehicleDetails
-    ? {
-        ...checklistVehicle,
-        vin: localVehicle.vin || checklistVehicle.vin,
-        licensePlate: localVehicle.licensePlate || checklistVehicle.licensePlate,
-        make: localVehicle.make || checklistVehicle.make,
-        model: localVehicle.model || checklistVehicle.model,
-        year: localVehicle.year ?? checklistVehicle.year,
-      }
-    : checklistVehicle;
+  const vehicle = checklistVehicle;
   const vehicleLabel = getVehicleDisplayLabel({
-    label: localVehicle?.label,
+    label: selectedVehicle?.label ?? storedVehicle?.label,
     vin: vehicle.vin,
     vehicleId: vehicle.id,
   });
@@ -998,7 +1006,7 @@ function DriverInspectionContent() {
                       </p>
                       <ul className="space-y-1 text-sm text-amber-900">
                         {pendingItems.map((item) => (
-                          <li key={item}>• {item}</li>
+                          <li key={item}>- {item}</li>
                         ))}
                       </ul>
                     </div>
@@ -1140,3 +1148,4 @@ export default function DriverInspectionNSC() {
     </RoleBasedRoute>
   );
 }
+
