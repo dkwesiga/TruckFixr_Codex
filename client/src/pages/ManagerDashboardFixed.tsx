@@ -202,16 +202,27 @@ function mapVehicleRow(vehicle: any, drivers: any[] = []): DashboardRow {
 }
 
 function ManagerDashboardFixedContent() {
-  const { user, logout } = useAuthContext();
+  const { user, logout, isLoading: isAuthLoading } = useAuthContext();
   const utils = trpc.useUtils();
   const [, navigate] = useLocation();
   const subscriptionQuery = trpc.subscriptions.getCurrent.useQuery();
+  const companyQuery = trpc.company.getCurrent.useQuery(undefined, {
+    enabled: Boolean(user),
+  });
   const fallbackFleetId =
     typeof (user as any)?.fleetId === "number" && Number.isFinite((user as any).fleetId)
       ? (user as any).fleetId
       : null;
-  const fleetId = subscriptionQuery.data?.activeFleetId ?? fallbackFleetId;
+  const companyFleetId =
+    typeof companyQuery.data?.company?.id === "number" && Number.isFinite(companyQuery.data.company.id)
+      ? companyQuery.data.company.id
+      : null;
+  const fleetId = subscriptionQuery.data?.activeFleetId ?? companyFleetId ?? fallbackFleetId;
   const resolvedFleetId = typeof fleetId === "number" && fleetId > 0 ? fleetId : null;
+  const isFleetContextLoading =
+    isAuthLoading ||
+    subscriptionQuery.isLoading ||
+    companyQuery.isLoading;
   const [search, setSearch] = useState("");
   const [isAddVehicleOpen, setIsAddVehicleOpen] = useState(false);
   const [vehicleCaptureInitialStep, setVehicleCaptureInitialStep] = useState<
@@ -474,7 +485,11 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
 
   const openAddVehicleDialog = () => {
     if (resolvedFleetId == null) {
-      toast.error("TruckFixr is still loading your fleet. Please try again in a moment.");
+      toast.error(
+        isFleetContextLoading
+          ? "TruckFixr is still loading your fleet. Please try again in a moment."
+          : "TruckFixr could not find a fleet for this manager account yet."
+      );
       return;
     }
 
@@ -634,7 +649,7 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
               <DialogTrigger asChild>
                 <Button
                   className="fleet-primary-btn rounded-full"
-                  disabled={resolvedFleetId == null}
+                  disabled={resolvedFleetId == null && isFleetContextLoading}
                   onClick={openAddVehicleDialog}
                 >
                   <Plus className="mr-2 h-4 w-4" />
