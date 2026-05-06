@@ -282,6 +282,11 @@ export default function VehicleCaptureFlow({
   };
 
   const saveVehicle = async () => {
+    if (!(typeof fleetId === "number" && fleetId > 0)) {
+      toast.error("TruckFixr is still loading your fleet. Refresh and try again.");
+      return;
+    }
+
     const vin = normalizeVinInput(vehicleForm.vin);
     if (vin.length !== 17) {
       toast.error("VIN must be 17 characters before saving.");

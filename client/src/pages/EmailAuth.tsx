@@ -293,25 +293,22 @@ export default function EmailAuth() {
       } else {
         const result = await handleSignin(email, password);
         if (result.success) {
-          await utils.auth.me.invalidate();
-          const authenticatedUser = await utils.auth.me.fetch();
-
-          if (!authenticatedUser) {
-            throw new Error("Sign-in completed, but your session was not restored. Please try again.");
-          }
-
           markSessionActivity();
           trackLogin('email', { email });
-          toast.success("Signed in successfully!");
-          // Redirect based on the authenticated user so we don't rely on stale response data.
+          const authenticatedUser = result.user;
+
+          if (!authenticatedUser) {
+            throw new Error("Sign-in completed, but the authenticated user payload was missing. Please try again.");
+          }
+
+          utils.auth.me.setData(undefined, authenticatedUser);
+          void utils.auth.me.invalidate();
+
           const redirectPath =
             authenticatedUser.role === 'manager' || authenticatedUser.role === 'owner'
               ? '/manager'
               : '/driver';
-          // Use full page reload to ensure session cookie is recognized and auth context updates
-          setTimeout(() => {
-            window.location.href = redirectPath;
-          }, 500);
+          setLocation(redirectPath);
         }
       }
     } catch (error: any) {

@@ -52,8 +52,28 @@ export const vehiclesRouter = router({
         });
       }
 
+      const resolvedFleetId =
+        typeof input.fleetId === "number" && input.fleetId > 0
+          ? input.fleetId
+          : await getUserPrimaryFleetId(ctx.user.id);
+
+      if (input.fleetId !== resolvedFleetId) {
+        console.warn("[Vehicles] Recovered invalid create fleetId from user primary fleet.", {
+          requestedFleetId: input.fleetId,
+          resolvedFleetId,
+          userId: ctx.user.id,
+        });
+      }
+
+      if (!resolvedFleetId || resolvedFleetId <= 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "TruckFixr could not determine which fleet should own this vehicle.",
+        });
+      }
+
       const canManage = await canManageVehicleAccess({
-        fleetId: input.fleetId,
+        fleetId: resolvedFleetId,
         user: ctx.user,
       });
 
@@ -66,7 +86,7 @@ export const vehiclesRouter = router({
 
       const entitlement = await getEntitlementState({
         userId: ctx.user.id,
-        fleetId: input.fleetId,
+        fleetId: resolvedFleetId,
       });
 
       const db = await getDb();
@@ -93,7 +113,7 @@ export const vehiclesRouter = router({
         }
 
         const driverBelongsToFleet = await verifyDriverBelongsToFleet({
-          fleetId: input.fleetId,
+          fleetId: resolvedFleetId,
           driverUserId: input.assignedDriverId,
         });
 
@@ -109,7 +129,7 @@ export const vehiclesRouter = router({
         [vehicle] = await db
           .insert(vehicles)
           .values({
-            fleetId: input.fleetId,
+            fleetId: resolvedFleetId,
             assignedDriverId: null,
             assetType: input.assetType ?? "tractor",
             unitNumber: input.unitNumber?.trim() || null,
@@ -137,7 +157,7 @@ export const vehiclesRouter = router({
         await db
           .insert(vehicleAssignments)
           .values({
-            fleetId: input.fleetId,
+            fleetId: resolvedFleetId,
             vehicleId: vehicle.id,
             driverUserId: input.assignedDriverId,
             assignedByUserId: ctx.user.id,

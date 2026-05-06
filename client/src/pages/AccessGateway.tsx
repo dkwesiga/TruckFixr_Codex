@@ -2,8 +2,16 @@ import AppLogo from "@/components/AppLogo";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ArrowRight, CheckCircle2, KeyRound, Ticket, UserPlus } from "lucide-react";
+import { useLocation } from "wouter";
 
 const accessCards = [
+  {
+    title: "Sign in",
+    body: "Already have an account? Continue to your TruckFixr dashboard.",
+    href: "/auth/email",
+    cta: "Sign In",
+    icon: KeyRound,
+  },
   {
     title: "Start a 30-day trial",
     body: "For fleet owners and managers who want to try TruckFixr with a small fleet. No credit card required.",
@@ -25,25 +33,24 @@ const accessCards = [
     cta: "Accept Invitation",
     icon: UserPlus,
   },
-  {
-    title: "Sign in",
-    body: "Already have an account? Continue to your TruckFixr dashboard.",
-    href: "/auth/email",
-    cta: "Sign In",
-    icon: KeyRound,
-  },
 ];
 
 export default function AccessGateway() {
+  const [, setLocation] = useLocation();
+
   return (
     <main className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#eef3f8_100%)] px-4 py-8 sm:px-6 lg:py-12">
       <div className="mx-auto max-w-6xl">
         <header className="mb-8 flex items-center justify-between gap-4">
-          <a href="/" className="flex items-center">
+          <button type="button" onClick={() => setLocation("/")} className="flex items-center">
             <AppLogo variant="full" imageClassName="h-10 w-auto" />
-          </a>
-          <Button asChild className="rounded-full bg-[#E32636] px-5 font-bold text-white hover:bg-[#BC1E2C]">
-            <a href="/auth/email">Sign In</a>
+          </button>
+          <Button
+            type="button"
+            className="rounded-full bg-[#E32636] px-5 font-bold text-white hover:bg-[#BC1E2C]"
+            onClick={() => setLocation("/auth/email")}
+          >
+            Sign In
           </Button>
         </header>
 
@@ -63,11 +70,13 @@ export default function AccessGateway() {
               <card.icon className="h-6 w-6 text-[#E32636]" />
               <h2 className="mt-4 font-['Manrope'] text-2xl font-black text-[#00263F]">{card.title}</h2>
               <p className="mt-3 text-sm leading-7 text-[#42474E]">{card.body}</p>
-              <Button asChild className="mt-5 rounded-full bg-[#00263F] px-5 font-bold text-white hover:bg-[#0B3C5D]">
-                <a href={card.href}>
+              <Button
+                type="button"
+                className="mt-5 rounded-full bg-[#00263F] px-5 font-bold text-white hover:bg-[#0B3C5D]"
+                onClick={() => setLocation(card.href)}
+              >
                   {card.cta}
                   <ArrowRight className="ml-2 h-4 w-4" />
-                </a>
               </Button>
             </Card>
           ))}

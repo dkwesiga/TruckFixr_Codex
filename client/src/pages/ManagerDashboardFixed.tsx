@@ -206,7 +206,12 @@ function ManagerDashboardFixedContent() {
   const utils = trpc.useUtils();
   const [, navigate] = useLocation();
   const subscriptionQuery = trpc.subscriptions.getCurrent.useQuery();
-  const fleetId = subscriptionQuery.data?.activeFleetId ?? (user as any)?.fleetId ?? 0;
+  const fallbackFleetId =
+    typeof (user as any)?.fleetId === "number" && Number.isFinite((user as any).fleetId)
+      ? (user as any).fleetId
+      : null;
+  const fleetId = subscriptionQuery.data?.activeFleetId ?? fallbackFleetId;
+  const resolvedFleetId = typeof fleetId === "number" && fleetId > 0 ? fleetId : null;
   const [search, setSearch] = useState("");
   const [isAddVehicleOpen, setIsAddVehicleOpen] = useState(false);
   const [vehicleCaptureInitialStep, setVehicleCaptureInitialStep] = useState<
@@ -232,23 +237,32 @@ function ManagerDashboardFixedContent() {
     inviteEmail: "",
   });
 
-  const vehiclesQuery = trpc.vehicles.listByFleet.useQuery({ fleetId }, { enabled: !!fleetId });
+  const vehiclesQuery = trpc.vehicles.listByFleet.useQuery(
+    { fleetId: resolvedFleetId ?? 0 },
+    { enabled: resolvedFleetId != null }
+  );
   const managerActionQueueQuery =
     trpc.diagnostics.getManagerActionQueue.useQuery({
-      fleetId,
+      fleetId: resolvedFleetId ?? 0,
       limit: 5,
-    }, { enabled: !!fleetId });
+    }, { enabled: resolvedFleetId != null });
     
   const verifiedHealthQuery = trpc.inspections.getFleetDailyHealth.useQuery(
-    { fleetId },
-    { staleTime: 30_000, enabled: !!fleetId }
+    { fleetId: resolvedFleetId ?? 0 },
+    { staleTime: 30_000, enabled: resolvedFleetId != null }
   );
   const inspectionReportsQuery = trpc.inspections.getMyReports.useQuery(
-    { fleetId, limit: 8 },
-    { staleTime: 30_000, enabled: !!fleetId }
+    { fleetId: resolvedFleetId ?? 0, limit: 8 },
+    { staleTime: 30_000, enabled: resolvedFleetId != null }
   );
-  const driversQuery = trpc.vehicleAccess.listFleetDrivers.useQuery({ fleetId }, { enabled: !!fleetId });
-  const pendingAccessRequestsQuery = trpc.vehicleAccess.listPendingRequests.useQuery({ fleetId }, { enabled: !!fleetId });
+  const driversQuery = trpc.vehicleAccess.listFleetDrivers.useQuery(
+    { fleetId: resolvedFleetId ?? 0 },
+    { enabled: resolvedFleetId != null }
+  );
+  const pendingAccessRequestsQuery = trpc.vehicleAccess.listPendingRequests.useQuery(
+    { fleetId: resolvedFleetId ?? 0 },
+    { enabled: resolvedFleetId != null }
+  );
   
   const selectedAsset = useMemo(() => 
     (vehiclesQuery.data ?? []).find(v => String(v.id) === assignmentForm.vehicleId),
@@ -291,7 +305,11 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
 
   const createVehicleMutation = trpc.vehicles.create.useMutation({
     onSuccess: async createdVehicle => {
-      utils.vehicles.listByFleet.setData({ fleetId }, current => {
+      if (resolvedFleetId == null) {
+        return;
+      }
+
+      utils.vehicles.listByFleet.setData({ fleetId: resolvedFleetId }, current => {
         const vehicles = current ?? [];
         const existingIndex = vehicles.findIndex(
           vehicle => vehicle.id === createdVehicle.id
@@ -306,7 +324,7 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
         return [createdVehicle, ...vehicles];
       });
 
-      await utils.vehicles.listByFleet.invalidate({ fleetId });
+      await utils.vehicles.listByFleet.invalidate({ fleetId: resolvedFleetId });
       await vehiclesQuery.refetch();
     },
   });
@@ -350,6 +368,11 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
   }, [isAssignDialogOpen, assignmentForm.vehicleId, vehiclesQuery.data]);
 
   const handleAssignSubmit = async (confirmed: boolean = false) => {
+    if (resolvedFleetId == null) {
+      toast.error("Your fleet is still loading. Please try again in a moment.");
+      return;
+    }
+
     if (!confirmed && selectedAsset?.assignedDriverId && String(selectedAsset.assignedDriverId) !== String(assignmentForm.driverUserId ?? "")) {
       setAssignmentWarning({
         title: "Asset Already Assigned",
@@ -401,7 +424,7 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
 
     try {
       await assignMutation.mutateAsync({
-        fleetId,
+        fleetId: resolvedFleetId,
         vehicleId: parsedVehicleId,
         driverUserId:
           assignmentForm.driverMode === "invite" ? undefined : parsedDriverUserId,
@@ -450,6 +473,11 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
   }, [search, vehiclesQuery.data, drivers]);
 
   const openAddVehicleDialog = () => {
+    if (resolvedFleetId == null) {
+      toast.error("TruckFixr is still loading your fleet. Please try again in a moment.");
+      return;
+    }
+
     setVehicleCaptureInitialStep("entry");
     setIsAddVehicleOpen(true);
   };
@@ -457,13 +485,17 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
   const resetVehicleDialog = () => {};
 
   const handleAddVehicle = async (draft: VehicleCaptureDraft) => {
+    if (resolvedFleetId == null) {
+      throw new Error("TruckFixr could not determine your fleet yet. Refresh the page and try again.");
+    }
+
     if (draft.vin.trim().length !== 17) {
       throw new Error("VIN must be exactly 17 characters.");
     }
 
     try {
       const createdVehicle = await createVehicleMutation.mutateAsync({
-        fleetId,
+        fleetId: resolvedFleetId,
         assetType: "truck", // Default for OCR, should be selectable in flow
         unitNumber: draft.label.trim() || getFallbackUnitNumber(draft.vin),
         vin: draft.vin.trim().toUpperCase(),
@@ -600,14 +632,18 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
               }}
             >
               <DialogTrigger asChild>
-                <Button className="fleet-primary-btn rounded-full">
+                <Button
+                  className="fleet-primary-btn rounded-full"
+                  disabled={resolvedFleetId == null}
+                  onClick={openAddVehicleDialog}
+                >
                   <Plus className="mr-2 h-4 w-4" />
                   Add vehicle
                 </Button>
               </DialogTrigger>
               <DialogContent className="max-h-[calc(100svh-1rem)] w-[calc(100vw-1rem)] overflow-hidden rounded-[28px] border-[var(--fleet-outline)] p-0 sm:max-h-[calc(100svh-2rem)] sm:max-w-2xl">
                 <VehicleCaptureFlow
-                  fleetId={fleetId}
+                  fleetId={resolvedFleetId ?? 0}
                   source="vehicles"
                   initialStep={vehicleCaptureInitialStep}
                   saveButtonLabel="Save vehicle"
@@ -1096,7 +1132,7 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
         </section>
 
         <section>
-          <MorningFleetSummary fleetId={fleetId} />
+          {resolvedFleetId != null ? <MorningFleetSummary fleetId={resolvedFleetId} /> : null}
         </section>
 
         <section className="grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
