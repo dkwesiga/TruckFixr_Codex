@@ -511,7 +511,7 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
     try {
       const createdVehicle = await createVehicleMutation.mutateAsync({
         fleetId: resolvedFleetId,
-        assetType: "truck", // Default for OCR, should be selectable in flow
+        assetType: "straight_truck",
         unitNumber: draft.label.trim() || getFallbackUnitNumber(draft.vin),
         vin: draft.vin.trim().toUpperCase(),
         licensePlate: draft.licensePlate.trim() || undefined,

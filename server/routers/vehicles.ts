@@ -20,6 +20,28 @@ import {
 import { getUserPrimaryFleetId } from "../services/companyAccess";
 import { assignDriver } from "../../vehicle.controller";
 
+function normalizeAssetType(
+  assetType: "tractor" | "straight_truck" | "trailer" | "truck" | "bus" | "van" | "reefer_trailer" | "flatbed_trailer" | "dry_van_trailer" | "other" | undefined
+) {
+  switch (assetType) {
+    case "truck":
+    case "bus":
+    case "van":
+      return "straight_truck" as const;
+    case "reefer_trailer":
+    case "flatbed_trailer":
+    case "dry_van_trailer":
+      return "trailer" as const;
+    case "tractor":
+    case "straight_truck":
+    case "trailer":
+    case "other":
+      return assetType;
+    default:
+      return "tractor" as const;
+  }
+}
+
 export const vehiclesRouter = router({
   /**
    * Create a new vehicle (truck)
@@ -103,6 +125,7 @@ export const vehiclesRouter = router({
         requestedAssetRecordStatus === "active" && !entitlement.canAddVehicle
           ? "draft"
           : requestedAssetRecordStatus;
+      const normalizedAssetType = normalizeAssetType(input.assetType);
 
       if (input.assignedDriverId != null) {
         if (assetRecordStatus !== "active") {
@@ -131,7 +154,7 @@ export const vehiclesRouter = router({
           .values({
             fleetId: resolvedFleetId,
             assignedDriverId: null,
-            assetType: input.assetType ?? "tractor",
+            assetType: normalizedAssetType,
             unitNumber: input.unitNumber?.trim() || null,
             vin: input.vin,
             licensePlate: input.licensePlate?.trim() || "UNKNOWN",
