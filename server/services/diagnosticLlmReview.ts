@@ -234,6 +234,7 @@ type DiagnosticProviderPlan = {
   providerLabel: string;
 };
 
+const DEFAULT_DEEPSEEK_OPENROUTER_MODEL = "deepseek/deepseek-v4-flash";
 const MODEL_RATE_LIMIT_COOLDOWN_MS = 120_000;
 const modelSkipUntil = new Map<string, number>();
 
@@ -315,6 +316,21 @@ function readMessageText(result: InvokeResult) {
   }
 
   return "";
+}
+
+function throwOnOrchestratorFallback(result: InvokeResult, fallbackLabel: string) {
+  const attempts = result.orchestration?.attempts ?? [];
+  if (attempts.length === 0 || attempts.some((attempt) => attempt.success)) {
+    return;
+  }
+
+  const lastFailureReason =
+    attempts
+      .map((attempt) => attempt.reason?.trim())
+      .filter((reason): reason is string => Boolean(reason))
+      .at(-1) ?? `${fallbackLabel} returned a controlled fallback response`;
+
+  throw new Error(lastFailureReason);
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -1104,6 +1120,12 @@ function safePromptStringify(value: unknown) {
   }
 }
 
+function uniqueNonEmptyModels(models: Array<string | null | undefined>) {
+  return models
+    .map((model) => (typeof model === "string" ? model.trim() : ""))
+    .filter((model, index, values) => model.length > 0 && values.indexOf(model) === index);
+}
+
 function buildSimpleCategoryPrompt(request: Record<string, unknown>) {
   const template = {
     primary_category: "unknown_triage",
@@ -1215,6 +1237,20 @@ function isPromptLimitError(error: Error) {
 
 function nextPromptCompactLevel(currentLevel: PromptCompactLevel): PromptCompactLevel | null {
   return currentLevel < 2 ? ((currentLevel + 1) as PromptCompactLevel) : null;
+}
+
+function chooseInitialPromptCompactLevel(
+  payload: Record<string, unknown>,
+  thresholds: { levelOne: number; levelTwo: number }
+): PromptCompactLevel {
+  const serializedLength = safePromptStringify(payload).length;
+  if (serializedLength >= thresholds.levelTwo) {
+    return 2;
+  }
+  if (serializedLength >= thresholds.levelOne) {
+    return 1;
+  }
+  return 0;
 }
 
 function compactIntakePackageForPrompt(
@@ -1469,15 +1505,21 @@ function buildDiagnosticProviderPlan(
   const primaryProvider: AiProvider = ENV.openRouterApiKey
     ? "openrouter"
     : enabledProviders[0] ?? "openrouter";
-  const fallbackProviders = getFallbackProviders(primaryProvider);
-  const primaryModel = config.openRouterModel.trim() || "deepseek/deepseek-v4-flash";
+  const fallbackProviders =
+    primaryProvider === "openrouter" ? [] : getFallbackProviders(primaryProvider);
+  const primaryModel = config.openRouterModel.trim() || DEFAULT_DEEPSEEK_OPENROUTER_MODEL;
+  const primaryModels = uniqueNonEmptyModels([
+    primaryModel,
+    config.openRouterFallbackModel,
+    primaryModel === DEFAULT_DEEPSEEK_OPENROUTER_MODEL ? "" : DEFAULT_DEEPSEEK_OPENROUTER_MODEL,
+  ]);
 
   if (enabledProviders.length > 0) {
     return {
       preferredProvider: primaryProvider,
       fallbackProviders,
-      primaryModels: [primaryModel],
-      defaultModel: primaryModel,
+      primaryModels,
+      defaultModel: primaryModels[0] ?? primaryModel,
       providerLabel: primaryProvider === "openrouter" ? "OpenRouter" : primaryProvider,
     };
   }
@@ -1889,9 +1931,15 @@ export async function reviewDiagnosticWithLlm(
 
   for (let index = 0; index < models.length; index += 1) {
     const model = models[index];
+    if (shouldTemporarilySkipModel(model)) {
+      continue;
+    }
     const attemptsForModel = index === 0 ? config.retryCount + 1 : 2;
     let maxTokens = config.reviewMaxTokens;
-    let compactLevel: PromptCompactLevel = 0;
+    let compactLevel = chooseInitialPromptCompactLevel(request.evidencePackage, {
+      levelOne: 3200,
+      levelTwo: 5000,
+    });
     let allowResponseFormat = true;
 
     for (let attemptIndex = 0; attemptIndex < attemptsForModel; attemptIndex += 1) {
@@ -1905,6 +1953,7 @@ export async function reviewDiagnosticWithLlm(
           compactLevel,
           allowResponseFormat
         );
+        throwOnOrchestratorFallback(raw, "Diagnostic review");
         const rawText = readMessageText(raw);
         let parsed: DiagnosticLlmResponse;
 
@@ -1963,6 +2012,11 @@ export async function reviewDiagnosticWithLlm(
         };
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
+        rememberTemporaryModelFailure(model, lastError);
+        if (shouldSkipFurtherRetriesForModel(lastError)) {
+          break;
+        }
+
         const nextCompactLevel: PromptCompactLevel | null = isPromptLimitError(lastError)
           || isOpenRouterProviderError(lastError)
           ? nextPromptCompactLevel(compactLevel)
@@ -1982,10 +2036,6 @@ export async function reviewDiagnosticWithLlm(
         if (isOpenRouterProviderError(lastError) && allowResponseFormat) {
           allowResponseFormat = false;
           continue;
-        }
-
-        if (shouldSkipFurtherRetriesForModel(lastError)) {
-          break;
         }
 
         if (attemptIndex < attemptsForModel - 1 && isRetryableReviewError(lastError)) {
@@ -2137,6 +2187,7 @@ export async function classifyDiagnosticIssueWithLlm(
           model,
           maxTokens
         );
+        throwOnOrchestratorFallback(raw, "Diagnostic classification");
         const parsed = normalizeSimpleClassification(
           parseSimpleCategoryResponse(readMessageText(raw)),
           safePromptStringify(request.intakePackage).slice(0, 3000)
@@ -2234,6 +2285,7 @@ export async function diagnoseDiagnosticIssueWithLlm(
           model,
           maxTokens
         );
+        throwOnOrchestratorFallback(raw, "Diagnostic simple diagnosis");
         const parsed = validateSimpleDiagnosis(
           parseSimpleDiagnosisResponse(readMessageText(raw))
         );
@@ -2316,9 +2368,15 @@ export async function interpretDiagnosticIntakeWithLlm(
 
   for (let index = 0; index < models.length; index += 1) {
     const model = models[index];
+    if (shouldTemporarilySkipModel(model)) {
+      continue;
+    }
     const attemptsForModel = index === 0 ? config.retryCount + 1 : 2;
     let maxTokens = config.intakeMaxTokens;
-    let compactLevel: PromptCompactLevel = 0;
+    let compactLevel = chooseInitialPromptCompactLevel(request.intakePackage, {
+      levelOne: 2200,
+      levelTwo: 3600,
+    });
     let allowResponseFormat = true;
 
     for (let attemptIndex = 0; attemptIndex < attemptsForModel; attemptIndex += 1) {
@@ -2332,6 +2390,7 @@ export async function interpretDiagnosticIntakeWithLlm(
           compactLevel,
           allowResponseFormat
         );
+        throwOnOrchestratorFallback(raw, "Diagnostic intake interpretation");
         const parsed = parseDiagnosticIntakeInterpretation(readMessageText(raw));
 
         const providerFallbackUsed =
@@ -2357,6 +2416,11 @@ export async function interpretDiagnosticIntakeWithLlm(
         };
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
+        rememberTemporaryModelFailure(model, lastError);
+        if (shouldSkipFurtherRetriesForModel(lastError)) {
+          break;
+        }
+
         const nextCompactLevel: PromptCompactLevel | null = isPromptLimitError(lastError)
           || isOpenRouterProviderError(lastError)
           ? nextPromptCompactLevel(compactLevel)

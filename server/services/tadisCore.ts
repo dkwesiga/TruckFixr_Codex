@@ -2872,7 +2872,7 @@ function buildEvidencePackage(
       outcome: truncate(entry.outcome, 100) || null,
       occurredAt: entry.occurredAt ?? null,
     }));
-  const compactCandidates = candidateUniverse.slice(0, 6).map((entry) => ({
+  const compactCandidates = candidateUniverse.slice(0, 4).map((entry) => ({
     cause_id: entry.cause_id,
     cause_name: entry.cause_name,
     source: entry.source,
@@ -2899,7 +2899,7 @@ function buildEvidencePackage(
     partial_library_matches: baseline.partial_library_matches.slice(0, 4),
     candidate_universe: compactCandidates,
   };
-  const similarConfirmedCases = buildSimilarConfirmedCaseEvidence(context).slice(0, 3).map((item) => ({
+  const similarConfirmedCases = buildSimilarConfirmedCaseEvidence(context).slice(0, 2).map((item) => ({
     ...item,
     summary: truncate(item.summary, 120),
     confirmed_fix: truncate(item.confirmed_fix, 120) || null,
@@ -2911,15 +2911,15 @@ function buildEvidencePackage(
     fleet_id: context.input.fleetId ?? null,
     confidence_threshold: config.confidenceThreshold,
     llm_intake_interpretation: compactIntakeInterpretation,
-    normalized_symptoms: compactStrings(evidence.normalizedSymptoms, 8),
-    raw_symptoms: (context.input.symptoms ?? []).slice(0, 4).map((item) => truncate(item, 120)),
-    primary_symptoms: compactStrings(evidence.primarySymptoms, 5),
-    secondary_symptoms: compactStrings(evidence.secondarySymptoms, 5),
+    normalized_symptoms: compactStrings(evidence.normalizedSymptoms, 6),
+    raw_symptoms: (context.input.symptoms ?? []).slice(0, 3).map((item) => truncate(item, 100)),
+    primary_symptoms: compactStrings(evidence.primarySymptoms, 4),
+    secondary_symptoms: compactStrings(evidence.secondarySymptoms, 4),
     symptom_to_system_links: evidence.symptomToSystemLinks.slice(0, 5),
     symptom_score: evidence.symptomScore,
     symptom_signal_strength: evidence.symptomSignalStrength,
     fault_codes: context.normalizedFaultCodes,
-    fault_code_interpretations: evidence.faultCodeInterpretations.slice(0, 5).map((item) => ({
+    fault_code_interpretations: evidence.faultCodeInterpretations.slice(0, 4).map((item) => ({
       ...item,
       interpretation: truncate(item.interpretation, 120),
     })),
@@ -2945,19 +2945,19 @@ function buildEvidencePackage(
       (context.input.issueHistory.repairHistory ?? []).length > 0
         ? (context.input.issueHistory.repairHistory ?? [])
         : (context.input.issueHistory.recentRepairs ?? []),
-      3
+      2
     ),
-    maintenance_history: compactHistory(context.input.issueHistory.maintenanceHistory ?? [], 3),
-    prior_diagnostics: compactHistory(context.input.issueHistory.priorDiagnostics ?? [], 2),
-    prior_defects: compactHistory(context.input.issueHistory.priorDefects ?? [], 2),
+    maintenance_history: compactHistory(context.input.issueHistory.maintenanceHistory ?? [], 2),
+    prior_diagnostics: compactHistory(context.input.issueHistory.priorDiagnostics ?? [], 1),
+    prior_defects: compactHistory(context.input.issueHistory.priorDefects ?? [], 1),
     recent_inspections: compactHistory(context.input.issueHistory.recentInspections ?? [], 1),
-    recent_parts_replaced: evidence.recentPartsReplaced.slice(0, 3),
+    recent_parts_replaced: evidence.recentPartsReplaced.slice(0, 2),
     recurring_failure_patterns: {
       recurring_failure_score: evidence.recurringFailureScore,
       recurring_pattern_type: compactStrings(evidence.recurringPatternType, 4),
-      repeat_code_frequency: compactRecord(evidence.repeatCodeFrequency, 6),
-      repeat_component_frequency: compactRecord(evidence.repeatComponentFrequency, 6),
-      repeat_repair_without_resolution: compactStrings(evidence.repeatRepairWithoutResolution, 4),
+      repeat_code_frequency: compactRecord(evidence.repeatCodeFrequency, 4),
+      repeat_component_frequency: compactRecord(evidence.repeatComponentFrequency, 4),
+      repeat_repair_without_resolution: compactStrings(evidence.repeatRepairWithoutResolution, 3),
       suspected_unresolved_root_cause: truncate(evidence.suspectedUnresolvedRootCause, 140) || null,
     },
     cause_library_candidates: compactCandidates,
@@ -2977,13 +2977,13 @@ function buildEvidencePackage(
       ...evidence.vehicleDataGaps,
       ...(context.normalizedFaultCodes.length === 0 ? ["No fault codes provided"] : []),
       ...((context.input.issueHistory.maintenanceHistory ?? []).length === 0 ? ["Maintenance history is sparse"] : []),
-    ].slice(0, 5),
+    ].slice(0, 4),
     ambiguities: baseline.confidence_score < config.confidenceThreshold
       ? [`Baseline confidence is below ${config.confidenceThreshold}`]
       : [],
-    clarification_history: (context.input.clarificationHistory ?? []).slice(-3).map((item) => ({
-      question: truncate(item.question, 140),
-      answer: truncate(item.answer, 120),
+    clarification_history: (context.input.clarificationHistory ?? []).slice(-2).map((item) => ({
+      question: truncate(item.question, 100),
+      answer: truncate(item.answer, 90),
     })),
     diagnostic_focus: [
       `Top baseline cause: ${baseline.possible_causes[0]?.cause ?? "unknown"}`,
@@ -3463,10 +3463,10 @@ function compactHistoryEntries(entries: Array<{ summary: string; status?: string
     return `${normalized.slice(0, maxLength - 1)}â€¦`;
   };
 
-  return entries.slice(0, 3).map((entry) => ({
-    summary: truncate(entry.summary, 120),
+  return entries.slice(0, 2).map((entry) => ({
+    summary: truncate(entry.summary, 90),
     status: entry.status ?? null,
-    outcome: truncate(entry.outcome, 100) || null,
+    outcome: truncate(entry.outcome, 80) || null,
     occurredAt: entry.occurredAt ?? null,
   }));
 }
@@ -3476,10 +3476,10 @@ function buildIntakeInterpretationPackage(rawInput: DiagnosticInputRequest) {
   return {
     vehicle_id: input.vehicleId,
     fleet_id: input.fleetId ?? null,
-    symptoms: (input.symptoms ?? []).slice(0, 5),
-    fault_codes: (input.faultCodes ?? []).slice(0, 8),
-    driver_notes: input.driverNotes ? input.driverNotes.slice(0, 220) : null,
-    operating_conditions: input.operatingConditions ? input.operatingConditions.slice(0, 160) : null,
+    symptoms: (input.symptoms ?? []).slice(0, 4),
+    fault_codes: (input.faultCodes ?? []).slice(0, 6),
+    driver_notes: input.driverNotes ? input.driverNotes.slice(0, 180) : null,
+    operating_conditions: input.operatingConditions ? input.operatingConditions.slice(0, 120) : null,
     vehicle_context: {
       vin: input.vehicle?.vin ?? null,
       make: input.vehicle?.make ?? null,
@@ -3509,10 +3509,10 @@ function buildIntakeInterpretationPackage(rawInput: DiagnosticInputRequest) {
     prior_diagnostics: compactHistoryEntries(input.issueHistory.priorDiagnostics ?? []),
     prior_defects: compactHistoryEntries(input.issueHistory.priorDefects ?? []),
     recent_inspections: compactHistoryEntries(input.issueHistory.recentInspections ?? []),
-    recent_parts_replaced: (input.issueHistory.recentPartsReplaced ?? []).slice(0, 3),
-    clarification_history: (input.clarificationHistory ?? []).slice(-3).map((item) => ({
-      question: (item.question ?? "").slice(0, 140),
-      answer: (item.answer ?? "").slice(0, 120),
+    recent_parts_replaced: (input.issueHistory.recentPartsReplaced ?? []).slice(0, 2),
+    clarification_history: (input.clarificationHistory ?? []).slice(-2).map((item) => ({
+      question: (item.question ?? "").slice(0, 100),
+      answer: (item.answer ?? "").slice(0, 90),
     })),
   };
 }

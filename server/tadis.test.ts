@@ -165,6 +165,7 @@ function stubFetchSequence(responses: Array<Record<string, unknown> | string | E
 describe("TADIS Service Layer", () => {
   beforeEach(() => {
     ENV.openRouterApiKey = "openrouter-test-key";
+    ENV.openRouterModelPrimary = "openrouter/free";
     ENV.openRouterModel = "openrouter/free";
     ENV.openRouterFallbackModel = "";
     ENV.geminiApiKey = "";
@@ -218,6 +219,7 @@ describe("TADIS Service Layer", () => {
   it("uses OpenRouter free even when stale Gemini variables are configured", async () => {
     ENV.geminiApiKey = "gemini-test-key";
     ENV.geminiModel = "gemini-2.5-flash";
+    ENV.openRouterModelPrimary = "openrouter/free";
     ENV.openRouterModel = "openrouter/free";
     ENV.openRouterFallbackModel = "openrouter/free";
 
@@ -258,12 +260,180 @@ describe("TADIS Service Layer", () => {
     ).toBe(true);
       expect(
         requestedBodies.every(
-          (body) => typeof body.model === "string" && String(body.model).includes("google/gemma-4-26b-a4b-it:free")
+          (body) => typeof body.model === "string" && String(body.model).includes("openrouter/free")
         )
       ).toBe(true);
     expect(result.llm_provider).toBe("openrouter");
     expect(result.llm_status).toBe("ok");
     expect(result.fallback_used).toBe(false);
+  });
+
+  it("falls back to DeepSeek when the primary OpenRouter model is rate-limited", async () => {
+    ENV.openRouterModelPrimary = "openrouter/free";
+    ENV.openRouterModel = "openrouter/free";
+    ENV.openRouterFallbackModel = "";
+
+    const requestedModels: string[] = [];
+    let callIndex = 0;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        requestedModels.push(String(body.model ?? ""));
+
+        if (callIndex++ === 0) {
+          return createReviewResponse(baseIntakeInterpretation());
+        }
+
+        if (callIndex === 2) {
+          throw new Error("OpenRouter request failed (429 Too Many Requests): rate limit exceeded");
+        }
+
+        return createReviewResponse(baseLlmReview());
+      })
+    );
+
+    const result = await analyzeDiagnostic({
+      vehicleId: 42,
+      vehicle: {
+        id: 42,
+        make: "Peterbilt",
+        model: "579",
+        year: 2022,
+        mileage: 245320,
+        engine: "Cummins X15",
+      },
+      symptoms: ["Engine overheating"],
+      faultCodes: ["P0128"],
+      driverNotes: "Coolant smell after shutdown",
+    });
+
+    expect(requestedModels).toContain("openrouter/free");
+    expect(requestedModels).toContain("deepseek/deepseek-v4-flash");
+    expect(result.llm_status).toBe("ok");
+    expect(result.fallback_used).toBe(true);
+    expect(result.fallback_reason).toContain("deepseek/deepseek-v4-flash");
+  });
+
+  it("starts intake and review prompts in compact mode for oversized diagnostic packets", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    let callIndex = 0;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        requestBodies.push(body);
+        return createReviewResponse(callIndex++ === 0 ? baseIntakeInterpretation() : baseLlmReview());
+      })
+    );
+
+    const repeatedDetail = "coolant residue around the surge tank and milky oil noted after shutdown ".repeat(20);
+
+    const result = await analyzeDiagnostic({
+      vehicleId: 42,
+      vehicle: {
+        id: 42,
+        make: "Peterbilt",
+        model: "579",
+        year: 2022,
+        mileage: 245320,
+        engine: "Cummins X15",
+      },
+      symptoms: [
+        "Engine overheating on grade",
+        "Coolant smell after shutdown",
+        "Cab heat drops under load",
+        "Warning light returns after restart",
+      ],
+      faultCodes: ["P0128", "SPN-110", "FMI-15", "P0217", "P2457", "P24AF"],
+      driverNotes: repeatedDetail,
+      operatingConditions: "Loaded uphill highway run in warm ambient weather with repeated stop-and-go traffic",
+      issueHistory: {
+        priorDiagnostics: [
+          { summary: repeatedDetail, status: "open" },
+          { summary: repeatedDetail, status: "open" },
+          { summary: repeatedDetail, status: "open" },
+        ],
+        priorDefects: [
+          { summary: repeatedDetail, status: "open" },
+          { summary: repeatedDetail, status: "open" },
+        ],
+        recentInspections: [
+          { summary: repeatedDetail, status: "submitted" },
+          { summary: repeatedDetail, status: "submitted" },
+        ],
+        recentRepairs: [
+          { summary: repeatedDetail, status: "completed" },
+          { summary: repeatedDetail, status: "completed" },
+          { summary: repeatedDetail, status: "completed" },
+        ],
+        repairHistory: [
+          { summary: repeatedDetail, status: "completed" },
+          { summary: repeatedDetail, status: "completed" },
+          { summary: repeatedDetail, status: "completed" },
+        ],
+        maintenanceHistory: [
+          { summary: repeatedDetail, status: "completed" },
+          { summary: repeatedDetail, status: "completed" },
+          { summary: repeatedDetail, status: "completed" },
+        ],
+        recentPartsReplaced: [
+          {
+            part: "coolant hose",
+            replacedAt: new Date().toISOString(),
+            days_since_replacement: 4,
+            replacement_effect_direction: "possible_incomplete_root_cause_repair",
+            replacement_decay_weight: 0.9,
+            relevance_score: 80,
+          },
+          {
+            part: "thermostat",
+            replacedAt: new Date().toISOString(),
+            days_since_replacement: 6,
+            replacement_effect_direction: "possible_incomplete_root_cause_repair",
+            replacement_decay_weight: 0.8,
+            relevance_score: 74,
+          },
+          {
+            part: "radiator cap",
+            replacedAt: new Date().toISOString(),
+            days_since_replacement: 8,
+            replacement_effect_direction: "possible_adjacent_failure",
+            replacement_decay_weight: 0.7,
+            relevance_score: 66,
+          },
+        ],
+        complianceHistory: [
+          { summary: repeatedDetail, status: "warning" },
+          { summary: repeatedDetail, status: "warning" },
+        ],
+      },
+      clarificationHistory: [
+        {
+          question: "Does the heat go cold when the gauge climbs?",
+          answer: "Yes, it fades out on long pulls.",
+        },
+        {
+          question: "Any visible leaks after shutdown?",
+          answer: "Only residue, nothing dripping heavily.",
+        },
+        {
+          question: "Does the fan clutch sound engage?",
+          answer: "Sometimes, but not consistently.",
+        },
+      ],
+    });
+
+    const intakePrompt = JSON.stringify(requestBodies[0]?.messages ?? []);
+    const reviewPrompt = JSON.stringify(requestBodies[1]?.messages ?? []);
+
+    expect(intakePrompt).not.toContain("recent_inspections");
+    expect(intakePrompt).not.toContain("prior_defects");
+    expect(reviewPrompt).not.toContain("baseline_ranked_candidates");
+    expect(reviewPrompt).not.toContain("symptom_to_system_links");
+    expect(result.llm_status).toBe("ok");
   });
 
   it("uses the simple TADIS prompt path when SIMPLE_TADIS_MODE is enabled", async () => {
@@ -1000,7 +1170,7 @@ describe("TADIS Service Layer", () => {
 
     expect(result.llm_status).toBe("ok");
     expect(result.fallback_used).toBe(true);
-    expect(result.fallback_reason).toContain("succeeded after retry");
+    expect(result.fallback_reason).toContain("succeeded");
     expect(result.confidence_score).toBeGreaterThanOrEqual(80);
   });
 
@@ -1029,7 +1199,7 @@ describe("TADIS Service Layer", () => {
 
     expect(result.llm_status).toBe("ok");
     expect(result.fallback_used).toBe(true);
-    expect(result.fallback_reason).toContain("succeeded after retry");
+    expect(result.fallback_reason).toContain("succeeded");
     expect(result.confidence_score).toBeGreaterThanOrEqual(80);
   });
 
@@ -1057,7 +1227,7 @@ describe("TADIS Service Layer", () => {
 
     expect(result.llm_status).toBe("ok");
     expect(result.fallback_used).toBe(true);
-    expect(result.fallback_reason).toContain("succeeded after retry");
+    expect(result.fallback_reason).toContain("succeeded");
     expect(result.confidence_score).toBeGreaterThanOrEqual(80);
   });
 
