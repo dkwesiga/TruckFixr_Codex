@@ -218,15 +218,15 @@ export const TadisOutputSchema = z.object({
   systems_affected: z.array(z.string()),
   rule_engine_baseline: ruleEngineBaselineSchema,
   internal_engine_baseline: ruleEngineBaselineSchema,
-  final_llm_ranking: z.array(rankedCauseSchema).min(1),
-  llm_final_ranking: z.array(rankedCauseSchema).min(1),
-  ranked_likely_causes: z.array(rankedCauseSchema).min(1),
+  final_llm_ranking: z.array(rankedCauseSchema),
+  llm_final_ranking: z.array(rankedCauseSchema),
+  ranked_likely_causes: z.array(rankedCauseSchema),
   possible_causes: z.array(
     z.object({
       cause: z.string(),
       probability: z.number().min(0).max(100),
     })
-  ).min(1),
+  ),
   ranking_delta: z.object({
     top_cause_changed: z.boolean(),
     baseline_top_cause: z.string().nullable(),
@@ -316,6 +316,8 @@ export const TadisOutputSchema = z.object({
   llm_status: llmStatusSchema,
   llm_provider: z.string().nullable(),
   llm_model: z.string().nullable(),
+  ai_response_available: z.boolean().default(true),
+  user_notification: z.string().nullable().default(null),
   fallback_used: z.boolean(),
   fallback_reason: z.string().nullable().default(null),
   safety_override_applied: z.boolean(),
@@ -2321,6 +2323,20 @@ function chooseFreshClarifyingQuestion(
   return rotatedFallbackQuestions.find((question) => !hasAskedSimilarQuestion(history, question)) ?? "";
 }
 
+function chooseAiClarifyingQuestionOnly(stage: BaselineStage, proposedQuestion: string | null | undefined) {
+  const history = stage.context.input.clarificationHistory;
+  if (history.length >= MAX_CLARIFICATION_ROUNDS) {
+    return "";
+  }
+
+  const proposed = (proposedQuestion ?? "").trim();
+  if (!proposed || isGenericClarifyingQuestion(proposed) || hasAskedSimilarQuestion(history, proposed)) {
+    return "";
+  }
+
+  return proposed;
+}
+
 function extractKnownParts(text: string) {
   const normalized = normalizeText(text);
   return KNOWN_PART_KEYWORDS.filter((part) => normalized.includes(part));
@@ -3596,11 +3612,7 @@ function buildSimpleTadisQuestionOutput(input: DiagnosticInputRequest, baselineS
     : details.confidenceScore >= SIMPLE_TADIS_CONFIDENCE_THRESHOLD
       ? "Simple TADIS mode used a minimal classifier and diagnosis packet."
       : "Simple TADIS mode asked a clarifying question before finalizing diagnosis.";
-  const freshClarifyingQuestion = chooseFreshClarifyingQuestion(
-    baselineStage,
-    finalRanking,
-    details.clarifyingQuestion
-  );
+  const freshClarifyingQuestion = chooseAiClarifyingQuestionOnly(baselineStage, details.clarifyingQuestion);
   const shouldAskQuestion =
     details.confidenceScore < SIMPLE_TADIS_CONFIDENCE_THRESHOLD &&
     baselineStage.context.input.clarificationHistory.length < MAX_CLARIFICATION_ROUNDS &&
@@ -3754,6 +3766,127 @@ function buildSimpleTadisQuestionOutput(input: DiagnosticInputRequest, baselineS
   });
 }
 
+function buildAiUnavailableOutput(
+  input: DiagnosticInputRequest,
+  baselineStage: BaselineStage,
+  details: {
+    llmStatus: TadisOutput["llm_status"];
+    fallbackReason: string | null;
+    provider: string | null;
+    model: string | null;
+  }
+) {
+  const notification =
+    "TruckFixr could not get a usable AI diagnosis right now. No internal fallback diagnosis was generated; please retry in a moment or escalate to a qualified technician.";
+  const baseline = baselineStage.baseline;
+
+  return TadisOutputSchema.parse({
+    vehicle_id: String(baselineStage.context.input.vehicleId),
+    systems_affected: [],
+    rule_engine_baseline: baseline,
+    internal_engine_baseline: baseline,
+    final_llm_ranking: [],
+    llm_final_ranking: [],
+    ranked_likely_causes: [],
+    possible_causes: [],
+    ranking_delta: {
+      top_cause_changed: false,
+      baseline_top_cause: baseline.possible_causes[0]?.cause ?? null,
+      final_top_cause: null,
+      added_causes: [],
+      removed_causes: baseline.possible_causes.map((item) => item.cause),
+    },
+    confidence_delta: 0 - baseline.confidence_score,
+    llm_adjustments: [
+      "AI diagnosis was unavailable; internal TADIS output was withheld instead of being used as a fallback response.",
+    ],
+    evidence_summary: [],
+    normalized_symptoms: baselineStage.evidence.normalizedSymptoms,
+    primary_symptoms: baselineStage.evidence.primarySymptoms,
+    secondary_symptoms: baselineStage.evidence.secondarySymptoms,
+    symptom_to_system_links: baselineStage.evidence.symptomToSystemLinks,
+    symptom_score: baselineStage.evidence.symptomScore,
+    symptom_signal_strength: baselineStage.evidence.symptomSignalStrength,
+    symptom_rationale: baselineStage.evidence.symptomRationale,
+    fault_code_score: baselineStage.evidence.faultCodeScore,
+    fault_code_signal_strength: baselineStage.evidence.faultCodeSignalStrength,
+    primary_vs_secondary_code_assessment: baselineStage.evidence.primaryVsSecondaryCodeAssessment,
+    contextual_code_relevance: baselineStage.evidence.contextualCodeRelevance,
+    code_to_cause_links: baselineStage.evidence.codeToCauseLinks,
+    fault_code_interpretations: baselineStage.evidence.faultCodeInterpretations,
+    fault_code_rationale: baselineStage.evidence.faultCodeRationale,
+    repair_history_score: baselineStage.evidence.repairHistoryScore,
+    maintenance_history_score: baselineStage.evidence.maintenanceHistoryScore,
+    history_score: baselineStage.evidence.historyScore,
+    repair_history_rationale: baselineStage.evidence.repairHistoryRationale,
+    maintenance_history_rationale: baselineStage.evidence.maintenanceHistoryRationale,
+    history_rationale: baselineStage.evidence.historyRationale,
+    recent_parts_replaced: baselineStage.evidence.recentPartsReplaced,
+    recent_parts_replaced_score: baselineStage.evidence.recentPartsReplacedScore,
+    replacement_relevance_to_current_issue: baselineStage.evidence.replacementRelevanceToCurrentIssue,
+    replacement_effect_direction: baselineStage.evidence.replacementEffectDirection,
+    replacement_decay_weight: baselineStage.evidence.replacementDecayWeight,
+    recent_parts_rationale: baselineStage.evidence.recentPartsRationale,
+    recurring_failure_score: baselineStage.evidence.recurringFailureScore,
+    recurring_pattern_type: baselineStage.evidence.recurringPatternType,
+    repeat_code_frequency: baselineStage.evidence.repeatCodeFrequency,
+    repeat_component_frequency: baselineStage.evidence.repeatComponentFrequency,
+    repeat_repair_without_resolution: baselineStage.evidence.repeatRepairWithoutResolution,
+    suspected_unresolved_root_cause: baselineStage.evidence.suspectedUnresolvedRootCause,
+    recurrence_rationale: baselineStage.evidence.recurrenceRationale,
+    cause_library_fit_score: 0,
+    matched_library_causes: [],
+    partial_library_matches: [],
+    new_candidate_causes: [],
+    new_candidate_causes_review_required: false,
+    cause_library_rationale: [
+      "Internal candidate data was kept out of the driver-facing response because AI did not return a usable diagnosis.",
+    ],
+    overall_confidence_score: 0,
+    confidence_score: 0,
+    confidence_rationale: [notification],
+    next_action: "proceed",
+    clarifying_question: "",
+    question_rationale: null,
+    missing_evidence: baselineStage.evidence.vehicleDataGaps,
+    ambiguity_drivers: [],
+    similar_confirmed_cases_used: [],
+    recommended_tests: [],
+    recommended_fix: "AI diagnosis unavailable. Retry the diagnosis or escalate for hands-on inspection.",
+    risk_level: "medium",
+    maintenance_recommendations: [],
+    compliance_impact: "warning",
+    top_most_likely_cause: "AI diagnosis unavailable",
+    possible_replacement_parts: [],
+    likely_replacement_parts: [],
+    inspection_related_parts: [],
+    adjacent_parts_to_check: [],
+    confirm_before_replacement: true,
+    diagnostic_verification_labor_hours: { min: 0, max: 0 },
+    repair_labor_hours: { min: 0, max: 0 },
+    total_estimated_labor_hours: { min: 0, max: 0 },
+    labor_time_confidence: 0,
+    labor_time_basis: [],
+    driver_action: "stop_and_inspect_on_site",
+    driver_action_reason: "No AI diagnosis is available, so TruckFixr is not issuing an internal-system diagnosis or repair instruction.",
+    risk_summary: "AI diagnosis unavailable; use normal fleet safety procedures and retry.",
+    safety_note: "Do not rely on an internal fallback diagnosis. If the vehicle may be unsafe, stop and escalate to a qualified technician.",
+    compliance_note: "TruckFixr did not generate a compliance diagnosis because the AI response was unavailable.",
+    monitoring_instructions: ["Retry the AI diagnosis when service is available", "Escalate to shop review if the vehicle may be unsafe"],
+    distance_or_time_limit: null,
+    llm_status: details.llmStatus,
+    llm_provider: details.provider,
+    llm_model: details.model,
+    ai_response_available: false,
+    user_notification: notification,
+    fallback_used: false,
+    fallback_reason: details.fallbackReason,
+    safety_override_applied: false,
+    safety_override_reason: null,
+    review_queue_record_ids: [],
+  });
+}
+
 async function analyzeDiagnosticSimpleMode(input: DiagnosticInputRequest) {
   const config = getDiagnosticRuntimeConfig();
   const normalizedInput = DiagnosticInputSchema.parse(input);
@@ -3784,12 +3917,19 @@ async function analyzeDiagnosticSimpleMode(input: DiagnosticInputRequest) {
 
   const classifierAttempt = await classifyDiagnosticIssueWithLlm({ intakePackage: classifierInput }, config);
   const classifierFallbackUsed = classifierAttempt.status !== "ok";
-  const classifier = classifierAttempt.parsed ?? buildSimpleFallbackClassification(normalizedInput);
+  const classifier =
+    classifierAttempt.parsed ?? {
+      primary_category: "unknown_triage" as const,
+      secondary_category: null,
+      risk_level: "medium" as const,
+      classification_confidence: 0,
+      clarifying_question: null,
+    };
   const baselineStage = buildBaselineStage(normalizedInput, config, null);
   const simpleClassifierQuestion =
     classifier.classification_confidence >= SIMPLE_TADIS_CONFIDENCE_THRESHOLD
       ? null
-      : classifier.clarifying_question ?? "What is the single symptom that is most repeatable right now?";
+      : classifier.clarifying_question;
 
   if (classifierLogId) {
     await updateDiagnosticAiRequestLog(classifierLogId, {
@@ -3820,9 +3960,18 @@ async function analyzeDiagnosticSimpleMode(input: DiagnosticInputRequest) {
   }
 
   if (classifier.classification_confidence < SIMPLE_TADIS_CONFIDENCE_THRESHOLD && !classifierFallbackUsed) {
+    if (!simpleClassifierQuestion) {
+      return buildAiUnavailableOutput(normalizedInput, baselineStage, {
+        llmStatus: "invalid_schema",
+        fallbackReason: "The AI classifier did not return the required clarifying question.",
+        provider: classifierAttempt.provider,
+        model: classifierAttempt.model,
+      });
+    }
+
       return buildSimpleTadisQuestionOutput(normalizedInput, baselineStage, {
       confidenceScore: classifier.classification_confidence,
-      clarifyingQuestion: simpleClassifierQuestion ?? "What symptom is most repeatable right now?",
+      clarifyingQuestion: simpleClassifierQuestion,
         fallbackUsed: false,
         fallbackReason: null,
         llmStatus: "ok",
@@ -3889,45 +4038,24 @@ async function analyzeDiagnosticSimpleMode(input: DiagnosticInputRequest) {
   }
 
   if (diagnosisAttempt.status !== "ok" || !diagnosis) {
-      const clarificationLimitReached =
-        normalizedInput.clarificationHistory.length >= MAX_CLARIFICATION_ROUNDS;
-      const finalizedConfidence = clarificationLimitReached
-        ? Math.min(
-            SIMPLE_TADIS_CONFIDENCE_THRESHOLD - 1,
-            Math.max(65, classifier.classification_confidence, baselineStage.baseline.confidence_score)
-          )
-        : Math.min(
-            SIMPLE_TADIS_CONFIDENCE_THRESHOLD - 1,
-            Math.max(18, Math.min(70, baselineStage.baseline.confidence_score))
-          );
-      return buildSimpleTadisQuestionOutput(normalizedInput, baselineStage, {
-      confidenceScore: finalizedConfidence,
-      clarifyingQuestion:
-        clarificationLimitReached
-          ? ""
-          : baselineStage.baseline.next_action === "ask_question"
-          ? baselineStage.baseline.clarifying_question
-          : "What symptom is most repeatable right now?",
-        fallbackUsed: true,
-        fallbackReason: diagnosisAttempt.fallbackReason ?? "Simple diagnosis AI failed",
+      return buildAiUnavailableOutput(normalizedInput, baselineStage, {
         llmStatus: diagnosisAttempt.status,
-        topLikelyCause:
-          clarificationLimitReached
-            ? mapSimpleCategoryToCauseName(classifier.primary_category)
-            : baselineStage.baseline.possible_causes[0]?.cause ?? "Unknown triage",
-        driverAction: mapRiskToDriverAction(
-          clarificationLimitReached ? classifier.risk_level : baselineStage.baseline.risk_level
-        ),
-        riskLevel: clarificationLimitReached ? classifier.risk_level : baselineStage.baseline.risk_level,
-        stageLabel: "fallback",
-        finalizedAfterClarificationLimit: clarificationLimitReached,
+        fallbackReason: diagnosisAttempt.fallbackReason ?? "Simple diagnosis AI failed",
+        provider: diagnosisAttempt.provider,
+        model: diagnosisAttempt.model,
       });
     }
 
   if (!diagnosis || diagnosis.confidence_score < SIMPLE_TADIS_CONFIDENCE_THRESHOLD) {
-    const clarifyingQuestion =
-      diagnosis?.clarifying_question ??
-      "What symptom is most repeatable right now, and does it happen while moving, idling, or starting?";
+    const clarifyingQuestion = diagnosis?.clarifying_question ?? "";
+    if (!clarifyingQuestion) {
+      return buildAiUnavailableOutput(normalizedInput, baselineStage, {
+        llmStatus: "invalid_schema",
+        fallbackReason: "The AI diagnosis was below confidence threshold but did not return a clarifying question.",
+        provider: diagnosisAttempt.provider,
+        model: diagnosisAttempt.model,
+      });
+    }
 
       return buildSimpleTadisQuestionOutput(normalizedInput, baselineStage, {
       confidenceScore: diagnosis?.confidence_score ?? classifier.classification_confidence,
@@ -3960,34 +4088,17 @@ function buildSimpleTadisEmergencyFallback(input: DiagnosticInputRequest, error:
   const normalizedInput = DiagnosticInputSchema.parse(input);
   const baselineStage = buildBaselineStage(normalizedInput, config, null);
   const errorMessage = error instanceof Error ? error.message : String(error);
-  const fallbackConfidence = Math.min(
-    SIMPLE_TADIS_CONFIDENCE_THRESHOLD - 1,
-    Math.max(18, Math.min(70, baselineStage.baseline.confidence_score))
-  );
-  const clarifyingQuestion =
-    baselineStage.baseline.clarifying_question ||
-    buildGuaranteedClarifyingQuestion(
-      baselineStage,
-      baselineStage.ranked
-        .slice(0, 4)
-        .map((item) => toRankedCause(item, baselineStage.candidateUniverse, baselineStage.evidence))
-    );
 
-  console.warn("[Simple TADIS] Emergency fallback used after simple pipeline error.", {
+  console.warn("[Simple TADIS] AI unavailable after simple pipeline error.", {
     vehicleId: String(normalizedInput.vehicleId),
     reason: errorMessage,
   });
 
-  return buildSimpleTadisQuestionOutput(normalizedInput, baselineStage, {
-    confidenceScore: fallbackConfidence,
-    clarifyingQuestion,
-    fallbackUsed: true,
-    fallbackReason: `Simple TADIS pipeline error: ${errorMessage}`,
+  return buildAiUnavailableOutput(normalizedInput, baselineStage, {
     llmStatus: "error",
-    topLikelyCause: baselineStage.baseline.possible_causes[0]?.cause ?? "Unknown triage",
-    driverAction: mapRiskToDriverAction(baselineStage.baseline.risk_level),
-    riskLevel: baselineStage.baseline.risk_level,
-    stageLabel: "fallback",
+    fallbackReason: `Simple TADIS pipeline error: ${errorMessage}`,
+    provider: "openrouter",
+    model: config.openRouterModel,
   });
 }
 
@@ -4004,34 +4115,26 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
     { intakePackage: buildIntakeInterpretationPackage(input) },
     config
   );
-  if (shouldUseSimpleTadisEmergencyFallback(intakeInterpretation.fallbackReason)) {
-    return analyzeDiagnosticSimpleMode(input);
-  }
   const baselineStage = buildBaselineStage(input, config, intakeInterpretation.parsed);
-  const baselineRanking = baselineStage.ranked.slice(0, 4).map((item) =>
-    toRankedCause(item, baselineStage.candidateUniverse, baselineStage.evidence)
-  );
   const llmReview = await reviewDiagnosticWithLlm(
     { evidencePackage: buildEvidencePackage(baselineStage, config) },
     config
   );
-  if (shouldUseSimpleTadisEmergencyFallback(llmReview.fallbackReason)) {
-    return analyzeDiagnosticSimpleMode(input);
+  if (llmReview.status !== "ok") {
+    return buildAiUnavailableOutput(input, baselineStage, {
+      llmStatus: llmReview.status,
+      fallbackReason: llmReview.fallbackReason,
+      provider: llmReview.provider,
+      model: llmReview.model,
+    });
   }
 
-  let finalRanking =
-    llmReview.status === "ok"
-      ? enrichLlmRanking(baselineStage, llmReview.parsed.top_ranked_causes)
-      : normalizeTopRankingProbabilities(baselineRanking);
+  let finalRanking = enrichLlmRanking(baselineStage, llmReview.parsed.top_ranked_causes);
   const criticalEvidenceOverride = applyCriticalEvidenceRankingOverride(baselineStage, finalRanking);
   finalRanking = criticalEvidenceOverride.ranking;
   const topCause = finalRanking[0];
   const topCauseDef = topCause ? getCauseDefinitionByName(topCause.cause_name) : null;
-  const fallbackGuidance = getBaselineGuidance(topCauseDef ?? baselineStage.ranked[0]?.cause ?? null, topCause?.cause_name ?? baselineStage.baseline.possible_causes[0]?.cause ?? "Unknown cause");
-  const llmRepairGuidance =
-    llmReview.status === "ok" && !criticalEvidenceOverride.applied
-      ? llmReview.parsed.top_cause_repair_guidance
-      : null;
+  const llmRepairGuidance = !criticalEvidenceOverride.applied ? llmReview.parsed.top_cause_repair_guidance : null;
   const systemsAffected = resolveFinalSystemsAffected(topCauseDef, baselineStage.baseline.systems_affected);
   const initialRiskLevel = determineRiskLevel(
     finalRanking.slice(0, 2).map((item) => ({
@@ -4039,10 +4142,7 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
       causeDef: getCauseDefinitionByName(item.cause_name) ?? null,
     }))
   );
-  const proposedDriverAction =
-    llmReview.status === "ok"
-      ? llmReview.parsed.driver_action_recommendation.llm_driver_action
-      : mapRiskToDriverAction(initialRiskLevel);
+  const proposedDriverAction = llmReview.parsed.driver_action_recommendation.llm_driver_action;
   const safetyOverride = detectSafetyOverride({
     systemsAffected,
     normalizedSymptoms: baselineStage.evidence.normalizedSymptoms,
@@ -4053,42 +4153,17 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
   const finalRiskLevel =
     safetyOverride.applied && scoreRisk(initialRiskLevel) < scoreRisk("high") ? "high" : initialRiskLevel;
   const complianceImpact = getComplianceImpact(finalRiskLevel);
-  const fallbackConfidenceScore = Math.max(
-    18,
-    Math.min(baselineStage.baseline.confidence_score, config.confidenceThreshold - 5)
-  );
-  const confidenceScore =
-    llmReview.status === "ok"
-      ? criticalEvidenceOverride.applied
-        ? Math.max(82, Math.round(llmReview.parsed.overall_confidence_score))
-        : Math.round(llmReview.parsed.overall_confidence_score)
-      : fallbackConfidenceScore;
-  const shouldForceFallbackClarification =
-    llmReview.status !== "ok" && confidenceScore < config.confidenceThreshold;
-  const fallbackQuestion = shouldForceFallbackClarification
-    ? buildGuaranteedClarifyingQuestion(baselineStage, finalRanking)
-    : synthesizeClarifyingQuestion(baselineStage, finalRanking);
-  const llmQuestion =
-    llmReview.status === "ok" ? (llmReview.parsed.clarifying_question ?? "").trim() : "";
-  const clarifyingQuestion = chooseFreshClarifyingQuestion(
-    baselineStage,
-    finalRanking,
-    llmQuestion || fallbackQuestion
-  );
+  const confidenceScore = criticalEvidenceOverride.applied
+    ? Math.max(82, Math.round(llmReview.parsed.overall_confidence_score))
+    : Math.round(llmReview.parsed.overall_confidence_score);
+  const llmQuestion = (llmReview.parsed.clarifying_question ?? "").trim();
+  const clarifyingQuestion = chooseAiClarifyingQuestionOnly(baselineStage, llmQuestion);
   const nextAction =
-    shouldForceFallbackClarification
-      ? clarifyingQuestion
+    confidenceScore >= config.confidenceThreshold
+      ? "proceed"
+      : llmReview.parsed.next_action === "ask_question" && Boolean(clarifyingQuestion)
         ? "ask_question"
-        : "proceed"
-      : llmReview.status === "ok"
-      ? confidenceScore >= config.confidenceThreshold
-        ? "proceed"
-        : llmReview.parsed.next_action === "ask_question" || Boolean(clarifyingQuestion)
-        ? "ask_question"
-        : "proceed"
-      : confidenceScore < config.confidenceThreshold && Boolean(clarifyingQuestion)
-        ? "ask_question"
-        : baselineStage.baseline.next_action;
+        : "proceed";
   const possibleCauses = normalizeTopRankingProbabilities(finalRanking.slice(0, 4)).map((item) => ({
     cause: item.cause_name,
     probability: item.probability,
@@ -4103,9 +4178,7 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
     .map((item) => item.cause_name);
   const newCandidateCausesReviewRequired =
     newCandidateCauses.length > 0 &&
-    (llmReview.status === "ok"
-      ? llmReview.parsed.overall_confidence_score >= config.newCauseMinConfidence
-      : false);
+    llmReview.parsed.overall_confidence_score >= config.newCauseMinConfidence;
   const rankingDelta = buildRankingDelta(baselineStage.baseline, finalRanking);
   const confidenceDelta = confidenceScore - baselineStage.baseline.confidence_score;
   const llmAdjustments = [
@@ -4123,8 +4196,7 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
       : []),
   ];
   const confidenceRationale =
-    llmReview.status === "ok"
-      ? mergeSpecificBullets(
+    mergeSpecificBullets(
           [
             ...(criticalEvidenceOverride.applied
               ? ["Confidence was anchored by the explicit oil/coolant cross-contamination report."]
@@ -4133,11 +4205,7 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
           ],
           buildConfidenceFallbackRationale(baselineStage, finalRanking, confidenceScore),
           4
-        )
-      : [
-          `Fallback to rule-engine baseline because ${llmReview.fallbackReason ?? "the OpenRouter review was unavailable"}`,
-          `Confidence was reduced to ${fallbackConfidenceScore}% because the AI review layer did not return usable structured output`,
-        ];
+        );
   const combinedFallbackReasons = uniqueStrings([
     intakeInterpretation.fallbackReason ?? "",
     llmReview.fallbackReason ?? "",
@@ -4145,79 +4213,61 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
   const recommendedTests =
     llmRepairGuidance?.recommended_tests?.length
       ? llmRepairGuidance.recommended_tests
-      : (fallbackGuidance.recommendedTests ?? []);
+      : [];
   const possibleReplacementParts =
     llmRepairGuidance?.likely_replacement_parts?.length
       ? llmRepairGuidance.likely_replacement_parts
-      : (fallbackGuidance.likelyReplacementParts ?? []);
+      : [];
   const inspectionRelatedParts =
     llmRepairGuidance?.inspection_related_parts?.length
       ? llmRepairGuidance.inspection_related_parts
-      : (fallbackGuidance.inspectionRelatedParts ?? []);
+      : [];
   const adjacentPartsToCheck =
     llmRepairGuidance?.adjacent_parts_to_check?.length
       ? llmRepairGuidance.adjacent_parts_to_check
-      : (fallbackGuidance.adjacentPartsToCheck ?? []);
+      : [];
   const diagnosticVerificationLaborHours =
-    llmRepairGuidance?.diagnostic_verification_labor_hours ?? fallbackGuidance.diagnosticVerificationLaborHours;
-  const repairLaborHours = llmRepairGuidance?.repair_labor_hours ?? fallbackGuidance.repairLaborHours;
+    llmRepairGuidance?.diagnostic_verification_labor_hours ?? { min: 0, max: 0 };
+  const repairLaborHours = llmRepairGuidance?.repair_labor_hours ?? { min: 0, max: 0 };
   const totalEstimatedLaborHours =
-    llmRepairGuidance?.total_estimated_labor_hours ?? fallbackGuidance.totalEstimatedLaborHours;
-  const laborTimeConfidence = llmRepairGuidance?.labor_time_confidence ?? fallbackGuidance.laborTimeConfidence;
-  const laborTimeBasis = llmRepairGuidance?.labor_time_basis ?? fallbackGuidance.laborTimeBasis;
+    llmRepairGuidance?.total_estimated_labor_hours ?? { min: 0, max: 0 };
+  const laborTimeConfidence = llmRepairGuidance?.labor_time_confidence ?? 0;
+  const laborTimeBasis = llmRepairGuidance?.labor_time_basis ?? [];
   const topEvidence = topCause?.evidence_summary[0];
   const driverActionReason =
-    llmReview.status === "ok"
-      ? synthesizeDriverActionReason(
+      synthesizeDriverActionReason(
           llmReview.parsed.driver_action_recommendation.driver_action_reason,
           topCause?.cause_name ?? baselineStage.baseline.possible_causes[0]?.cause ?? "the leading cause",
           topEvidence,
           safetyOverride.reason
-        )
-      : `Baseline ${finalRiskLevel} risk assessment recommends ${mapRiskToAction(finalRiskLevel).toLowerCase()}.`;
+        );
   const riskSummary =
-    llmReview.status === "ok"
-      ? synthesizeRiskSummary(
+    synthesizeRiskSummary(
           llmReview.parsed.driver_action_recommendation.risk_summary,
           topCause?.cause_name ?? baselineStage.baseline.possible_causes[0]?.cause ?? "the leading cause",
           topEvidence
-        )
-      : `Top risk is ${finalRiskLevel} based on ${topCause?.cause_name ?? "the leading cause"}.`;
+        );
   const safetyNote =
     criticalEvidenceOverride.applied
       ? "Do not run the engine with suspected oil/coolant cross-contamination; contaminated oil can rapidly damage bearings and contaminated coolant can damage cooling-system components."
-      : llmReview.status === "ok"
-      ? llmReview.parsed.driver_action_recommendation.safety_note
-      : "Use normal fleet safety escalation if symptoms worsen during inspection.";
-  const complianceNote =
-    llmReview.status === "ok"
-      ? llmReview.parsed.driver_action_recommendation.compliance_note
-      : complianceImpact === "critical"
-        ? "Potential out-of-service exposure exists until repair verification is complete."
-        : "No immediate compliance-critical finding is confirmed yet.";
+      : llmReview.parsed.driver_action_recommendation.safety_note;
+  const complianceNote = llmReview.parsed.driver_action_recommendation.compliance_note;
   const monitoringInstructions =
     criticalEvidenceOverride.applied
       ? ["Do not continue driving or idling the engine", "Capture oil and coolant condition photos/samples for the shop", "Tow or service on-site after confirming contamination"]
-      : llmReview.status === "ok"
-      ? llmReview.parsed.driver_action_recommendation.monitoring_instructions
-      : nextAction === "ask_question"
-        ? ["Capture the clarifying symptom detail before finalizing the repair path."]
-        : ["Monitor temperature, pressure, and warning lamp behavior during verification."];
+      : llmReview.parsed.driver_action_recommendation.monitoring_instructions;
   const distanceOrTimeLimit =
     criticalEvidenceOverride.applied
       ? "Do not operate until repaired and fluids are flushed"
-      : llmReview.status === "ok"
-      ? llmReview.parsed.driver_action_recommendation.distance_or_time_limit
-      : null;
-  const fallbackRecommendedFix = topCauseDef?.recommendedFix
-    ? topCauseDef.recommendedFix
-    : `Verify ${topCause?.cause_name ?? "the leading cause"} with the recommended tests before replacing parts.`;
+      : llmReview.parsed.driver_action_recommendation.distance_or_time_limit;
   const recommendedFix = synthesizeRecommendedFix(
     topCause?.cause_name ?? baselineStage.baseline.possible_causes[0]?.cause ?? "the leading cause",
     recommendedTests,
     possibleReplacementParts,
     llmRepairGuidance?.confirm_before_replacement ?? true,
-    fallbackRecommendedFix
+    llmRepairGuidance
+      ? `Verify ${topCause?.cause_name ?? "the leading cause"} with the AI-recommended tests before replacing parts.`
+      : "AI did not provide repair guidance for this response."
   );
   const similarConfirmedCasesUsed = buildSimilarConfirmedCaseEvidence(baselineStage.context);
   const overallEvidenceSummary = uniqueStrings([
@@ -4337,6 +4387,8 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
     llm_status: llmReview.status,
     llm_provider: llmReview.provider,
     llm_model: llmReview.model,
+    ai_response_available: true,
+    user_notification: null,
     fallback_used: intakeInterpretation.fallbackUsed || llmReview.fallbackUsed,
     fallback_reason: combinedFallbackReasons.length > 0 ? combinedFallbackReasons.join("; ") : null,
     safety_override_applied: safetyOverride.applied,
@@ -4395,13 +4447,4 @@ export function mapDiagnosticRiskToUrgency(riskLevel: z.infer<typeof riskLevelSc
 
 export function mapDiagnosticRiskToAction(riskLevel: z.infer<typeof riskLevelSchema>) {
   return mapRiskToAction(riskLevel);
-}
-
-function shouldUseSimpleTadisEmergencyFallback(reason: string | null | undefined) {
-  return Boolean(
-    reason &&
-      /429|402|Provider returned error|Bad Request|prompt tokens|rate limit|overloaded|too many requests|Unable to parse|invalid schema|JSON/i.test(
-        reason
-      )
-  );
 }

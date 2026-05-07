@@ -573,7 +573,7 @@ describe("TADIS Service Layer", () => {
     expect(result.new_candidate_causes_review_required).toBe(true);
   });
 
-  it("falls back cleanly when the LLM returns invalid schema", async () => {
+  it("notifies the user instead of using an internal fallback when the LLM returns invalid schema", async () => {
     stubFetchSequence(['{"not":"valid"}']);
 
     const result = await analyzeDiagnostic({
@@ -590,14 +590,16 @@ describe("TADIS Service Layer", () => {
     });
 
     expect(result.llm_status).toBe("invalid_schema");
-    expect(result.fallback_used).toBe(true);
-    expect(result.confidence_score).toBeLessThan(85);
-    expect(result.next_action).toBe("ask_question");
-    expect(result.clarifying_question.trim().length).toBeGreaterThan(0);
-    expect(result.final_llm_ranking[0]?.cause_name).toBe(result.rule_engine_baseline.possible_causes[0]?.cause);
+    expect(result.ai_response_available).toBe(false);
+    expect(result.fallback_used).toBe(false);
+    expect(result.user_notification).toContain("could not get a usable AI diagnosis");
+    expect(result.next_action).toBe("proceed");
+    expect(result.clarifying_question).toBe("");
+    expect(result.final_llm_ranking).toEqual([]);
+    expect(result.possible_causes).toEqual([]);
   });
 
-  it("rejects zero-confidence LLM payloads and falls back to a clarification path", async () => {
+  it("rejects zero-confidence LLM payloads without inventing an internal clarification", async () => {
     stubFetchSequence([
       {
         nextAction: "finalize",
@@ -662,13 +664,13 @@ describe("TADIS Service Layer", () => {
     });
 
     expect(result.llm_status).toBe("invalid_schema");
-    expect(result.fallback_used).toBe(true);
-    expect(result.confidence_score).toBeLessThan(85);
-    expect(result.next_action).toBe("ask_question");
-    expect(result.clarifying_question).toMatch(/coolant|thermostat|engine overheating/i);
+    expect(result.ai_response_available).toBe(false);
+    expect(result.fallback_used).toBe(false);
+    expect(result.next_action).toBe("proceed");
+    expect(result.clarifying_question).toBe("");
   });
 
-  it("proceeds after the clarification cap instead of inventing another fallback question", async () => {
+  it("withholds internal fallback output after the clarification cap when AI review fails", async () => {
     stubFetchSequence([baseIntakeInterpretation(), "not valid json"]);
 
     const result = await analyzeDiagnostic({
@@ -691,9 +693,9 @@ describe("TADIS Service Layer", () => {
       ],
     });
 
-    expect(result.llm_status).toBe("error");
-    expect(result.fallback_used).toBe(true);
-    expect(result.confidence_score).toBeLessThan(85);
+    expect(result.llm_status).toBe("invalid_schema");
+    expect(result.ai_response_available).toBe(false);
+    expect(result.fallback_used).toBe(false);
     expect(result.next_action).toBe("proceed");
     expect(result.clarifying_question).toBe("");
   });
@@ -1115,7 +1117,7 @@ Recommended tests: Pressure-test the cooling system and inspect hoses.`,
     expect(result.confidence_score).toBeGreaterThanOrEqual(80);
   });
 
-  it("falls back cleanly when the LLM times out", async () => {
+  it("notifies the user when the LLM times out instead of falling back internally", async () => {
     stubFetchSequence([new Error("AI request timed out")]);
 
     const result = await analyzeDiagnostic({
@@ -1131,9 +1133,10 @@ Recommended tests: Pressure-test the cooling system and inspect hoses.`,
       driverNotes: "Temperature rises on route",
     });
 
-    expect(result.llm_status).toBe("timeout");
-    expect(result.fallback_used).toBe(true);
-    expect(result.fallback_reason?.toLowerCase()).toContain("timed out");
+    expect(["timeout", "invalid_schema"]).toContain(result.llm_status);
+    expect(result.ai_response_available).toBe(false);
+    expect(result.fallback_used).toBe(false);
+    expect(result.user_notification).toContain("could not get a usable AI diagnosis");
   });
 
   it("returns one targeted clarifying question when the LLM requests more evidence", async () => {
@@ -1166,7 +1169,7 @@ Recommended tests: Pressure-test the cooling system and inspect hoses.`,
     expect(result.question_rationale).toContain("thermostat");
   });
 
-  it("replaces generic separator clarifications with issue-specific questions", async () => {
+  it("withholds generic separator clarifications instead of replacing them with internal questions", async () => {
     stubFetchSequence([
       baseLlmReview({
         next_action: "ask_question",
@@ -1189,9 +1192,9 @@ Recommended tests: Pressure-test the cooling system and inspect hoses.`,
       driverNotes: "Coolant reservoir has oily sludge and the engine oil looks milky.",
     });
 
-    expect(result.next_action).toBe("ask_question");
-    expect(result.clarifying_question).not.toMatch(/single observation best separates/i);
-    expect(result.clarifying_question).toMatch(/oil\/coolant|coolant contamination|milky|reservoir/i);
+    expect(result.next_action).toBe("proceed");
+    expect(result.clarifying_question).toBe("");
+    expect(result.ai_response_available).toBe(true);
   });
 
   it("finalizes when the LLM confidence reaches the configured threshold", async () => {

@@ -609,6 +609,10 @@ export const diagnosticsRouter = router({
         return analysis;
       }
 
+      if (analysis.ai_response_available === false) {
+        return analysis;
+      }
+
       const complianceStatus = getDiagnosticComplianceStatus(mapDiagnosticRiskToUrgency(analysis.risk_level));
 
       const db = await getDb();

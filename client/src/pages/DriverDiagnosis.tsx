@@ -58,7 +58,20 @@ function DriverDiagnosisContent() {
   const hasDiagnosisInput =
     symptom.trim().length > 0 || faultCode.trim().length > 0 || driverNotes.trim().length > 0;
   const diagnosis = demoDiagnosis ?? diagnoseMutation.data;
+  const diagnosisStatus = diagnosis as
+    | (typeof diagnosis & { ai_response_available?: boolean; user_notification?: string | null })
+    | null;
   const activeClarifyingQuestion = diagnosis?.clarifying_question?.trim() ?? "";
+  const isAiUnavailable =
+    diagnosisStarted &&
+    !!diagnosisStatus &&
+    diagnosisStatus.ai_response_available === false;
+  const aiUnavailableMessage =
+    isAiUnavailable && diagnosisStatus
+      ? diagnosisStatus.user_notification ||
+        diagnosisStatus.fallback_reason ||
+        "TruckFixr could not get a usable AI diagnosis right now. No internal fallback diagnosis was generated."
+      : "";
   const isAwaitingClarification =
     diagnosisStarted &&
     !!diagnosis &&
@@ -514,14 +527,31 @@ function DriverDiagnosisContent() {
                 </div>
               ) : isDiagnosisReady && diagnosis ? (
                 <>
-                  {isLowConfidenceSummary ? (
+                  {isAiUnavailable ? (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">AI diagnosis unavailable</p>
+                      <p className="mt-2 text-sm text-slate-700">{aiUnavailableMessage}</p>
+                      <p className="mt-2 text-sm text-slate-600">
+                        TruckFixr did not show an internal fallback diagnosis, clarifying question, repair estimate, or parts recommendation for this run.
+                      </p>
+                      <Button
+                        className="mt-4 bg-blue-600 hover:bg-blue-700"
+                        disabled={diagnoseMutation.isPending}
+                        onClick={() => void runDiagnosis(clarificationHistory)}
+                      >
+                        {diagnoseMutation.isPending ? "Retrying AI..." : "Retry AI Diagnosis"}
+                      </Button>
+                    </div>
+                  ) : isLowConfidenceSummary ? (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
                       <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Low-confidence summary</p>
                       <p className="mt-2 text-sm text-slate-700">
-                        TADIS asked up to 5 clarifying questions and still could not reach 85% confidence. Review this summary as a best-effort recommendation and confirm the issue with hands-on inspection and testing before acting on it.
+                        TADIS could not reach 85% AI confidence after the available clarification. Review this summary as an AI-generated recommendation and confirm the issue with hands-on inspection and testing before acting on it.
                       </p>
                     </div>
                   ) : null}
+                  {!isAiUnavailable ? (
+                    <>
                   <div
                     className={`rounded-lg border p-4 ${
                       diagnosis.risk_level === "high"
@@ -743,6 +773,8 @@ function DriverDiagnosisContent() {
                       <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Why this question matters</p>
                       <p className="mt-2 text-sm text-slate-700">{diagnosis.question_rationale}</p>
                     </div>
+                  ) : null}
+                    </>
                   ) : null}
                 </>
               ) : (

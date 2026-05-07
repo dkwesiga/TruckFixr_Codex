@@ -44,13 +44,8 @@ function resolveOpenRouterFallbackModel(rawModel: string, simpleMode: boolean) {
   return normalized;
 }
 
-function shouldForceSimpleTadisMode(explicitFlag: string | undefined, primaryModel: string, fallbackModel: string) {
-  if (/^true$/i.test(explicitFlag ?? "")) {
-    return true;
-  }
-
-  const modelStack = `${primaryModel} ${fallbackModel}`.toLowerCase();
-  return /openrouter\/free|minimax|mimo-v2-flash|gemini|gemma/.test(modelStack);
+function shouldForceSimpleTadisMode(explicitFlag: string | undefined) {
+  return /^true$/i.test(explicitFlag ?? "");
 }
 
 export function getDiagnosticRuntimeConfig() {
@@ -91,9 +86,7 @@ export function getDiagnosticRuntimeConfig() {
   const rawOpenRouterModel = resolveOpenRouterModel(ENV.openRouterModel, false);
   const rawOpenRouterFallbackModel = resolveOpenRouterFallbackModel(ENV.openRouterFallbackModel, false);
   const simpleTadisMode = shouldForceSimpleTadisMode(
-    ENV.simpleTadisMode,
-    rawOpenRouterModel,
-    rawOpenRouterFallbackModel
+    ENV.simpleTadisMode
   );
 
   return {
