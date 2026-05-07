@@ -668,8 +668,8 @@ describe("TADIS Service Layer", () => {
     expect(result.clarifying_question).toMatch(/coolant|thermostat|engine overheating/i);
   });
 
-  it("forces a fallback clarifying question after parse failure even when prior clarification rounds exist", async () => {
-    stubFetchSequence(["not valid json"]);
+  it("proceeds after the clarification cap instead of inventing another fallback question", async () => {
+    stubFetchSequence([baseIntakeInterpretation(), "not valid json"]);
 
     const result = await analyzeDiagnostic({
       vehicleId: 42,
@@ -691,11 +691,11 @@ describe("TADIS Service Layer", () => {
       ],
     });
 
-    expect(result.llm_status).toBe("invalid_schema");
+    expect(result.llm_status).toBe("error");
     expect(result.fallback_used).toBe(true);
     expect(result.confidence_score).toBeLessThan(85);
-    expect(result.next_action).toBe("ask_question");
-    expect(result.clarifying_question.trim().length).toBeGreaterThan(0);
+    expect(result.next_action).toBe("proceed");
+    expect(result.clarifying_question).toBe("");
   });
 
   it("accepts near-valid JSON with camelCase keys and proceed-style actions instead of falling back", async () => {
@@ -1164,6 +1164,34 @@ Recommended tests: Pressure-test the cooling system and inspect hoses.`,
     expect(result.next_action).toBe("ask_question");
     expect(result.clarifying_question).toContain("cabin heat");
     expect(result.question_rationale).toContain("thermostat");
+  });
+
+  it("replaces generic separator clarifications with issue-specific questions", async () => {
+    stubFetchSequence([
+      baseLlmReview({
+        next_action: "ask_question",
+        clarifying_question:
+          "What single observation best separates Internal engine oil/coolant cross-contamination from Coolant leak or low coolant level for check engine light?",
+        question_rationale: "Generic separator question from the model.",
+        overall_confidence_score: 58,
+      }),
+    ]);
+
+    const result = await analyzeDiagnostic({
+      vehicleId: 42,
+      vehicle: {
+        id: 42,
+        make: "International",
+        model: "MV",
+        year: 2018,
+      },
+      symptoms: ["Check engine light"],
+      driverNotes: "Coolant reservoir has oily sludge and the engine oil looks milky.",
+    });
+
+    expect(result.next_action).toBe("ask_question");
+    expect(result.clarifying_question).not.toMatch(/single observation best separates/i);
+    expect(result.clarifying_question).toMatch(/oil\/coolant|coolant contamination|milky|reservoir/i);
   });
 
   it("finalizes when the LLM confidence reaches the configured threshold", async () => {

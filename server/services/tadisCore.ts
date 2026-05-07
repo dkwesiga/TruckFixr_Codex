@@ -15,7 +15,8 @@ import {
 import { insertDiagnosticAiRequestLog, updateDiagnosticAiRequestLog } from "./diagnosticAiRequestLogs";
 import { queueDiagnosticReviewRecords } from "./diagnosticReviewQueue";
 
-const MAX_CLARIFICATION_ROUNDS = 5;
+const MAX_CLARIFICATION_ROUNDS = 1;
+const MAX_CLARIFICATION_HISTORY_ENTRIES = 5;
 const DEFAULT_SIMILAR_CASE_LIMIT = 7;
 
 const riskLevelSchema = z.enum(["low", "medium", "high", "critical"]);
@@ -117,7 +118,7 @@ export const DiagnosticInputSchema = z.object({
     complianceHistory: [],
   }),
   similarCases: z.array(SimilarCaseSchema).default([]),
-  clarificationHistory: z.array(ClarificationTurnSchema).max(MAX_CLARIFICATION_ROUNDS).default([]),
+  clarificationHistory: z.array(ClarificationTurnSchema).max(MAX_CLARIFICATION_HISTORY_ENTRIES).default([]),
 });
 
 export type DiagnosticInput = z.infer<typeof DiagnosticInputSchema>;
@@ -2193,6 +2194,9 @@ function hasAskedSimilarQuestion(history: ClarificationTurn[], question: string)
 function isGenericClarifyingQuestion(question: string) {
   const normalized = question.toLowerCase();
   return [
+    /what single observation best separates/,
+    /which detail best separates/,
+    /\bseparate[s]?\s+.+\s+from\s+.+\s+for\b/,
     /what symptom is most repeatable/,
     /idle,?\s*under load,?\s*or all the time/,
     /what operating condition makes/,
@@ -2271,7 +2275,6 @@ function buildSymptomClarifyingQuestionCandidates(
     add(`With fault code ${input.faultCodes[0]}, what warning light or dash message appeared first, and did it appear before or after ${primarySymptom.toLowerCase()}?`);
   }
 
-  add(`What single observation best separates ${topCause} from ${runnerUp} for ${primarySymptom.toLowerCase()}?`);
   return questions;
 }
 
@@ -2281,6 +2284,10 @@ function chooseFreshClarifyingQuestion(
   proposedQuestion: string | null | undefined
 ) {
   const history = stage.context.input.clarificationHistory;
+  if (history.length >= MAX_CLARIFICATION_ROUNDS) {
+    return "";
+  }
+
   const proposed = (proposedQuestion ?? "").trim();
   if (proposed && !isGenericClarifyingQuestion(proposed) && !hasAskedSimilarQuestion(history, proposed)) {
     return proposed;
@@ -2302,11 +2309,8 @@ function chooseFreshClarifyingQuestion(
   const topCause = ranking[0]?.cause_name ?? stage.baseline.possible_causes[0]?.cause ?? "the leading cause";
   const runnerUp = ranking[1]?.cause_name ?? stage.baseline.possible_causes[1]?.cause ?? "the competing cause";
   const fallbackQuestions = [
-    `What changed since this issue first appeared: temperature, load, speed, warning lights, or fluid level?`,
-    `For ${primarySymptom.toLowerCase()}, is it currently getting better, worse, or staying the same?`,
-    `Which detail best separates ${topCause} from ${runnerUp}: fluid contamination, pressure loss, electrical warning, noise, or drivability change?`,
-    `Can the driver safely reproduce the symptom while parked, or does it only appear while driving under load?`,
-    `What exact dashboard warning lights or messages are active right now?`,
+    `For ${primarySymptom.toLowerCase()}, what changed first: temperature, load, speed, warning lights, or fluid level?`,
+    `What exact dashboard warning lights or messages are active with ${primarySymptom.toLowerCase()} right now?`,
   ];
 
   const rotationOffset = history.length % fallbackQuestions.length;
@@ -3673,7 +3677,7 @@ function buildSimpleTadisQuestionOutput(input: DiagnosticInputRequest, baselineS
       confidence_rationale: details.finalizedAfterClarificationLimit
         ? [
             reason,
-            `Confidence is ${details.confidenceScore}% because five clarification answers were considered, but the AI diagnosis provider did not return a usable final JSON result.`,
+            `Confidence is ${details.confidenceScore}% because the available clarification answer was considered, but the AI diagnosis provider did not return a usable final JSON result.`,
           ]
         : details.fallbackUsed
         ? [
