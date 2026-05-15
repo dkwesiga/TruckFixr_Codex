@@ -10,6 +10,7 @@ import {
   vehicleAssignments,
   vehicles,
 } from "../../drizzle/schema";
+import { ensureCompanyMembership } from "./companyAccess";
 
 function normalize(value: string) {
   return value.trim().toUpperCase();
@@ -117,6 +118,11 @@ export async function acceptInvitationByToken(input: {
   if (!user) {
     throw new Error("User not found.");
   }
+  const [inviter] = await db
+    .select({ email: users.email })
+    .from(users)
+    .where(eq(users.id, invitation.invitedByUserId))
+    .limit(1);
 
   await db
     .update(companyInvitations)
@@ -154,7 +160,7 @@ export async function acceptInvitationByToken(input: {
     .set({
       role: invitation.role,
       managerUserId: invitation.role === "driver" ? invitation.invitedByUserId : null,
-      managerEmail: invitation.role === "driver" ? user.managerEmail ?? user.email ?? null : null,
+      managerEmail: invitation.role === "driver" ? inviter?.email ?? user.managerEmail ?? null : null,
       updatedAt: new Date(),
     })
     .where(eq(users.id, input.userId));

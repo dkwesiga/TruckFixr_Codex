@@ -1159,7 +1159,8 @@ function buildSimpleDiagnosisPrompt(request: Record<string, unknown>) {
   return [
     "Diagnose this current issue only. JSON only.",
     "No history, cases, invoices, company data, or raw records.",
-    "If confidence <85 ask one specific clarifying_question. If >=85 use null.",
+    "If confidence <85 ask one specific clarifying_question directly tied to the reported symptom/fault code. If >=85 use null.",
+    "Do not ask about unrelated systems, old maintenance history, or generic checks unless they directly separate the top likely cause from the nearest competing cause.",
     "driver_action enum: keep_running_monitor, drive_to_shop, stop_and_inspect_on_site, stop_and_tow, derate_and_drive_short_distance, do_not_operate_until_repaired.",
     `Shape: ${JSON.stringify(template)}`,
     safePromptStringify(request),
@@ -1508,11 +1509,14 @@ function buildDiagnosticProviderPlan(
   const fallbackProviders =
     primaryProvider === "openrouter" ? [] : getFallbackProviders(primaryProvider);
   const primaryModel = config.openRouterModel.trim() || DEFAULT_DEEPSEEK_OPENROUTER_MODEL;
-  const primaryModels = uniqueNonEmptyModels([
-    primaryModel,
-    config.openRouterFallbackModel,
-    primaryModel === DEFAULT_DEEPSEEK_OPENROUTER_MODEL ? "" : DEFAULT_DEEPSEEK_OPENROUTER_MODEL,
-  ]);
+  const primaryModels =
+    primaryProvider === "openrouter"
+      ? uniqueNonEmptyModels([
+          DEFAULT_DEEPSEEK_OPENROUTER_MODEL,
+          primaryModel,
+          config.openRouterFallbackModel,
+        ])
+      : uniqueNonEmptyModels([primaryModel, config.openRouterFallbackModel]);
 
   if (enabledProviders.length > 0) {
     return {

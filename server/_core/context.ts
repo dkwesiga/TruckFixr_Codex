@@ -15,6 +15,9 @@ export async function createContext(
 
   try {
     user = await sdk.authenticateRequest(opts.req);
+    if (user) {
+      await sdk.refreshSessionCookieIfNeeded(opts.req, opts.res, user);
+    }
   } catch (error) {
     // Authentication is optional for public procedures.
     user = null;

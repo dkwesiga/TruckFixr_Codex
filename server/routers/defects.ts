@@ -6,7 +6,7 @@ import {
   mapDiagnosticRiskToAction,
   mapDiagnosticRiskToUrgency,
 } from "../services/tadisCore";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { defects, tadisAlerts, defectActions, vehicles, maintenanceLogs } from "../../drizzle/schema";
 import { canManageVehicleAccess, canViewVehicle } from "../services/vehicleAccess";
@@ -26,7 +26,7 @@ export const defectsRouter = router({
     .input(
       z.object({
         fleetId: z.number(),
-        vehicleId: z.number(),
+        vehicleId: z.union([z.number(), z.string().trim().min(1)]),
         inspectionId: z.number().optional(),
         title: z.string().min(1, "Defect title is required"),
         description: z.string().optional(),
@@ -72,7 +72,7 @@ export const defectsRouter = router({
           .insert(defects)
           .values({
             fleetId: input.fleetId,
-            vehicleId: input.vehicleId,
+            vehicleId: String(input.vehicleId),
             inspectionId: input.inspectionId ?? null,
             driverId: ctx.user.id,
             title: input.title,
@@ -161,7 +161,7 @@ export const defectsRouter = router({
     }),
 
   listByVehicle: protectedProcedure
-    .input(z.object({ vehicleId: z.number(), status: z.string().optional() }))
+    .input(z.object({ vehicleId: z.union([z.number(), z.string().trim().min(1)]), status: z.string().optional() }))
     .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) return [];
@@ -169,7 +169,7 @@ export const defectsRouter = router({
       const [vehicle] = await db
         .select()
         .from(vehicles)
-        .where(eq(vehicles.id, input.vehicleId))
+        .where(sql`CAST(${vehicles.id} AS text) = ${String(input.vehicleId)}`)
         .limit(1);
 
       if (!vehicle) return [];
@@ -186,7 +186,7 @@ export const defectsRouter = router({
         });
       }
 
-      const conditions = [eq(defects.vehicleId, input.vehicleId)];
+      const conditions = [eq(defects.vehicleId, String(input.vehicleId))];
       if (input.status) {
         conditions.push(eq(defects.status, input.status as any));
       }

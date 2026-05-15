@@ -9,7 +9,14 @@ export type DiagnosticAiRequestLogInput = {
   companyId: number;
   assetId: string;
   diagnosticSessionId: string;
-  callType: "classifier" | "diagnosis";
+  callType:
+    | "classifier"
+    | "classification_repair"
+    | "clarification"
+    | "diagnosis"
+    | "json_repair"
+    | "fallback"
+    | "admin_comparison";
   provider: string | null;
   model: string | null;
   estimatedInputCharacters: number;
@@ -46,7 +53,7 @@ export async function insertDiagnosticAiRequestLog(input: DiagnosticAiRequestLog
         estimatedInputTokens: input.estimatedInputTokens,
         messageCount: input.messageCount,
         maxTokens: input.maxTokens,
-        temperature: input.temperature,
+        temperature: String(input.temperature),
         responseFormatEnabled: input.responseFormatEnabled,
         simpleTadisMode: input.simpleTadisMode,
         truncationApplied: input.truncationApplied,

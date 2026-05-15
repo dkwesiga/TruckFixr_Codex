@@ -1,16 +1,20 @@
 import { z } from "zod";
-import { dailyInspectionSubmissionSchema } from "../../../shared/inspection";
+import {
+  dailyInspectionSubmissionSchema,
+  inspectionSheetTypeSchema,
+  type InspectionSheetType,
+} from "../../../shared/inspection";
 
 export type InspectionDraftItemResponse = {
   status?: "pass" | "fail";
-  classification?: "minor" | "major";
+  classification?: "minor" | "major" | "not_sure";
   comment?: string;
   photoUrls: string[];
 };
 
 export type InspectionChecklistSnapshot = {
   vehicle: {
-    id: number;
+    id: number | string;
     fleetId?: number;
     vin?: string | null;
     licensePlate?: string | null;
@@ -20,6 +24,10 @@ export type InspectionChecklistSnapshot = {
     complianceStatus?: "green" | "yellow" | "red";
   };
   configuration: Record<string, unknown>;
+  inspectionSheetType?: InspectionSheetType | null;
+  inspectionSheetLabel?: string | null;
+  requiresSheetSelection?: boolean;
+  availableInspectionSheets?: Array<{ value: InspectionSheetType; label: string }>;
   validityHours: number;
   categories: Array<{
     category: string;
@@ -46,7 +54,7 @@ export type InspectionChecklistSnapshot = {
 
 export type InspectionDraft = {
   version: 1;
-  vehicleId: number;
+  vehicleId: string | number;
   fleetId: number;
   savedAt: string;
   data: {
@@ -57,13 +65,14 @@ export type InspectionDraft = {
     signatureMode: "typed" | "drawn";
     driverSignature: string;
     drawnSignature: string;
+    inspectionSheetType?: InspectionSheetType | null;
     responses: Record<string, InspectionDraftItemResponse>;
   };
 };
 
 type QueuedInspectionSubmission = {
   id: string;
-  vehicleId: number;
+  vehicleId: string | number;
   fleetId: number;
   queuedAt: string;
   submission: z.infer<typeof dailyInspectionSubmissionSchema>;
@@ -77,7 +86,7 @@ const QUEUE_KEY = "truckfixr:inspection-queue:v1";
 
 const draftSchema: z.ZodType<InspectionDraft> = z.object({
   version: z.literal(1),
-  vehicleId: z.number(),
+  vehicleId: z.union([z.number(), z.string()]),
   fleetId: z.number(),
   savedAt: z.string(),
   data: z.object({
@@ -85,24 +94,25 @@ const draftSchema: z.ZodType<InspectionDraft> = z.object({
     odometer: z.string(),
     location: z.string(),
     attested: z.boolean(),
-    signatureMode: z.enum(["typed", "drawn"]),
-    driverSignature: z.string(),
-    drawnSignature: z.string(),
-    responses: z.record(
-      z.string(),
-      z.object({
-        status: z.enum(["pass", "fail"]).optional(),
-        classification: z.enum(["minor", "major"]).optional(),
-        comment: z.string().optional(),
-        photoUrls: z.array(z.string()),
-      })
+        signatureMode: z.enum(["typed", "drawn"]),
+        driverSignature: z.string(),
+        drawnSignature: z.string(),
+        inspectionSheetType: inspectionSheetTypeSchema.nullable().optional(),
+        responses: z.record(
+          z.string(),
+          z.object({
+            status: z.enum(["pass", "fail"]).optional(),
+            classification: z.enum(["minor", "major", "not_sure"]).optional(),
+            comment: z.string().optional(),
+            photoUrls: z.array(z.string()),
+          })
     ),
   }),
 });
 
 const queuedSubmissionSchema: z.ZodType<QueuedInspectionSubmission> = z.object({
   id: z.string(),
-  vehicleId: z.number(),
+  vehicleId: z.union([z.number(), z.string()]),
   fleetId: z.number(),
   queuedAt: z.string(),
   submission: dailyInspectionSubmissionSchema,
@@ -120,11 +130,11 @@ function parseJson<T>(raw: string | null, schema: z.ZodType<T>) {
   }
 }
 
-function getDraftKey(vehicleId: number) {
+function getDraftKey(vehicleId: string | number) {
   return `${DRAFT_PREFIX}${vehicleId}`;
 }
 
-function getChecklistKey(vehicleId: number) {
+function getChecklistKey(vehicleId: string | number) {
   return `${CHECKLIST_PREFIX}${vehicleId}`;
 }
 
@@ -146,19 +156,19 @@ export function saveInspectionDraft(
   storage.setItem(getDraftKey(draft.vehicleId), JSON.stringify(draft));
 }
 
-export function loadInspectionDraft(storage: LocalStorageLike | null, vehicleId: number) {
+export function loadInspectionDraft(storage: LocalStorageLike | null, vehicleId: string | number) {
   if (!storage) return null;
   return parseJson(storage.getItem(getDraftKey(vehicleId)), draftSchema);
 }
 
-export function clearInspectionDraft(storage: LocalStorageLike | null, vehicleId: number) {
+export function clearInspectionDraft(storage: LocalStorageLike | null, vehicleId: string | number) {
   if (!storage) return;
   storage.removeItem(getDraftKey(vehicleId));
 }
 
 export function saveChecklistSnapshot(
   storage: LocalStorageLike | null,
-  vehicleId: number,
+  vehicleId: string | number,
   snapshot: InspectionChecklistSnapshot
 ) {
   if (!storage) return;
@@ -167,14 +177,14 @@ export function saveChecklistSnapshot(
 
 export function loadChecklistSnapshot(
   storage: LocalStorageLike | null,
-  vehicleId: number
+  vehicleId: string | number
 ) {
   if (!storage) return null;
   return parseJson(
     storage.getItem(getChecklistKey(vehicleId)),
     z.object({
       vehicle: z.object({
-        id: z.number(),
+        id: z.union([z.number(), z.string()]),
         fleetId: z.number().optional(),
         vin: z.string().nullable().optional(),
         licensePlate: z.string().nullable().optional(),
@@ -184,6 +194,12 @@ export function loadChecklistSnapshot(
         complianceStatus: z.enum(["green", "yellow", "red"]).optional(),
       }),
       configuration: z.record(z.string(), z.unknown()),
+      inspectionSheetType: inspectionSheetTypeSchema.nullable().optional(),
+      inspectionSheetLabel: z.string().nullable().optional(),
+      requiresSheetSelection: z.boolean().optional(),
+      availableInspectionSheets: z
+        .array(z.object({ value: inspectionSheetTypeSchema, label: z.string() }))
+        .optional(),
       validityHours: z.number(),
       categories: z.array(
         z.object({

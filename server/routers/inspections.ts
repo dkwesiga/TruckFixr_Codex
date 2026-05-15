@@ -25,12 +25,18 @@ import {
   dailyInspectionSubmissionSchema,
   getInspectionDueAt,
   getVehicleInspectionConfig,
+  inspectionSheetLabels,
+  inspectionSheetTypeSchema,
+  isReeferAsset,
   parseInspectionResults,
   randomProofItems,
+  resolveInspectionSheetType,
   startVerifiedInspectionSchema,
   submitVerifiedInspectionSchema,
   vehicleInspectionConfigSchema,
+  type InspectionSheetType,
 } from "../../shared/inspection";
+import { validateInspectionOdometer } from "../../shared/inspectionOdometer";
 import {
   getInspectionComplianceStatus,
   type ComplianceStatus,
@@ -40,6 +46,10 @@ import {
   mapClassificationToSeverity,
   prepareInspectionSubmission,
 } from "../services/inspectionWorkflow";
+import {
+  buildMissedInspectionReminderAlerts,
+  type MissedInspectionReminderCandidate,
+} from "../services/inspectionReminders";
 import { recordPilotMilestone } from "../services/pilotAccess";
 import {
   calculateInspectionIntegrity,
@@ -224,20 +234,6 @@ function startOfToday() {
   return date;
 }
 
-const fallbackVehicles = {
-  42: {
-    id: 42,
-    fleetId: 1,
-    vin: "1XPWD49X91D487964",
-    licensePlate: "ABC-1234",
-    make: "Peterbilt",
-    model: "579",
-    year: 2022,
-    complianceStatus: "green" as const,
-    configuration: getVehicleInspectionConfig(42),
-  },
-};
-
 function getVehicleLifecycleStatus(complianceStatus: ComplianceStatus) {
   return complianceStatus === "red" ? "maintenance" : "active";
 }
@@ -284,15 +280,41 @@ function buildDvirPayload(input: {
   const results = parseInspectionResults(input.inspection.results) as any;
   const checklistResponses = Array.isArray(results?.checklistResponses)
     ? results.checklistResponses
-    : [];
+    : Array.isArray(results?.checklist)
+      ? results.checklist.map((item: any) => ({
+          itemId: item.itemId,
+          itemLabel: item.label,
+          category: item.category,
+          categoryLabel: item.categoryLabel,
+          result: item.status === "fail" ? "issue_found" : "pass",
+          defectDescription: item.comment,
+          severity:
+            item.classification === "major"
+              ? "major"
+              : item.classification === "not_sure"
+                ? "not sure"
+                : item.classification ?? null,
+          note: item.comment,
+        }))
+      : [];
   const issueItems = checklistResponses.filter((item: any) => item.result === "issue_found");
+  const resolvedSheetType =
+    inspectionSheetTypeSchema.safeParse(results?.inspectionSheetType).success
+      ? (results.inspectionSheetType as InspectionSheetType)
+      : resolveInspectionSheetType({
+          assetType: input.vehicle?.assetType,
+          vehicleType: input.vehicle?.vehicleType,
+          model: input.vehicle?.model,
+          isTrailer: input.vehicle?.isTrailer,
+        }) ?? "tractor";
   const groupedRows = checklistResponses.map((item: any) => {
     const mapped = dvirCategoryCodeMap[item.category] ?? dvirCategoryCodeMap.other;
     return {
       code: mapped.code,
       side: mapped.side,
-      item: mapped.label,
-      originalItem: item.itemLabel,
+      item: item.itemLabel,
+      originalItem: mapped.label,
+      categoryLabel: item.categoryLabel ?? mapped.label,
       defectCode: item.result === "issue_found" ? mapped.code : "",
       defectMarked: item.result === "issue_found",
       repairedMarked: false,
@@ -337,6 +359,7 @@ function buildDvirPayload(input: {
       model: input.vehicle?.model ?? "",
       year: input.vehicle?.year ?? null,
       assetType: input.vehicle?.assetType ?? "",
+      isTrailer: Boolean(input.vehicle?.isTrailer),
     },
     driver: {
       id: input.inspection.driverId,
@@ -344,6 +367,8 @@ function buildDvirPayload(input: {
       signature: results?.driverSignature ?? "",
       email: input.driver?.email ?? "",
     },
+    inspectionSheetType: resolvedSheetType,
+    inspectionSheetLabel: results?.inspectionSheetLabel ?? inspectionSheetLabels[resolvedSheetType],
     status: {
       noDefectsFound: issueItems.length === 0,
       defectsFound: issueItems.length > 0,
@@ -354,8 +379,17 @@ function buildDvirPayload(input: {
       locationStatus: input.inspection.locationStatus ?? "unavailable",
     },
     rows: groupedRows,
-    tractorRows: groupedRows.filter((row) => row.side === "tractor"),
-    trailerRows: groupedRows.filter((row) => row.side === "trailer"),
+    tractorRows: groupedRows.filter((row: any) => row.side === "tractor"),
+    trailerRows: groupedRows.filter((row: any) => row.side === "trailer"),
+    sheetSections: Array.from(
+      groupedRows.reduce((sections: Map<string, any>, row: any) => {
+        const key = row.categoryLabel || "Inspection items";
+        const current = sections.get(key) ?? { label: key, rows: [] };
+        current.rows.push(row);
+        sections.set(key, current);
+        return sections;
+      }, new Map<string, any>()).values()
+    ),
     defectsNotCodedAbove: issueItems
       .map((item: any) => `${item.itemLabel}: ${item.defectDescription ?? item.note ?? ""}`.trim())
       .filter(Boolean),
@@ -369,7 +403,8 @@ function buildDvirPayload(input: {
 
 async function updateVehicleComplianceStatus(
   vehicleId: number | string,
-  nextComplianceStatus: ComplianceStatus
+  nextComplianceStatus: ComplianceStatus,
+  nextMileage?: number | null
 ) {
   if (!vehicleId || vehicleId === 0 || vehicleId === "") return null;
 
@@ -390,6 +425,7 @@ async function updateVehicleComplianceStatus(
       .set({
         complianceStatus: nextComplianceStatus,
         status: getVehicleLifecycleStatus(nextComplianceStatus),
+        ...(typeof nextMileage === "number" ? { mileage: nextMileage } : {}),
         updatedAt: new Date(),
       })
       .where(sql`CAST(${vehicles.id} AS text) = ${String(vehicleId)}`)
@@ -497,8 +533,20 @@ async function getVehicleProfile(vehicleId: number | string) {
         .limit(1);
 
       if (vehicle) {
+        const inspectionSheetType = resolveInspectionSheetType({
+          assetType: vehicle.assetType,
+          vehicleType: vehicle.vehicleType,
+          model: vehicle.model,
+          isTrailer: vehicle.isTrailer,
+        });
+        const reeferUnit = isReeferAsset({
+          assetType: vehicle.assetType,
+          vehicleType: vehicle.vehicleType,
+          model: vehicle.model,
+        });
         const configuration = vehicleInspectionConfigSchema.parse({
           ...getVehicleInspectionConfig(vehicleId),
+          reeferUnit,
           ...(vehicle.configuration ?? {}),
         });
 
@@ -506,14 +554,21 @@ async function getVehicleProfile(vehicleId: number | string) {
           vehicle: {
             id: vehicle.id,
             fleetId: vehicle.fleetId,
+            unitNumber: vehicle.unitNumber,
             vin: vehicle.vin,
             licensePlate: vehicle.licensePlate,
             make: vehicle.make,
             model: vehicle.model,
             year: vehicle.year,
+            mileage: vehicle.mileage,
             complianceStatus: vehicle.complianceStatus,
+            assetType: vehicle.assetType,
+            vehicleType: vehicle.vehicleType,
+            isTrailer: vehicle.isTrailer,
           },
           configuration,
+          inspectionSheetType,
+          requiresSheetSelection: !inspectionSheetType,
         };
       }
     } catch (error) {
@@ -521,29 +576,10 @@ async function getVehicleProfile(vehicleId: number | string) {
     }
   }
 
-  const fallback = fallbackVehicles[vehicleId as keyof typeof fallbackVehicles] ?? {
-    id: vehicleId,
-    fleetId: 1,
-    licensePlate: "UNKNOWN",
-    make: "Truck",
-    model: "Unit",
-    year: null,
-    configuration: getVehicleInspectionConfig(vehicleId),
-  };
-
-  return {
-    vehicle: {
-      id: fallback.id,
-      fleetId: fallback.fleetId,
-      vin: fallback.vin,
-      licensePlate: fallback.licensePlate,
-      make: fallback.make,
-      model: fallback.model,
-      year: fallback.year,
-      complianceStatus: fallback.complianceStatus,
-    },
-    configuration: fallback.configuration,
-  };
+  throw new TRPCError({
+    code: "NOT_FOUND",
+    message: "Inspection requires a valid company vehicle. Select an assigned vehicle before starting.",
+  });
 }
 
 function summarizeInspection(record: { submittedAt: Date | null; results: unknown }) {
@@ -562,7 +598,9 @@ function summarizeInspection(record: { submittedAt: Date | null; results: unknow
     (item) => item?.status === "fail" && item?.classification === "major"
   ).length;
   const minorDefects = checklist.filter(
-    (item) => item?.status === "fail" && item?.classification === "minor"
+    (item) =>
+      item?.status === "fail" &&
+      (item?.classification === "minor" || item?.classification === "not_sure")
   ).length;
   const validUntil = getInspectionDueAt(record.submittedAt);
 
@@ -596,7 +634,9 @@ export const inspectionsRouter = router({
         });
       }
 
-      const { vehicle, configuration } = await getVehicleProfile(input.vehicleId);
+      const { vehicle, configuration, inspectionSheetType, requiresSheetSelection } =
+        await getVehicleProfile(input.vehicleId);
+      const checklistSheetType = inspectionSheetType ?? "tractor";
       const db = await getDb();
       let latestInspection = null;
 
@@ -608,7 +648,7 @@ export const inspectionsRouter = router({
               results: inspections.results,
             })
             .from(inspections)
-            .where(eq(inspections.vehicleId, input.vehicleId))
+            .where(eq(inspections.vehicleId, String(input.vehicleId)))
             .orderBy(desc(inspections.submittedAt))
             .limit(1);
 
@@ -621,8 +661,17 @@ export const inspectionsRouter = router({
       return {
         vehicle,
         configuration,
+        inspectionSheetType,
+        inspectionSheetLabel: inspectionSheetType ? inspectionSheetLabels[inspectionSheetType] : null,
+        requiresSheetSelection,
+        availableInspectionSheets: inspectionSheetType
+          ? []
+          : inspectionSheetTypeSchema.options.map((value) => ({
+              value,
+              label: inspectionSheetLabels[value],
+            })),
         validityHours: INSPECTION_VALIDITY_HOURS,
-        categories: buildChecklistByCategory(configuration),
+        categories: buildChecklistByCategory(configuration, checklistSheetType),
         latestInspection,
       };
     }),
@@ -647,7 +696,9 @@ export const inspectionsRouter = router({
         });
       }
 
-      const { vehicle, configuration } = await getVehicleProfile(input.vehicleId);
+      const { vehicle, configuration, inspectionSheetType, requiresSheetSelection } =
+        await getVehicleProfile(input.vehicleId);
+      const checklistSheetType = inspectionSheetType ?? "tractor";
       const startedAt = new Date();
       const requestedProofItems = randomProofSelection();
 
@@ -655,7 +706,7 @@ export const inspectionsRouter = router({
         .insert(inspections)
         .values({
           fleetId: input.fleetId,
-          vehicleId: input.vehicleId,
+          vehicleId: String(input.vehicleId),
           driverId: ctx.user.id,
           status: "in_progress",
           inspectionDate: startOfToday(),
@@ -674,7 +725,7 @@ export const inspectionsRouter = router({
         requestedProofItems.map((proofItem) => ({
           inspectionId: inspection.id,
           fleetId: input.fleetId,
-          vehicleId: input.vehicleId,
+          vehicleId: String(input.vehicleId),
           driverId: ctx.user.id,
           proofItem,
         }))
@@ -683,14 +734,23 @@ export const inspectionsRouter = router({
       const openDefects = await db
         .select()
         .from(defects)
-        .where(and(eq(defects.vehicleId, input.vehicleId), eq(defects.fleetId, input.fleetId)))
+        .where(and(eq(defects.vehicleId, String(input.vehicleId)), eq(defects.fleetId, input.fleetId)))
         .orderBy(desc(defects.createdAt));
 
       return {
         inspectionId: inspection.id,
         startedAt,
         vehicle,
-        categories: buildChecklistByCategory(configuration),
+        inspectionSheetType,
+        inspectionSheetLabel: inspectionSheetType ? inspectionSheetLabels[inspectionSheetType] : null,
+        requiresSheetSelection,
+        availableInspectionSheets: inspectionSheetType
+          ? []
+          : inspectionSheetTypeSchema.options.map((value) => ({
+              value,
+              label: inspectionSheetLabels[value],
+            })),
+        categories: buildChecklistByCategory(configuration, checklistSheetType),
         requestedProofItems,
         openDefects: openDefects.filter((defect) => defect.status !== "resolved" && defect.status !== "dismissed"),
       };
@@ -1064,16 +1124,43 @@ export const inspectionsRouter = router({
       if (!db) throw new Error("Database not available");
 
       try {
-        const { vehicle, configuration } = await getVehicleProfile(input.vehicleId);
+        const { vehicle, configuration, inspectionSheetType: vehicleInspectionSheetType } =
+          await getVehicleProfile(input.vehicleId);
+        const inspectionSheetType = vehicleInspectionSheetType ?? input.inspectionSheetType;
+        if (!inspectionSheetType) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Choose the correct inspection sheet before submitting this inspection.",
+          });
+        }
+        let odometerReading: number | null = null;
+
+        try {
+          odometerReading = validateInspectionOdometer({
+            isTrailer: inspectionSheetType === "trailer" || Boolean(vehicle.isTrailer),
+            enteredOdometer: typeof input.odometer === "number" ? input.odometer : null,
+            currentMileage: typeof vehicle.mileage === "number" ? vehicle.mileage : null,
+          }).normalizedOdometer;
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Revise the odometer reading and try again.",
+          });
+        }
+
         const prepared = prepareInspectionSubmission({
-          input,
+          input: {
+            ...input,
+            ...(odometerReading != null ? { odometer: odometerReading } : {}),
+          },
           user: ctx.user,
           vehicle,
           configuration,
+          inspectionSheetType,
         });
 
         const [inspectionResult] = await db.insert(inspections).values({
-          vehicleId: input.vehicleId,
+          vehicleId: String(input.vehicleId),
           fleetId: input.fleetId,
           driverId: ctx.user.id,
           status: "submitted",
@@ -1085,7 +1172,7 @@ export const inspectionsRouter = router({
 
         const reportRecipients = await resolveInspectionRecipients({
           fleetId: input.fleetId,
-          vehicleId: input.vehicleId,
+          vehicleId: String(input.vehicleId),
           driverEmail: ctx.user.email,
           managerEmail: ctx.user.managerEmail,
           managerUserId: ctx.user.managerUserId,
@@ -1096,7 +1183,10 @@ export const inspectionsRouter = router({
           inspectionId: inspectionResult.id,
           recipients: reportRecipients.recipients,
           vehicle,
-          input,
+          input: {
+            ...input,
+            ...(odometerReading != null ? { odometer: odometerReading } : {}),
+          },
           userEmail: ctx.user.email,
         });
 
@@ -1112,7 +1202,7 @@ export const inspectionsRouter = router({
           if (item.status !== "fail") continue;
 
           await db.insert(defects).values({
-            vehicleId: input.vehicleId,
+            vehicleId: String(input.vehicleId),
             fleetId: input.fleetId,
             driverId: ctx.user.id,
             inspectionId: inspectionResult.id,
@@ -1127,7 +1217,11 @@ export const inspectionsRouter = router({
           });
         }
 
-        await updateVehicleComplianceStatus(input.vehicleId, prepared.complianceStatus);
+        await updateVehicleComplianceStatus(
+          input.vehicleId,
+          prepared.complianceStatus,
+          odometerReading
+        );
         await recordPilotMilestone({
           userId: ctx.user.id,
           fleetId: input.fleetId,
@@ -1368,7 +1462,11 @@ export const inspectionsRouter = router({
       const db = await getDb();
       if (!db) return [];
 
-      const [vehicle] = await db.select().from(vehicles).where(eq(vehicles.id, input.vehicleId)).limit(1);
+      const [vehicle] = await db
+        .select()
+        .from(vehicles)
+        .where(sql`CAST(${vehicles.id} AS text) = ${String(input.vehicleId)}`)
+        .limit(1);
       if (!vehicle) return [];
 
       const hasAccess = await canViewVehicle({
@@ -1386,7 +1484,7 @@ export const inspectionsRouter = router({
       const result = await db
         .select()
         .from(inspections)
-        .where(eq(inspections.vehicleId, input.vehicleId))
+        .where(eq(inspections.vehicleId, String(input.vehicleId)))
         .orderBy(desc(inspections.submittedAt))
         .limit(input.limit);
 
@@ -1520,7 +1618,7 @@ export const inspectionsRouter = router({
         .orderBy(desc(aiTriageRecords.createdAt));
 
       const todayVehicleIds = new Set(todayInspections.map((inspection) => inspection.vehicleId));
-      const latestInspectionByVehicle = new Map<number, (typeof fleetInspections)[number]>();
+      const latestInspectionByVehicle = new Map<string, (typeof fleetInspections)[number]>();
       for (const inspection of fleetInspections) {
         if (!latestInspectionByVehicle.has(inspection.vehicleId)) {
           latestInspectionByVehicle.set(inspection.vehicleId, inspection);
@@ -1532,7 +1630,7 @@ export const inspectionsRouter = router({
           latestTriageByDefect.set(triage.defectId, triage);
         }
       }
-      const latestAssignmentByVehicle = new Map<number, (typeof activeAssignments)[number]>();
+      const latestAssignmentByVehicle = new Map<string, (typeof activeAssignments)[number]>();
       for (const assignment of activeAssignments) {
         if (!latestAssignmentByVehicle.has(assignment.vehicleId)) {
           latestAssignmentByVehicle.set(assignment.vehicleId, assignment);
@@ -1544,7 +1642,9 @@ export const inspectionsRouter = router({
             ...fleetVehicles
               .map((vehicle) => vehicle.assignedDriverId)
               .filter((value): value is number => typeof value === "number"),
-            ...Array.from(latestAssignmentByVehicle.values()).map((assignment) => assignment.driverUserId),
+            ...Array.from(latestAssignmentByVehicle.values())
+              .map((assignment) => assignment.driverUserId)
+              .filter((value): value is number => typeof value === "number"),
           ]
         )
       );
@@ -1648,6 +1748,133 @@ export const inspectionsRouter = router({
             ),
           })),
         },
+      };
+    }),
+
+  generateDailyInspectionReminders: protectedProcedure
+    .input(z.object({ fleetId: z.number().int().positive() }))
+    .mutation(async ({ input, ctx }) => {
+      const hasAccess = await verifyFleetAccess(input.fleetId, ctx.user.id, ctx.user.role);
+      if (!hasAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You do not have access to this fleet",
+        });
+      }
+
+      const db = await getDb();
+      if (!db) {
+        return { created: 0, skipped: 0, reminders: [] };
+      }
+
+      const todayStart = startOfToday();
+      const now = new Date();
+      const [fleetVehicles, fleetInspections, activeAssignments, existingAlerts] = await Promise.all([
+        db.select().from(vehicles).where(eq(vehicles.fleetId, input.fleetId)),
+        db
+          .select()
+          .from(inspections)
+          .where(eq(inspections.fleetId, input.fleetId))
+          .orderBy(desc(inspections.submittedAt)),
+        db
+          .select()
+          .from(vehicleAssignments)
+          .where(
+            and(
+              eq(vehicleAssignments.fleetId, input.fleetId),
+              eq(vehicleAssignments.status, "active"),
+              lte(vehicleAssignments.startsAt, now),
+              or(isNull(vehicleAssignments.expiresAt), gte(vehicleAssignments.expiresAt, now))
+            )
+          )
+          .orderBy(desc(vehicleAssignments.updatedAt)),
+        db
+          .select()
+          .from(inAppAlerts)
+          .where(
+            and(
+              eq(inAppAlerts.fleetId, input.fleetId),
+              eq(inAppAlerts.alertType, "daily_inspection_missed"),
+              gte(inAppAlerts.createdAt, todayStart)
+            )
+          ),
+      ]);
+
+      const todayInspections = fleetInspections.filter(
+        (inspection) => inspection.submittedAt && new Date(inspection.submittedAt) >= todayStart
+      );
+      const todayVehicleIds = new Set(todayInspections.map((inspection) => inspection.vehicleId));
+      const latestAssignmentByVehicle = new Map<string, (typeof activeAssignments)[number]>();
+      for (const assignment of activeAssignments) {
+        if (!latestAssignmentByVehicle.has(assignment.vehicleId)) {
+          latestAssignmentByVehicle.set(assignment.vehicleId, assignment);
+        }
+      }
+      const driverIds = Array.from(
+        new Set(
+          activeAssignments
+            .map((assignment) => assignment.driverUserId)
+            .filter((value): value is number => typeof value === "number")
+        )
+      );
+      const driverRows =
+        driverIds.length > 0
+          ? await db
+              .select({ id: users.id, name: users.name, email: users.email })
+              .from(users)
+              .where(inArray(users.id, driverIds))
+          : [];
+      const driverMap = new Map(
+        driverRows.map((driver) => [
+          driver.id,
+          driver.name?.trim() || driver.email?.trim() || `Driver ${driver.id}`,
+        ])
+      );
+
+      const latestInspectionByVehicle = new Map<string, (typeof fleetInspections)[number]>();
+      for (const inspection of fleetInspections) {
+        if (!latestInspectionByVehicle.has(inspection.vehicleId)) {
+          latestInspectionByVehicle.set(inspection.vehicleId, inspection);
+        }
+      }
+
+      const candidates: MissedInspectionReminderCandidate[] = fleetVehicles.map((vehicle) => {
+        const assignment = latestAssignmentByVehicle.get(vehicle.id);
+        const assignedDriverId = assignment?.driverUserId ?? vehicle.assignedDriverId ?? null;
+        return {
+          vehicleId: vehicle.id,
+          unit: vehicle.unitNumber || vehicle.licensePlate || `Vehicle ${vehicle.id}`,
+          assignedDriverId,
+          assignedDriverName:
+            assignedDriverId != null ? driverMap.get(assignedDriverId) || `Driver ${assignedDriverId}` : null,
+          inspectedToday: todayVehicleIds.has(vehicle.id),
+          mostRecentInspectionAt:
+            latestInspectionByVehicle.get(vehicle.id)?.submittedAt ??
+            latestInspectionByVehicle.get(vehicle.id)?.inspectionDate ??
+            null,
+        };
+      });
+
+      const reminderAlerts = buildMissedInspectionReminderAlerts({
+        fleetId: input.fleetId,
+        managerUserId: ctx.user.id,
+        vehicles: candidates,
+      });
+      const existingKeys = new Set(
+        existingAlerts.map((alert) => `${alert.userId ?? "fleet"}:${alert.vehicleId}`)
+      );
+      const newAlerts = reminderAlerts.filter(
+        (alert) => !existingKeys.has(`${alert.userId ?? "fleet"}:${alert.vehicleId}`)
+      );
+
+      if (newAlerts.length > 0) {
+        await db.insert(inAppAlerts).values(newAlerts);
+      }
+
+      return {
+        created: newAlerts.length,
+        skipped: reminderAlerts.length - newAlerts.length,
+        reminders: reminderAlerts,
       };
     }),
 

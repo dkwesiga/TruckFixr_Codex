@@ -19,14 +19,16 @@ function canUseStorage() {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
 }
 
-export function saveLastDriverVehicleContext(vehicle: DriverVehicleContext) {
+export function saveLastDriverVehicleContext(
+  vehicle: Pick<DriverVehicleContext, "id" | "fleetId"> & Partial<DriverVehicleContext>
+) {
   if (!canUseStorage()) return;
 
   window.localStorage.setItem(
     LAST_DRIVER_VEHICLE_KEY,
     JSON.stringify({
       id: vehicle.id,
-      fleetId: vehicle.fleetId ?? 1,
+      fleetId: vehicle.fleetId,
       label: vehicle.label ?? "",
       vin: vehicle.vin ?? "",
       licensePlate: vehicle.licensePlate ?? "",
@@ -54,12 +56,18 @@ export function loadLastDriverVehicleContext(): DriverVehicleContext | null {
       return null;
     }
 
+    const fleetId =
+      typeof parsed.fleetId === "number" && Number.isFinite(parsed.fleetId) && parsed.fleetId > 0
+        ? parsed.fleetId
+        : null;
+
+    if (!fleetId) {
+      return null;
+    }
+
     return {
       id: parsed.id,
-      fleetId:
-        typeof parsed.fleetId === "number" && Number.isFinite(parsed.fleetId)
-          ? parsed.fleetId
-          : 1,
+      fleetId,
       label: typeof parsed.label === "string" ? parsed.label : "",
       vin: typeof parsed.vin === "string" ? parsed.vin : "",
       licensePlate: typeof parsed.licensePlate === "string" ? parsed.licensePlate : "",

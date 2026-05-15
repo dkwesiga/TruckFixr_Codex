@@ -241,7 +241,7 @@ function TruckDetailContent() {
                         </span>
                       </div>
                       <p className="text-sm text-slate-600">
-                        {inspection.itemsChecked} items checked • {inspection.defectsFound} defect{inspection.defectsFound !== 1 ? "s" : ""} found
+                        {inspection.itemsChecked} items checked | {inspection.defectsFound} defect{inspection.defectsFound !== 1 ? "s" : ""} found
                       </p>
                     </div>
                   ))}
@@ -255,7 +255,7 @@ function TruckDetailContent() {
             <Card>
               <CardHeader>
                 <CardTitle>Defects & Alerts</CardTitle>
-                <CardDescription>All reported issues and TADIS alerts</CardDescription>
+                <CardDescription>All reported issues and TruckFixr AI alerts</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
@@ -265,7 +265,7 @@ function TruckDetailContent() {
                         <div>
                           <p className="font-semibold text-slate-900">{defect.title}</p>
                           <p className="text-xs text-slate-600 mt-1">
-                            {defect.reportedDate.toLocaleDateString()} • {defect.reportedBy}
+                            {defect.reportedDate.toLocaleDateString()} | {defect.reportedBy}
                           </p>
                         </div>
                         <div className="text-right">

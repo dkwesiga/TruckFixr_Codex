@@ -1,0 +1,36 @@
+{
+  "name": "truckfixr-video-generator",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "remotion studio src/index.ts",
+    "capture:screenshots": "tsx scripts/capture-screenshots.ts",
+    "captions": "tsx scripts/generate-captions.ts",
+    "render:30": "tsx scripts/render-all.ts --duration=30",
+    "render:60": "tsx scripts/render-all.ts --duration=60",
+    "render:90": "tsx scripts/render-all.ts --duration=90",
+    "render:all": "tsx scripts/render-all.ts --duration=all",
+    "compress": "tsx scripts/compress-video.ts",
+    "build:assets": "npm run captions && npm run render:all && npm run compress && npm run qa",
+    "qa": "tsx scripts/qa.ts"
+  },
+  "dependencies": {
+    "@remotion/bundler": "^4.0.0",
+    "@remotion/cli": "^4.0.0",
+    "@remotion/renderer": "^4.0.0",
+    "dotenv": "^17.2.2",
+    "ffmpeg-static": "^5.2.0",
+    "playwright-core": "^1.56.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "remotion": "^4.0.0",
+    "tsx": "^4.19.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.0",
+    "@types/react": "^19.2.1",
+    "@types/react-dom": "^19.2.1",
+    "typescript": "^5.9.3"
+  }
+}

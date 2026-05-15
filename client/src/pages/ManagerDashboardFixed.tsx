@@ -56,7 +56,6 @@ import {
   Clock3,
   LogOut,
   MapPin,
-  Menu,
   Plus,
   Search,
   ShieldCheck,
@@ -511,7 +510,6 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
     try {
       const createdVehicle = await createVehicleMutation.mutateAsync({
         fleetId: resolvedFleetId,
-        assetType: "straight_truck",
         unitNumber: draft.label.trim() || getFallbackUnitNumber(draft.vin),
         vin: draft.vin.trim().toUpperCase(),
         licensePlate: draft.licensePlate.trim() || undefined,
@@ -519,6 +517,7 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
         engineMake: draft.engineMake.trim() || undefined,
         model: draft.model.trim() || undefined,
         year: draft.year.trim() ? Number(draft.year.trim()) : undefined,
+        vehicleType: draft.vehicleType || undefined,
       });
 
       const vehicleLabel = getVehicleDisplayLabel({
@@ -563,10 +562,13 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
           <DropdownMenuTrigger asChild>
             <Button
               variant="outline"
-              className="h-11 rounded-full border-slate-200 bg-white px-4 shadow-lg shadow-slate-200/60"
+              className="h-11 rounded-full border-slate-200 bg-white px-2 shadow-lg shadow-slate-200/60"
             >
-              <Menu className="mr-2 h-4 w-4" />
-              Menu
+              <Avatar className="h-7 w-7 border border-slate-200">
+                <AvatarFallback className="bg-slate-900 text-xs font-semibold text-white">
+                  {initials}
+                </AvatarFallback>
+              </Avatar>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
@@ -590,6 +592,12 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
               onClick={() => navigate("/profile?security=1")}
             >
               Change password
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="cursor-pointer rounded-xl"
+              onClick={() => openAddVehicleDialog()}
+            >
+              Add vehicle
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
@@ -678,45 +686,6 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
                 />
               </DialogContent>
             </Dialog>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  className="h-10 rounded-full border-slate-200 bg-white px-2"
-                >
-                  <Avatar className="h-7 w-7 border border-slate-200">
-                    <AvatarFallback className="bg-slate-900 text-xs font-semibold text-white">
-                      {initials}
-                    </AvatarFallback>
-                  </Avatar>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent
-                align="end"
-                className="w-56 rounded-2xl border-slate-200 p-2"
-              >
-                <DropdownMenuItem
-                  className="cursor-pointer rounded-xl"
-                  onClick={() => navigate("/profile")}
-                >
-                  Profile settings
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="cursor-pointer rounded-xl"
-                  onClick={() => openAddVehicleDialog()}
-                >
-                  Add vehicle
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={logout}
-                  className="cursor-pointer rounded-xl text-destructive focus:text-destructive"
-                >
-                  <LogOut className="mr-2 h-4 w-4" />
-                  Sign out
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
           </div>
         </div>
       </header>
@@ -1166,7 +1135,8 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
                 <Button
                   variant="outline"
                   className="rounded-full border-slate-200 bg-white"
-                  onClick={() => navigate("/defect/1")}
+                  disabled={!managerActionItems[0]?.defectId}
+                  onClick={() => managerActionItems[0]?.defectId && navigate(`/defect/${managerActionItems[0].defectId}`)}
                 >
                   <Wrench className="mr-2 h-4 w-4" />
                   Open queue
@@ -1544,8 +1514,9 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
                           variant="outline"
                           size="sm"
                           className="rounded-xl"
+                          disabled={!item.defectId}
                           onClick={() =>
-                            navigate(`/defect/${item.defectId ?? 1}`)
+                            item.defectId && navigate(`/defect/${item.defectId}`)
                           }
                         >
                           Review action
@@ -1563,7 +1534,7 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
                   Manager actions
                 </CardTitle>
                 <CardDescription>
-                  These links now perform real actions.
+                  Common manager tasks for profile, vehicles, and open diagnosis follow-up.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -1584,7 +1555,8 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
                 <Button
                   variant="outline"
                   className="w-full justify-start rounded-xl"
-                  onClick={() => navigate("/defect/1")}
+                  disabled={!managerActionItems[0]?.defectId}
+                  onClick={() => managerActionItems[0]?.defectId && navigate(`/defect/${managerActionItems[0].defectId}`)}
                 >
                   Open maintenance queue
                 </Button>
@@ -1625,7 +1597,7 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
                       <SelectContent>
                         {(vehiclesQuery.data ?? []).map(v => (
                           <SelectItem key={v.id} value={String(v.id)}>
-                            {v.unitNumber} · {v.assetType} {v.licensePlate ? `· ${v.licensePlate}` : ""}
+                            {v.unitNumber} | {v.assetType} {v.licensePlate ? `| ${v.licensePlate}` : ""}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -1656,7 +1628,7 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
                         <SelectContent>
                           {(driversQuery.data ?? []).map(d => (
                             <SelectItem key={d.id} value={String(d.id)}>
-                              {d.name} · {d.email}
+                              {d.name} | {d.email}
                             </SelectItem>
                           ))}
                         </SelectContent>

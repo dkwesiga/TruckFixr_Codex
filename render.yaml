@@ -92,9 +92,29 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_MODEL
-        value: openrouter/free
+        value: deepseek/deepseek-v4-flash
       - key: OPENROUTER_FALLBACK_MODEL
-        value: openrouter/free
+        value: google/gemini-2.5-flash
+      - key: DEFAULT_CLASSIFICATION_MODEL
+        value: deepseek/deepseek-v4-flash
+      - key: DEFAULT_DIAGNOSIS_MODEL
+        value: deepseek/deepseek-v4-flash
+      - key: LOW_COST_CLARIFICATION_MODEL
+        value: deepseek/deepseek-v4-flash
+      - key: ADVANCED_DIAGNOSIS_MODEL
+        value: openai/gpt-4.1-mini
+      - key: SAFETY_CRITICAL_MODEL
+        value: openai/gpt-4.1-mini
+      - key: COMPLEX_FAULT_CODE_MODEL
+        value: google/gemini-2.5-flash
+      - key: JSON_REPAIR_MODEL
+        value: openai/gpt-4.1-mini
+      - key: FALLBACK_MODEL_1
+        value: google/gemini-2.5-flash
+      - key: FALLBACK_MODEL_2
+        value: openai/gpt-4.1-mini
+      - key: ADMIN_COMPARISON_MODEL
+        value: openai/gpt-4.1-mini
       - key: GROQ_API_KEY
         sync: false
       - key: GROQ_MODEL
@@ -104,7 +124,11 @@ services:
       - key: ANTHROPIC_MODEL
         sync: false
       - key: DIAGNOSTIC_CONFIDENCE_THRESHOLD
-        value: "85"
+        value: "80"
+      - key: DIAGNOSTIC_MAX_CLARIFICATIONS
+        value: "3"
+      - key: DIAGNOSTIC_LLM_RETRY_COUNT
+        value: "2"
       - key: DIAGNOSTIC_NEW_CAUSE_MIN_CONFIDENCE
         value: "62"
       - key: DIAGNOSTIC_TIMEOUT_MS
@@ -113,6 +137,8 @@ services:
         value: "320"
       - key: DIAGNOSTIC_REVIEW_MAX_TOKENS
         value: "380"
+      - key: DIAGNOSIS_MAX_TOKENS
+        value: "900"
       - key: SIMPLE_TADIS_MODE
         value: "false"
       - key: STRIPE_SECRET_KEY

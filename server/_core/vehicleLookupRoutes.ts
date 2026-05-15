@@ -1,6 +1,7 @@
 import { ENV } from "./env";
 import type { Express, Request, Response } from "express";
 import { extractVinFromImage } from "../services/ocr";
+import type { VehicleTypeValue } from "../../shared/vehicleTypes";
 
 type VinDecodeResult = {
   Make?: string;
@@ -10,6 +11,9 @@ type VinDecodeResult = {
   EngineModel?: string;
   FuelTypePrimary?: string;
   DisplacementL?: string;
+  VehicleType?: string;
+  BodyClass?: string;
+  TrailerType?: string;
   SuggestedVIN?: string;
   ErrorCode?: string;
   ErrorText?: string;
@@ -86,6 +90,69 @@ function inferEngineMake(result: VinDecodeResult) {
   }
 
   return "";
+}
+
+function inferVehicleType(result: VinDecodeResult): VehicleTypeValue | null {
+  const haystack = [
+    result.VehicleType,
+    result.BodyClass,
+    result.TrailerType,
+    result.Make,
+    result.Model,
+  ]
+    .filter((value): value is string => Boolean(value && value.trim()))
+    .join(" | ")
+    .toLowerCase();
+
+  if (!haystack) return null;
+
+  if (haystack.includes("reefer") || haystack.includes("refrigerated")) {
+    return "reefer_trailer";
+  }
+
+  if (haystack.includes("flatbed")) {
+    return "flatbed_trailer";
+  }
+
+  if (
+    (haystack.includes("dry van") || haystack.includes("cargo van body")) &&
+    haystack.includes("trailer")
+  ) {
+    return "dry_van_trailer";
+  }
+
+  if (
+    haystack.includes("truck-tractor") ||
+    haystack.includes("truck tractor") ||
+    haystack.includes("road tractor") ||
+    haystack.includes("tractor")
+  ) {
+    return "tractor";
+  }
+
+  if (haystack.includes("trailer")) {
+    return "trailer";
+  }
+
+  if (haystack.includes("bus")) {
+    return "bus";
+  }
+
+  if (haystack.includes("van")) {
+    return "van";
+  }
+
+  if (
+    haystack.includes("straight truck") ||
+    haystack.includes("single-unit truck") ||
+    haystack.includes("single unit truck") ||
+    haystack.includes("incomplete vehicle") ||
+    haystack.includes("truck")
+  ) {
+    return "straight_truck";
+  }
+
+  return null;
 }
 
 export function registerVehicleLookupRoutes(app: Express) {
@@ -208,6 +275,9 @@ export function registerVehicleLookupRoutes(app: Express) {
         model: result.Model?.trim() || "",
         year: Number(result.ModelYear) || null,
         engineMake: inferEngineMake(result),
+        vehicleType: inferVehicleType(result),
+        decodedVehicleType: result.VehicleType?.trim() || "",
+        bodyClass: result.BodyClass?.trim() || "",
         engineModel: result.EngineModel?.trim() || "",
         engineDescription: buildEngineDescription(result),
         warnings: hasDecodeError ? result.ErrorText?.trim() || "" : "",

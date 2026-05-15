@@ -79,22 +79,6 @@
       </div>
     </div>
     <script type="module" src="/src/main.tsx"></script>
-    <script type="module">
-      const analyticsEndpoint = "%VITE_ANALYTICS_ENDPOINT%";
-      const analyticsWebsiteId = "%VITE_ANALYTICS_WEBSITE_ID%";
-      const hasAnalyticsEndpoint =
-        analyticsEndpoint && !analyticsEndpoint.includes("%VITE_");
-      const hasAnalyticsWebsiteId =
-        analyticsWebsiteId && !analyticsWebsiteId.includes("%VITE_");
-
-      if (hasAnalyticsEndpoint && hasAnalyticsWebsiteId) {
-        const script = document.createElement("script");
-        script.defer = true;
-        script.src = `${analyticsEndpoint.replace(/\/$/, "")}/umami`;
-        script.dataset.websiteId = analyticsWebsiteId;
-        document.body.appendChild(script);
-      }
-    </script>
   </body>
 
 </html>

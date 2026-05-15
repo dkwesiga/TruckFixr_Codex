@@ -26,6 +26,7 @@ export default function AccessDriverInvite() {
 
   const invitationQuery = trpc.access.getDriverInvitation.useQuery({ token }, { enabled: token.length >= 10 });
   const invitation = invitationQuery.data?.invitation ?? null;
+  const invitationValid = Boolean(invitationQuery.data?.valid);
   const nameParts = useMemo(() => splitFullName(fullName), [fullName]);
   const passwordValidation = useMemo(
     () =>
@@ -83,7 +84,7 @@ export default function AccessDriverInvite() {
     }
   };
 
-  const canSubmit = Boolean(invitation?.valid) && fullName.trim().length > 0 && email.trim().length > 0 && passwordValidation.isValid && !isSubmitting;
+  const canSubmit = invitationValid && fullName.trim().length > 0 && email.trim().length > 0 && passwordValidation.isValid && !isSubmitting;
 
   return (
     <main className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#eef3f8_100%)] px-4 py-8 sm:px-6 lg:py-12">
@@ -94,11 +95,11 @@ export default function AccessDriverInvite() {
         <Card className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
           <p className="text-xs font-black uppercase tracking-[0.18em] text-[#A04100]">Accept driver invitation</p>
           <h1 className="mt-3 font-['Manrope'] text-3xl font-black tracking-[-0.04em] text-[#00263F] sm:text-4xl">
-            You have been invited to join TruckFixr Fleet AI.
+            You have been invited to join TruckFixr.
           </h1>
-          {invitation?.valid ? (
+          {invitationValid ? (
             <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-              <p className="font-semibold">{invitation.companyName || "Your company"} invited you on TruckFixr.</p>
+              <p className="font-semibold">{invitation?.companyName || "Your company"} invited you on TruckFixr.</p>
               <p className="mt-1">Confirm your details below to accept the invitation and enter your driver dashboard.</p>
             </div>
           ) : token ? (
@@ -107,7 +108,7 @@ export default function AccessDriverInvite() {
             </div>
           ) : null}
 
-          {invitation?.valid ? (
+          {invitationValid ? (
             <form onSubmit={handleSubmit} className="mt-8 space-y-5">
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">

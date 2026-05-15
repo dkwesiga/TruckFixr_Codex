@@ -2,7 +2,9 @@ import {
   buildDailyInspectionChecklist,
   getInspectionDueAt,
   inspectionCategoryLabels,
+  inspectionSheetLabels,
   type DailyInspectionSubmission,
+  type InspectionSheetType,
   type VehicleInspectionConfig,
 } from "../../shared/inspection";
 import {
@@ -14,12 +16,15 @@ import { buildInspectionReport } from "./reporting";
 import { sendEmail } from "./email";
 
 type VehicleProfile = {
-  id: number;
+  id: string | number;
+  unitNumber?: string | null;
   vin?: string | null;
   licensePlate?: string | null;
   make?: string | null;
   model?: string | null;
   year?: number | null;
+  assetType?: string | null;
+  isTrailer?: boolean | null;
 };
 
 type WorkflowUser = {
@@ -35,7 +40,7 @@ type NormalizedChecklistItem = {
   label: string;
   guidance: string;
   status: "pass" | "fail";
-  classification?: "minor" | "major";
+  classification?: "minor" | "major" | "not_sure";
   comment?: string;
   photoUrls?: string[];
 };
@@ -52,7 +57,9 @@ export type PreparedInspectionSubmission = {
   baseInspectionResults: {
     checklist: NormalizedChecklistItem[];
     location: string;
-    odometer: number;
+    odometer: number | null;
+    inspectionSheetType: InspectionSheetType;
+    inspectionSheetLabel: string;
     vehicle: VehicleProfile;
     vehicleConfiguration: VehicleInspectionConfig;
     inspector: {
@@ -104,7 +111,7 @@ type ReportDeliveryResult = {
         label: string;
         category: string;
         status: "pass" | "fail";
-        classification?: "minor" | "major";
+        classification?: "minor" | "major" | "not_sure";
         comment?: string;
       }>;
       recipients: string[];
@@ -124,7 +131,7 @@ function mapReportEmailDelivery(
   };
 }
 
-export function mapClassificationToSeverity(classification: "minor" | "major") {
+export function mapClassificationToSeverity(classification: "minor" | "major" | "not_sure") {
   return classification === "major" ? "critical" : "medium";
 }
 
@@ -133,8 +140,9 @@ export function prepareInspectionSubmission(args: {
   user: WorkflowUser;
   vehicle: VehicleProfile;
   configuration: VehicleInspectionConfig;
+  inspectionSheetType: InspectionSheetType;
 }) {
-  const checklist = buildDailyInspectionChecklist(args.configuration);
+  const checklist = buildDailyInspectionChecklist(args.configuration, args.inspectionSheetType);
   const checklistIds = new Set(checklist.map((item) => item.id));
   const responseIds = args.input.results.map((result) => result.itemId);
   const uniqueResponseIds = new Set(responseIds);
@@ -193,7 +201,9 @@ export function prepareInspectionSubmission(args: {
     (item) => item.status === "fail" && item.classification === "major"
   ).length;
   const minorDefectCount = normalizedChecklist.filter(
-    (item) => item.status === "fail" && item.classification === "minor"
+    (item) =>
+      item.status === "fail" &&
+      (item.classification === "minor" || item.classification === "not_sure")
   ).length;
   const submittedAt = new Date();
   const validUntil = getInspectionDueAt(submittedAt);
@@ -217,7 +227,9 @@ export function prepareInspectionSubmission(args: {
     baseInspectionResults: {
       checklist: normalizedChecklist,
       location: args.input.location,
-      odometer: args.input.odometer,
+      odometer: typeof args.input.odometer === "number" ? args.input.odometer : null,
+      inspectionSheetType: args.inspectionSheetType,
+      inspectionSheetLabel: inspectionSheetLabels[args.inspectionSheetType],
       vehicle: args.vehicle,
       vehicleConfiguration: args.configuration,
       inspector: {
@@ -280,7 +292,7 @@ export async function createInspectionReportDelivery(args: {
         email: args.userEmail ?? null,
       },
       location: args.input.location,
-      odometer: args.input.odometer,
+      odometer: typeof args.input.odometer === "number" ? args.input.odometer : null,
       checklist: args.prepared.normalizedChecklist,
       majorDefectCount: args.prepared.majorDefectCount,
       minorDefectCount: args.prepared.minorDefectCount,
@@ -312,7 +324,9 @@ export async function createInspectionReportDelivery(args: {
             compliancePresentation.description,
             `Driver: ${args.input.driverPrintedName}`,
             `Location: ${args.input.location}`,
-            `Odometer: ${args.input.odometer.toLocaleString()} km`,
+            typeof args.input.odometer === "number"
+              ? `Odometer: ${args.input.odometer.toLocaleString()} km`
+              : "Odometer: not captured for this asset",
             `Valid until: ${args.prepared.validUntil.toLocaleString("en-CA")}`,
           ].join("\n"),
           attachments: [

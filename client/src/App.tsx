@@ -9,7 +9,7 @@ import VerifiedInspection from "./pages/VerifiedInspection";
 import LandingSaaS from "./pages/LandingSaaS";
 
 const Home = lazy(() => import("./pages/Home"));
-const ManagerDashboardSaaS = lazy(() => import("./pages/ManagerDashboardFixed"));
+const ManagerDashboard = lazy(() => import("./pages/ManagerDashboard"));
 const DriverDashboardSaaS = lazy(() => import("./pages/DriverDashboardSaaS"));
 const DriverDiagnosis = lazy(() => import("./pages/DriverDiagnosis"));
 const Onboarding = lazy(() => import("./pages/Onboarding"));
@@ -19,6 +19,7 @@ const Pricing = lazy(() => import("./pages/Pricing"));
 const EmailAuth = lazy(() => import("./pages/EmailAuth"));
 const UserProfile = lazy(() => import("./pages/UserProfile"));
 const AdminBillingDashboard = lazy(() => import("./pages/AdminBillingDashboard"));
+const FaultCodeReviewDashboard = lazy(() => import("./pages/FaultCodeReviewDashboard"));
 const InspectionReportDvir = lazy(() => import("./pages/InspectionReportDvir"));
 const AccessGateway = lazy(() => import("./pages/AccessGateway"));
 const AccessStartTrial = lazy(() => import("./pages/AccessStartTrial"));
@@ -50,7 +51,7 @@ function Router() {
         <Route path={"/profile"} component={UserProfile} />
         <Route path={"/app"} component={Home} />
         <Route path={"/onboarding"} component={Onboarding} />
-        <Route path={"/manager"} component={ManagerDashboardSaaS} />
+        <Route path={"/manager"} component={ManagerDashboard} />
         <Route path={"/driver"} component={DriverDashboardSaaS} />
         <Route path={"/diagnosis"} component={DriverDiagnosis} />
         <Route path={"/inspection"} component={VerifiedInspection} />
@@ -59,6 +60,7 @@ function Router() {
         <Route path={"/truck/:id"} component={TruckDetail} />
         <Route path={"/pricing"} component={Pricing} />
         <Route path={"/admin/billing"} component={AdminBillingDashboard} />
+        <Route path={"/admin/fault-codes"} component={FaultCodeReviewDashboard} />
         <Route path={"/404"} component={NotFound} />
         <Route path={"/"} component={LandingSaaS} />
         <Route component={NotFound} />

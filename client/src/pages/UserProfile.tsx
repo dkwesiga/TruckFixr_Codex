@@ -400,9 +400,9 @@ export default function UserProfile() {
           {step === "profile" ? (
             <>
               <CardHeader>
-                <CardTitle>Profile & Settings</CardTitle>
+                <CardTitle>Profile & Access</CardTitle>
                 <CardDescription>
-                  Manage your account details, role, and startup setup for TruckFixr.
+                  Manage your account details, fleet role, and AI diagnosis setup for TruckFixr.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -490,7 +490,7 @@ export default function UserProfile() {
                       className="border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                     />
                     <p className="text-xs text-slate-500 mt-1">
-                      We'll link your profile to this manager if they already have a TruckFixr account. Otherwise, we’ll save the address and send them an invite when email delivery is available.
+                      We'll link your profile to this manager if they already have a TruckFixr account. Otherwise, we'll save the address and send them an invite when email delivery is available.
                     </p>
                   </div>
                 ) : null}
@@ -514,7 +514,7 @@ export default function UserProfile() {
               <CardHeader>
                 <CardTitle>Create Your First Fleet</CardTitle>
                 <CardDescription>
-                  Set up your fleet to start managing trucks and inspections
+                  Set up your fleet to capture inspections, fault codes, and AI diagnosis guidance.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -674,7 +674,7 @@ export default function UserProfile() {
                     Active trailers: {subscription?.entitlements?.usage.activeTrailerCount ?? 0} / {subscription?.entitlements?.trailerLimit ?? currentTruckFixrPlan.includedTrailerLimit ?? "Custom"}
                   </p>
                   <p className="mt-1 text-sm text-slate-600">
-                    AI diagnostics: {subscription?.entitlements?.usage.diagnosticsThisMonth ?? 0} / {subscription?.aiSessionMonthlyLimit ?? currentTruckFixrPlan.aiDiagnosticSessionLimit ?? "Custom"}
+                    AI diagnosis sessions: {subscription?.entitlements?.usage.diagnosticsThisMonth ?? 0} / {subscription?.aiSessionMonthlyLimit ?? currentTruckFixrPlan.aiDiagnosticSessionLimit ?? "Custom"}
                   </p>
                   <p className="mt-1 text-sm text-slate-600">
                     Driver invites in use: {subscription?.entitlements?.usage.managedDriverCount ?? 0}
@@ -856,7 +856,7 @@ export default function UserProfile() {
                       <ul className="mt-3 space-y-1 text-xs text-slate-600">
                         <li>Powered vehicles: {plan.poweredVehicleLimit ?? "Custom"}</li>
                         <li>Included trailers: {plan.includedTrailerLimit ?? "Custom"}</li>
-                        <li>AI diagnostics: {plan.aiDiagnosticSessionLimit ?? "Custom"}</li>
+                        <li>AI diagnosis sessions: {plan.aiDiagnosticSessionLimit ?? "Custom"}</li>
                         <li>Dashboard: {plan.fleetDashboard}</li>
                       </ul>
                       <div className="mt-4">
@@ -917,7 +917,7 @@ export default function UserProfile() {
               <CardHeader>
                 <CardTitle>Invite Drivers</CardTitle>
                 <CardDescription>
-                  Send drivers an account-creation link that keeps them linked to this manager.
+                  Send drivers a signup link that keeps them connected to this fleet manager.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -972,7 +972,7 @@ export default function UserProfile() {
               <CardHeader>
                 <CardTitle>Inspection Reports</CardTitle>
                 <CardDescription>
-                  Reports submitted by drivers assigned to your vehicles land here and in your email inbox.
+                  Driver inspection reports and fault details submitted for your vehicles land here and in your email inbox.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">

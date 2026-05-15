@@ -1,6 +1,9 @@
 const readEnv = (name: string) => process.env[name]?.trim() ?? "";
+const readEnvWithAliases = (primary: string, aliases: string[] = []) =>
+  [primary, ...aliases].map(readEnv).find(Boolean) ?? "";
+const readBooleanEnv = (name: string) => /^(1|true|yes)$/i.test(readEnv(name));
 
-// Centralized env access for both local development and deployed runtime.
+// Centralized env access for both local .env development and deployed runtime.
 export const ENV = {
   appId: readEnv("VITE_APP_ID"),
   cookieSecret: readEnv("JWT_SECRET"),
@@ -37,6 +40,7 @@ export const ENV = {
     "http://localhost:3000",
   ownerOpenId: readEnv("OWNER_OPEN_ID"),
   isProduction: process.env.NODE_ENV === "production",
+  allowRuntimeSchemaRepair: readBooleanEnv("ALLOW_RUNTIME_SCHEMA_REPAIR"),
   forgeApiUrl: readEnv("BUILT_IN_FORGE_API_URL"),
   forgeApiKey: readEnv("BUILT_IN_FORGE_API_KEY"),
   primaryAiProvider: readEnv("PRIMARY_AI_PROVIDER") || "openrouter",
@@ -44,8 +48,8 @@ export const ENV = {
   openAiApiKey: readEnv("OPENAI_API_KEY"),
   openAiModel: readEnv("OPENAI_MODEL"),
   openRouterApiKey: readEnv("OPENROUTER_API_KEY"),
-  openRouterModelPrimary: readEnv("OPENROUTER_MODEL_PRIMARY") || readEnv("OPENROUTER_MODEL"),
-  openRouterModel: readEnv("OPENROUTER_MODEL"),
+  // `OPENROUTER_MODEL_PRIMARY` remains a legacy alias for older rollout configs.
+  openRouterModel: readEnvWithAliases("OPENROUTER_MODEL", ["OPENROUTER_MODEL_PRIMARY"]),
   openRouterFallbackModel: readEnv("OPENROUTER_FALLBACK_MODEL"),
   groqApiKey: readEnv("GROQ_API_KEY"),
   groqModel: readEnv("GROQ_MODEL"),
@@ -56,5 +60,27 @@ export const ENV = {
   diagnosticConfidenceThreshold: readEnv("DIAGNOSTIC_CONFIDENCE_THRESHOLD"),
   diagnosticNewCauseMinConfidence: readEnv("DIAGNOSTIC_NEW_CAUSE_MIN_CONFIDENCE"),
   diagnosticTimeoutMs: readEnv("DIAGNOSTIC_TIMEOUT_MS"),
+  diagnosticMaxClarifications: readEnv("DIAGNOSTIC_MAX_CLARIFICATIONS"),
+  diagnosticLlmRetryCount: readEnv("DIAGNOSTIC_LLM_RETRY_COUNT"),
+  diagnosticIntakeMaxTokens: readEnv("DIAGNOSTIC_INTAKE_MAX_TOKENS"),
+  diagnosticReviewMaxTokens: readEnv("DIAGNOSTIC_REVIEW_MAX_TOKENS"),
+  diagnosisMaxTokens: readEnv("DIAGNOSIS_MAX_TOKENS"),
   simpleTadisMode: readEnv("SIMPLE_TADIS_MODE"),
+  defaultClassificationModel: readEnv("DEFAULT_CLASSIFICATION_MODEL"),
+  defaultDiagnosisModel: readEnv("DEFAULT_DIAGNOSIS_MODEL"),
+  lowCostClarificationModel: readEnv("LOW_COST_CLARIFICATION_MODEL"),
+  advancedDiagnosisModel: readEnv("ADVANCED_DIAGNOSIS_MODEL"),
+  // Legacy alias compatibility for earlier diagnosis rollout env names.
+  safetyCriticalModel: readEnvWithAliases("SAFETY_CRITICAL_MODEL", [
+    "SAFETY_CRITICAL_DIAGNOSIS_MODEL",
+  ]),
+  complexFaultCodeModel: readEnv("COMPLEX_FAULT_CODE_MODEL"),
+  jsonRepairModel: readEnv("JSON_REPAIR_MODEL"),
+  fallbackModel1: readEnvWithAliases("FALLBACK_MODEL_1", ["FALLBACK_DIAGNOSIS_MODEL_1"]),
+  fallbackModel2: readEnvWithAliases("FALLBACK_MODEL_2", ["FALLBACK_DIAGNOSIS_MODEL_2"]),
+  adminComparisonModel: readEnv("ADMIN_COMPARISON_MODEL"),
+  aiCostCeilingMonthlyUsd: readEnv("AI_COST_CEILING_MONTHLY_USD"),
+  diagnosisDisableOpenAi: readEnv("DIAGNOSIS_DISABLE_OPENAI"),
+  diagnosisDisableGemini: readEnv("DIAGNOSIS_DISABLE_GEMINI"),
+  diagnosisDisableAnthropic: readEnv("DIAGNOSIS_DISABLE_ANTHROPIC"),
 };

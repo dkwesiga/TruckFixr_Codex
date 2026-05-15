@@ -19,6 +19,7 @@ export const inspectionCategories = [
   "load_security",
   "other",
   "safety_equipment",
+  "reefer_unit",
 ] as const;
 
 export const inspectionCategoryLabels: Record<(typeof inspectionCategories)[number], string> = {
@@ -38,9 +39,19 @@ export const inspectionCategoryLabels: Record<(typeof inspectionCategories)[numb
   load_security: "Load/security",
   other: "Other issue",
   safety_equipment: "Safety Equipment",
+  reefer_unit: "Reefer unit",
 };
 
-export const defectClassificationSchema = z.enum(["minor", "major"]);
+export const inspectionSheetTypeSchema = z.enum(["tractor", "straight_truck", "trailer"]);
+export const inspectionSheetLabels: Record<z.infer<typeof inspectionSheetTypeSchema>, string> = {
+  tractor: "Tractor inspection sheet",
+  straight_truck: "Straight truck inspection sheet",
+  trailer: "Trailer inspection sheet",
+};
+
+export type InspectionSheetType = z.infer<typeof inspectionSheetTypeSchema>;
+
+export const defectClassificationSchema = z.enum(["minor", "major", "not_sure"]);
 export const signatureModeSchema = z.enum(["typed", "drawn"]);
 
 export const vehicleInspectionConfigSchema = z.object({
@@ -52,6 +63,7 @@ export const vehicleInspectionConfigSchema = z.object({
   steeringAssist: z.boolean().default(true),
   emergencyEquipment: z.boolean().default(true),
   clearanceLights: z.boolean().default(true),
+  reeferUnit: z.boolean().default(false),
 });
 
 export type VehicleInspectionConfig = z.infer<typeof vehicleInspectionConfigSchema>;
@@ -66,6 +78,7 @@ export type InspectionChecklistItem = {
 };
 
 type ChecklistDefinition = InspectionChecklistItem & {
+  sheetTypes: InspectionSheetType[];
   when?: (config: VehicleInspectionConfig) => boolean;
 };
 
@@ -75,18 +88,21 @@ const checklistDefinitions: ChecklistDefinition[] = [
     category: "dashboard_warning_lights",
     label: "No active red or amber dashboard warning lights",
     guidance: "Photograph or describe any active warning light before dispatch.",
+    sheetTypes: ["tractor", "straight_truck"],
   },
   {
     id: "tires-wheels-visual",
     category: "tires_wheels",
     label: "Tires, wheels, rims, and lug nuts show no visible damage",
     guidance: "Check tread, sidewalls, inflation, wheel-end hardware, and missing lug nuts.",
+    sheetTypes: ["tractor", "straight_truck"],
   },
   {
     id: "brakes-air-system-daily",
     category: "brakes_air_system",
     label: "Brake/air system builds and holds pressure with no warning condition",
     guidance: "Watch gauges, listen for leaks, and verify normal brake response.",
+    sheetTypes: ["tractor", "straight_truck"],
     when: (config) => config.airBrakes,
   },
   {
@@ -94,24 +110,28 @@ const checklistDefinitions: ChecklistDefinition[] = [
     category: "lights_reflectors",
     label: "Lights, reflectors, brake lamps, and turn signals are working and visible",
     guidance: "Confirm forward, side, and rear lighting before dispatch.",
+    sheetTypes: ["tractor", "straight_truck", "trailer"],
   },
   {
     id: "fluid-leaks-ground",
     category: "fluid_leaks",
     label: "No visible fuel, oil, coolant, DEF, or air leaks under the vehicle",
     guidance: "Inspect the ground, engine bay, tanks, hoses, and fittings.",
+    sheetTypes: ["tractor", "straight_truck"],
   },
   {
     id: "steering-suspension-daily",
     category: "steering",
     label: "Steering and suspension feel normal with no visible damage",
     guidance: "Check steering play, binding, leaning, broken springs, and loose components.",
+    sheetTypes: ["tractor", "straight_truck"],
   },
   {
     id: "coupling-trailer-connection-daily",
     category: "coupling",
     label: "Coupling, fifth wheel, trailer connection, air, and electrical lines are secure",
     guidance: "Confirm locked coupling and protected air/electrical connections.",
+    sheetTypes: ["tractor"],
     when: (config) => config.couplingSystem || config.trailerAttached,
   },
   {
@@ -119,42 +139,49 @@ const checklistDefinitions: ChecklistDefinition[] = [
     category: "mirrors_windshield",
     label: "Mirrors, windshield, and wipers support safe visibility",
     guidance: "Look for cracked glass, blocked visibility, mirror damage, or failed wipers.",
+    sheetTypes: ["tractor", "straight_truck"],
   },
   {
     id: "body-damage-daily",
     category: "body_damage",
     label: "No new body damage or loose panels that affect safe operation",
     guidance: "Check doors, hood, steps, bumpers, fairings, and body panels.",
+    sheetTypes: ["tractor", "straight_truck", "trailer"],
   },
   {
     id: "load-security-daily",
     category: "load_security",
     label: "Load and cargo securement are acceptable if applicable",
     guidance: "Confirm straps, doors, seals, and cargo are secure when hauling a load.",
+    sheetTypes: ["straight_truck", "trailer"],
   },
   {
     id: "other-issue-daily",
     category: "other",
     label: "No other issue noticed by the driver",
     guidance: "Report unusual smells, sounds, vibration, alerts, or anything that feels unsafe.",
+    sheetTypes: ["tractor", "straight_truck", "trailer"],
   },
   {
     id: "brakes-service-response",
     category: "brakes",
     label: "Service brakes respond evenly and hold pressure",
     guidance: "Confirm braking performance and watch for delayed or uneven response.",
+    sheetTypes: ["tractor", "straight_truck"],
   },
   {
     id: "brakes-parking-system",
     category: "brakes",
     label: "Parking brake holds the vehicle securely",
     guidance: "Verify the parking brake sets and holds without roll.",
+    sheetTypes: ["tractor", "straight_truck"],
   },
   {
     id: "brakes-air-loss",
     category: "brakes",
     label: "Air brake system shows no audible leak or rapid pressure loss",
     guidance: "Inspect air lines, tanks, and gauges for leaks or abnormal loss.",
+    sheetTypes: ["tractor", "straight_truck"],
     when: (config) => config.airBrakes,
   },
   {
@@ -162,6 +189,7 @@ const checklistDefinitions: ChecklistDefinition[] = [
     category: "brakes",
     label: "Hydraulic brake components show no leak or damage",
     guidance: "Inspect master cylinder, lines, and wheel-end components.",
+    sheetTypes: ["straight_truck"],
     when: (config) => config.hydraulicBrakes,
   },
   {
@@ -169,12 +197,14 @@ const checklistDefinitions: ChecklistDefinition[] = [
     category: "steering",
     label: "Steering has normal free play and no binding",
     guidance: "Check for excessive lash, stiffness, or unusual movement.",
+    sheetTypes: ["tractor", "straight_truck"],
   },
   {
     id: "steering-assist",
     category: "steering",
     label: "Steering assist operates normally with no fluid leak",
     guidance: "Inspect hoses, pump, and steering assist response.",
+    sheetTypes: ["tractor", "straight_truck"],
     when: (config) => config.steeringAssist,
   },
   {
@@ -182,12 +212,14 @@ const checklistDefinitions: ChecklistDefinition[] = [
     category: "lights",
     label: "Headlamps, brake lamps, and turn signals work correctly",
     guidance: "Verify all primary lighting functions before dispatch.",
+    sheetTypes: ["tractor", "straight_truck"],
   },
   {
     id: "lights-clearance-markers",
     category: "lights",
     label: "Clearance, marker, and reflector systems are secure and visible",
     guidance: "Confirm required marker and clearance lights are illuminated and clean.",
+    sheetTypes: ["tractor", "straight_truck", "trailer"],
     when: (config) => config.clearanceLights,
   },
   {
@@ -195,6 +227,7 @@ const checklistDefinitions: ChecklistDefinition[] = [
     category: "lights",
     label: "Trailer light circuit is connected and functioning",
     guidance: "Check trailer electrical connection and rear lighting response.",
+    sheetTypes: ["tractor"],
     when: (config) => config.trailerAttached,
   },
   {
@@ -202,24 +235,28 @@ const checklistDefinitions: ChecklistDefinition[] = [
     category: "tires",
     label: "Tires show proper inflation and no visible damage",
     guidance: "Inspect tread, sidewall condition, cuts, bulges, and inflation.",
+    sheetTypes: ["tractor", "straight_truck", "trailer"],
   },
   {
     id: "tires-wheel-security",
     category: "tires",
     label: "Wheels, rims, and fasteners are secure",
     guidance: "Check wheel-end hardware, rims, and signs of looseness or cracking.",
+    sheetTypes: ["tractor", "straight_truck", "trailer"],
   },
   {
     id: "suspension-structure",
     category: "suspension",
     label: "Suspension components are secure with no visible damage",
     guidance: "Inspect springs, hangers, torque arms, and frame attachment points.",
+    sheetTypes: ["tractor", "straight_truck", "trailer"],
   },
   {
     id: "suspension-air-system",
     category: "suspension",
     label: "Air suspension maintains ride height with no leak",
     guidance: "Check air bags, valves, and lines for wear or leaks.",
+    sheetTypes: ["tractor", "straight_truck", "trailer"],
     when: (config) => config.airSuspension,
   },
   {
@@ -227,6 +264,7 @@ const checklistDefinitions: ChecklistDefinition[] = [
     category: "coupling",
     label: "Coupling devices are locked, secured, and free of visible damage",
     guidance: "Inspect fifth wheel, kingpin, pintle, hooks, and safety latches.",
+    sheetTypes: ["tractor", "trailer"],
     when: (config) => config.couplingSystem,
   },
   {
@@ -234,6 +272,7 @@ const checklistDefinitions: ChecklistDefinition[] = [
     category: "coupling",
     label: "Coupling air and electrical lines are connected and protected",
     guidance: "Confirm glad hands, chains, cables, and electrical connectors are secure.",
+    sheetTypes: ["tractor", "trailer"],
     when: (config) => config.couplingSystem || config.trailerAttached,
   },
   {
@@ -241,6 +280,7 @@ const checklistDefinitions: ChecklistDefinition[] = [
     category: "safety_equipment",
     label: "Emergency equipment is present and ready for use",
     guidance: "Check extinguisher, warning triangles, and other emergency kit items.",
+    sheetTypes: ["tractor", "straight_truck"],
     when: (config) => config.emergencyEquipment,
   },
   {
@@ -248,6 +288,37 @@ const checklistDefinitions: ChecklistDefinition[] = [
     category: "safety_equipment",
     label: "Required inspection and registration documents are available",
     guidance: "Confirm the vehicle carries the inspection report and required documents.",
+    sheetTypes: ["tractor", "straight_truck", "trailer"],
+  },
+  {
+    id: "trailer-landing-gear",
+    category: "coupling",
+    label: "Landing gear, kingpin, and support structure are secure",
+    guidance: "Check landing gear operation, handle storage, kingpin condition, and support frame.",
+    sheetTypes: ["trailer"],
+  },
+  {
+    id: "trailer-doors-body",
+    category: "body_damage",
+    label: "Trailer doors, roof, floor, sidewalls, and underride guard are secure",
+    guidance: "Inspect doors, latches, hinges, roof, floor, side panels, and rear impact guard.",
+    sheetTypes: ["trailer"],
+  },
+  {
+    id: "reefer-unit-start-run",
+    category: "reefer_unit",
+    label: "Reefer unit starts, runs, and shows no active service warning",
+    guidance: "Check fuel level, belts, hoses, temperature display, and service alarms.",
+    sheetTypes: ["trailer"],
+    when: (config) => config.reeferUnit,
+  },
+  {
+    id: "reefer-temperature-control",
+    category: "reefer_unit",
+    label: "Reefer temperature setpoint and box condition are acceptable",
+    guidance: "Confirm temperature setpoint, return-air reading if available, and door seal condition.",
+    sheetTypes: ["trailer"],
+    when: (config) => config.reeferUnit,
   },
 ];
 
@@ -272,7 +343,8 @@ const inspectionVehicleIdSchema = z
 export const dailyInspectionSubmissionSchema = z.object({
   vehicleId: inspectionVehicleIdSchema,
   fleetId: z.number().int().positive(),
-  odometer: z.number().int().nonnegative(),
+  inspectionSheetType: inspectionSheetTypeSchema.optional(),
+  odometer: z.number().int().nonnegative().optional(),
   location: z.string().trim().min(1, "Inspection location is required"),
   attested: z.literal(true),
   driverPrintedName: z.string().trim().min(1, "Driver name is required"),
@@ -416,6 +488,7 @@ export const defaultVehicleInspectionConfig: VehicleInspectionConfig = {
   steeringAssist: true,
   emergencyEquipment: true,
   clearanceLights: true,
+  reeferUnit: false,
 };
 
 const configuredVehicles: Record<number, VehicleInspectionConfig> = {
@@ -431,12 +504,67 @@ export function getVehicleInspectionConfig(vehicleId: number | string, overrides
   });
 }
 
-export function buildDailyInspectionChecklist(config: VehicleInspectionConfig) {
-  return checklistDefinitions.filter((item) => (item.when ? item.when(config) : true));
+export function isReeferAsset(input: {
+  assetType?: string | null;
+  vehicleType?: string | null;
+  model?: string | null;
+}) {
+  const text = `${input.assetType ?? ""} ${input.vehicleType ?? ""} ${input.model ?? ""}`.toLowerCase();
+  return /\breefer\b|refrigerat|temperature\s*control/.test(text);
 }
 
-export function buildChecklistByCategory(config: VehicleInspectionConfig) {
-  const items = buildDailyInspectionChecklist(config);
+export function resolveInspectionSheetType(input: {
+  assetType?: string | null;
+  vehicleType?: string | null;
+  model?: string | null;
+  isTrailer?: boolean | null;
+}): InspectionSheetType | null {
+  const assetType = (input.assetType ?? "").toLowerCase();
+  const vehicleType = (input.vehicleType ?? "").toLowerCase();
+
+  if (
+    input.isTrailer ||
+    assetType === "trailer" ||
+    assetType === "reefer_trailer" ||
+    assetType === "dry_van_trailer" ||
+    assetType === "flatbed_trailer" ||
+    vehicleType.includes("trailer")
+  ) {
+    return "trailer";
+  }
+
+  if (assetType === "tractor" || vehicleType.includes("tractor")) {
+    return "tractor";
+  }
+
+  if (
+    assetType === "straight_truck" ||
+    assetType === "truck" ||
+    vehicleType.includes("straight") ||
+    vehicleType.includes("box truck") ||
+    vehicleType.includes("dump") ||
+    vehicleType.includes("service truck")
+  ) {
+    return "straight_truck";
+  }
+
+  return null;
+}
+
+export function buildDailyInspectionChecklist(
+  config: VehicleInspectionConfig,
+  sheetType: InspectionSheetType = "tractor"
+) {
+  return checklistDefinitions.filter(
+    (item) => item.sheetTypes.includes(sheetType) && (item.when ? item.when(config) : true)
+  );
+}
+
+export function buildChecklistByCategory(
+  config: VehicleInspectionConfig,
+  sheetType: InspectionSheetType = "tractor"
+) {
+  const items = buildDailyInspectionChecklist(config, sheetType);
 
   return inspectionCategories
     .map((category) => ({

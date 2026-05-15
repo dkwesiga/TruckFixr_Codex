@@ -8,6 +8,7 @@ import { findLocalUserByOpenId, shouldUseLocalUsers, upsertLocalUser } from "./_
 let _db: ReturnType<typeof drizzle> | null = null;
 let _pool: Pool | null = null;
 let _authSchemaReady: Promise<void> | null = null;
+let _runtimeSchemaRepairSkipped = false;
 
 function createPoolConfig(connectionString: string) {
   const usesSupabase = /supabase\.com/i.test(connectionString);
@@ -160,6 +161,112 @@ async function ensureAuthSchema(pool: Pool) {
         "errorCode" varchar(64),
         "errorMessage" text,
         "fallbackUsed" boolean NOT NULL DEFAULT false,
+        "createdAt" timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "faultCodeReferenceSources" (
+        "id" serial PRIMARY KEY,
+        "title" varchar(255) NOT NULL,
+        "sourceType" varchar(80) NOT NULL,
+        "urlOrPath" text,
+        "importedAt" timestamp NOT NULL DEFAULT now(),
+        "reviewStatus" varchar(32) NOT NULL DEFAULT 'needs_review',
+        "reviewerUserId" integer,
+        "approvedAt" timestamp,
+        "metadata" jsonb,
+        "createdAt" timestamp NOT NULL DEFAULT now(),
+        "updatedAt" timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "faultCodeReferences" (
+        "id" serial PRIMARY KEY,
+        "sourceId" integer,
+        "codeSystem" varchar(64) NOT NULL,
+        "code" varchar(128) NOT NULL,
+        "normalizedCode" varchar(128) NOT NULL,
+        "category" varchar(100) NOT NULL,
+        "title" varchar(255) NOT NULL,
+        "summary" text NOT NULL,
+        "recommendedChecks" jsonb,
+        "riskLevel" varchar(32) NOT NULL DEFAULT 'medium',
+        "reviewStatus" varchar(32) NOT NULL DEFAULT 'needs_review',
+        "reviewerUserId" integer,
+        "approvedAt" timestamp,
+        "archivedAt" timestamp,
+        "metadata" jsonb,
+        "createdAt" timestamp NOT NULL DEFAULT now(),
+        "updatedAt" timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS "fault_code_references_normalized_idx"
+      ON "faultCodeReferences" ("normalizedCode", "reviewStatus");
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "faultCodeReferenceApprovals" (
+        "id" serial PRIMARY KEY,
+        "referenceId" integer NOT NULL,
+        "reviewerUserId" integer NOT NULL,
+        "previousStatus" varchar(32),
+        "nextStatus" varchar(32) NOT NULL,
+        "notes" text,
+        "createdAt" timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "aiQualityReviews" (
+        "id" serial PRIMARY KEY,
+        "diagnosticCaseId" varchar(128) NOT NULL,
+        "fleetId" integer,
+        "userId" integer,
+        "vehicleId" varchar(64),
+        "planType" varchar(64),
+        "modelUsed" varchar(255),
+        "providerUsed" varchar(64),
+        "fallbackModelUsed" varchar(255),
+        "fallbackUsed" boolean NOT NULL DEFAULT false,
+        "caseType" varchar(64) NOT NULL,
+        "escalationReason" text,
+        "classificationConfidence" integer,
+        "finalDiagnosisConfidence" integer,
+        "referenceLookupUsed" boolean NOT NULL DEFAULT false,
+        "referenceMatchStatus" varchar(64) NOT NULL DEFAULT 'none',
+        "clarificationCount" integer NOT NULL DEFAULT 0,
+        "totalAiCalls" integer NOT NULL DEFAULT 0,
+        "estimatedPromptTokens" integer NOT NULL DEFAULT 0,
+        "estimatedCompletionTokens" integer NOT NULL DEFAULT 0,
+        "estimatedTotalTokens" integer NOT NULL DEFAULT 0,
+        "estimatedCostUsd" numeric(10, 6),
+        "finalSafeToDriveDecision" varchar(64),
+        "confirmedOutcomeStatus" varchar(64),
+        "managerConfirmed" boolean NOT NULL DEFAULT false,
+        "mechanicConfirmed" boolean NOT NULL DEFAULT false,
+        "adminComparisonUsed" boolean NOT NULL DEFAULT false,
+        "metadata" jsonb,
+        "createdAt" timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "diagnosticModelComparisons" (
+        "id" serial PRIMARY KEY,
+        "diagnosticCaseId" varchar(128) NOT NULL,
+        "fleetId" integer,
+        "vehicleId" varchar(64),
+        "requestedByUserId" integer NOT NULL,
+        "lowCostModel" varchar(255),
+        "advancedModel" varchar(255),
+        "lowCostOutput" jsonb,
+        "advancedOutput" jsonb,
+        "selectedOutput" varchar(32),
+        "estimatedCostUsd" numeric(10, 6),
         "createdAt" timestamp NOT NULL DEFAULT now()
       );
     `);
@@ -1801,12 +1908,29 @@ async function ensureAuthSchema(pool: Pool) {
   await _authSchemaReady;
 }
 
+export function shouldRunRuntimeSchemaRepair(input: {
+  isProduction?: boolean;
+  allowRuntimeSchemaRepair?: boolean;
+} = {}) {
+  const isProduction = input.isProduction ?? ENV.isProduction;
+  const allowRuntimeSchemaRepair =
+    input.allowRuntimeSchemaRepair ?? ENV.allowRuntimeSchemaRepair;
+  return !isProduction || allowRuntimeSchemaRepair;
+}
+
 // Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
       _pool = new Pool(createPoolConfig(process.env.DATABASE_URL));
-      await ensureAuthSchema(_pool);
+      if (shouldRunRuntimeSchemaRepair()) {
+        await ensureAuthSchema(_pool);
+      } else if (!_runtimeSchemaRepairSkipped) {
+        _runtimeSchemaRepairSkipped = true;
+        console.warn(
+          "[Database] Runtime schema repair is disabled in production. Apply Drizzle migrations before startup, or set ALLOW_RUNTIME_SCHEMA_REPAIR=true for a controlled emergency repair."
+        );
+      }
       _db = drizzle(_pool);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
@@ -1867,6 +1991,11 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     if (user.managerUserId !== undefined) {
       values.managerUserId = user.managerUserId;
       updateSet.managerUserId = user.managerUserId;
+    }
+
+    if (user.emailVerified !== undefined) {
+      values.emailVerified = user.emailVerified;
+      updateSet.emailVerified = user.emailVerified;
     }
 
     if (!values.lastSignedIn) {

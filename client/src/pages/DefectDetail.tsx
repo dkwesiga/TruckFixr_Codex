@@ -102,7 +102,7 @@ function DefectDetailContent() {
     {
       id: 2,
       actor: "System",
-      action: "TADIS Analysis Complete",
+      action: "TruckFixr AI Analysis Complete",
       timestamp: new Date(Date.now() - 1.99 * 60 * 60 * 1000),
       notes: "Urgency: Critical, Recommended Action: Stop Now",
     },
@@ -165,7 +165,7 @@ function DefectDetailContent() {
       {/* Main Content */}
       <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid lg:grid-cols-3 gap-8">
-          {/* Left Column: Defect & TADIS */}
+          {/* Left Column: Defect & TruckFixr AI */}
           <div className="lg:col-span-2 space-y-6">
             {/* Defect Summary */}
             <Card>
@@ -193,14 +193,14 @@ function DefectDetailContent() {
               </CardContent>
             </Card>
 
-            {/* TADIS Analysis Card */}
+            {/* TruckFixr AI Analysis Card */}
             <Card className="border-2 border-red-200 bg-red-50">
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <div>
                     <CardTitle className="flex items-center gap-2">
                       <AlertCircle className="w-5 h-5 text-red-600" />
-                      TADIS Analysis
+                      TruckFixr AI Analysis
                     </CardTitle>
                     <CardDescription>AI-powered diagnostic assessment</CardDescription>
                   </div>

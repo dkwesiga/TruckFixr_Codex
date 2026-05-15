@@ -127,20 +127,7 @@ export async function getCompanyMembership(input: { userId: number; fleetId?: nu
     if (membership) {
       return membership;
     }
-  }
 
-  const [membership] = await db
-    .select()
-    .from(companyMemberships)
-    .where(eq(companyMemberships.userId, input.userId))
-    .orderBy(desc(companyMemberships.updatedAt))
-    .limit(1);
-
-  if (membership) {
-    return membership;
-  }
-
-  if (input.fleetId != null) {
     const [ownedFleet] = await db
       .select({ id: fleets.id })
       .from(fleets)
@@ -155,6 +142,19 @@ export async function getCompanyMembership(input: { userId: number; fleetId?: nu
         approvedByUserId: input.userId,
       });
     }
+
+    return null;
+  }
+
+  const [membership] = await db
+    .select()
+    .from(companyMemberships)
+    .where(eq(companyMemberships.userId, input.userId))
+    .orderBy(desc(companyMemberships.updatedAt))
+    .limit(1);
+
+  if (membership) {
+    return membership;
   }
 
   return null;
@@ -165,7 +165,7 @@ export async function getUserPrimaryFleetId(userId: number) {
   if (membership?.fleetId) return membership.fleetId;
 
   const db = await getDb();
-  if (!db) return 1;
+  if (!db) return null;
 
   const [ownedFleet] = await db
     .select({ id: fleets.id })
@@ -192,12 +192,6 @@ export async function getUserPrimaryFleetId(userId: number) {
     .limit(1);
 
   if (assignmentFleet?.fleetId) {
-    await ensureCompanyMembership({
-      fleetId: assignmentFleet.fleetId,
-      userId,
-      role: "driver",
-      status: "active",
-    }).catch(() => null);
     return assignmentFleet.fleetId;
   }
 
@@ -209,58 +203,10 @@ export async function getUserPrimaryFleetId(userId: number) {
     .limit(1);
 
   if (directVehicleFleet?.fleetId) {
-    await ensureCompanyMembership({
-      fleetId: directVehicleFleet.fleetId,
-      userId,
-      role: "driver",
-      status: "active",
-    }).catch(() => null);
     return directVehicleFleet.fleetId;
   }
 
-  const [driverRow] = await db
-    .select({
-      managerUserId: users.managerUserId,
-      role: users.role,
-    })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
-
-  if (driverRow?.role === "driver" && driverRow.managerUserId != null) {
-    const managerMembership = await getCompanyMembership({
-      userId: driverRow.managerUserId,
-    });
-    if (managerMembership?.fleetId) {
-      await ensureCompanyMembership({
-        fleetId: managerMembership.fleetId,
-        userId,
-        role: "driver",
-        approvedByUserId: driverRow.managerUserId,
-        status: "active",
-      }).catch(() => null);
-      return managerMembership.fleetId;
-    }
-
-    const [managedFleet] = await db
-      .select({ id: fleets.id })
-      .from(fleets)
-      .where(eq(fleets.ownerId, driverRow.managerUserId))
-      .limit(1);
-
-    if (managedFleet?.id) {
-      await ensureCompanyMembership({
-        fleetId: managedFleet.id,
-        userId,
-        role: "driver",
-        approvedByUserId: driverRow.managerUserId,
-        status: "active",
-      }).catch(() => null);
-      return managedFleet.id;
-    }
-  }
-
-  return 1;
+  return null;
 }
 
 export async function canManageCompanyOperations(input: { fleetId: number; user: AppUser }) {

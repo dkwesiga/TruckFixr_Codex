@@ -1,0 +1,184 @@
+{
+  "authMode": "supabase_admin",
+  "password": "DemoPass123!",
+  "manifestPath": "C:\\Users\\dkwes\\TruckFixr\\Codex\\exports\\demo-seed\\demo-seed-manifest.json",
+  "companies": [
+    {
+      "companyKey": "maple",
+      "name": "Maple Route Logistics Ltd.",
+      "fleetId": 6,
+      "users": [
+        {
+          "email": "owner.maple@truckfixr-demo.example.com",
+          "id": 3405,
+          "role": "owner"
+        },
+        {
+          "email": "manager.maple@truckfixr-demo.example.com",
+          "id": 3406,
+          "role": "manager"
+        },
+        {
+          "email": "driver1.maple@truckfixr-demo.example.com",
+          "id": 3407,
+          "role": "driver"
+        },
+        {
+          "email": "driver2.maple@truckfixr-demo.example.com",
+          "id": 3408,
+          "role": "driver"
+        }
+      ],
+      "vehicles": [
+        {
+          "id": "demo-maple-mrl-101",
+          "unitNumber": "MRL-101",
+          "businessStatus": "urgent_repair_do_not_dispatch"
+        },
+        {
+          "id": "demo-maple-mrl-102",
+          "unitNumber": "MRL-102",
+          "businessStatus": "active_road_ready"
+        },
+        {
+          "id": "demo-maple-mrl-t201",
+          "unitNumber": "MRL-T201",
+          "businessStatus": "compliance_risk"
+        },
+        {
+          "id": "demo-maple-mrl-t202",
+          "unitNumber": "MRL-T202",
+          "businessStatus": "maintenance_due_soon"
+        }
+      ]
+    },
+    {
+      "companyKey": "peel",
+      "name": "Peel Community Transport Inc.",
+      "fleetId": 7,
+      "users": [
+        {
+          "email": "owner.peel@truckfixr-demo.example.com",
+          "id": 3417,
+          "role": "owner"
+        },
+        {
+          "email": "manager.peel@truckfixr-demo.example.com",
+          "id": 3418,
+          "role": "manager"
+        },
+        {
+          "email": "driver1.peel@truckfixr-demo.example.com",
+          "id": 3419,
+          "role": "driver"
+        },
+        {
+          "email": "driver2.peel@truckfixr-demo.example.com",
+          "id": 3420,
+          "role": "driver"
+        }
+      ],
+      "vehicles": [
+        {
+          "id": "demo-peel-pct-b301",
+          "unitNumber": "PCT-B301",
+          "businessStatus": "maintenance_due_soon"
+        },
+        {
+          "id": "demo-peel-pct-b302",
+          "unitNumber": "PCT-B302",
+          "businessStatus": "active_road_ready"
+        },
+        {
+          "id": "demo-peel-pct-401",
+          "unitNumber": "PCT-401",
+          "businessStatus": "active_road_ready"
+        },
+        {
+          "id": "demo-peel-pct-402",
+          "unitNumber": "PCT-402",
+          "businessStatus": "overdue_maintenance"
+        },
+        {
+          "id": "demo-peel-pct-t501",
+          "unitNumber": "PCT-T501",
+          "businessStatus": "active_road_ready"
+        },
+        {
+          "id": "demo-peel-pct-t502",
+          "unitNumber": "PCT-T502",
+          "businessStatus": "active_road_ready"
+        }
+      ]
+    },
+    {
+      "companyKey": "northstone",
+      "name": "NorthStone Construction Fleet Ltd.",
+      "fleetId": 8,
+      "users": [
+        {
+          "email": "owner.northstone@truckfixr-demo.example.com",
+          "id": 3421,
+          "role": "owner"
+        },
+        {
+          "email": "manager.northstone@truckfixr-demo.example.com",
+          "id": 3422,
+          "role": "manager"
+        },
+        {
+          "email": "driver1.northstone@truckfixr-demo.example.com",
+          "id": 3423,
+          "role": "driver"
+        },
+        {
+          "email": "driver2.northstone@truckfixr-demo.example.com",
+          "id": 3424,
+          "role": "driver"
+        }
+      ],
+      "vehicles": [
+        {
+          "id": "demo-northstone-nsf-601",
+          "unitNumber": "NSF-601",
+          "businessStatus": "maintenance_due_soon"
+        },
+        {
+          "id": "demo-northstone-nsf-602",
+          "unitNumber": "NSF-602",
+          "businessStatus": "active_road_ready"
+        },
+        {
+          "id": "demo-northstone-nsf-603",
+          "unitNumber": "NSF-603",
+          "businessStatus": "active_road_ready"
+        },
+        {
+          "id": "demo-northstone-nsf-604",
+          "unitNumber": "NSF-604",
+          "businessStatus": "active_road_ready"
+        },
+        {
+          "id": "demo-northstone-nsf-605",
+          "unitNumber": "NSF-605",
+          "businessStatus": "overdue_maintenance"
+        },
+        {
+          "id": "demo-northstone-nsf-606",
+          "unitNumber": "NSF-606",
+          "businessStatus": "active_road_ready"
+        },
+        {
+          "id": "demo-northstone-nsf-t701",
+          "unitNumber": "NSF-T701",
+          "businessStatus": "active_road_ready"
+        },
+        {
+          "id": "demo-northstone-nsf-t702",
+          "unitNumber": "NSF-T702",
+          "businessStatus": "out_of_service"
+        }
+      ]
+    }
+  ]
+}

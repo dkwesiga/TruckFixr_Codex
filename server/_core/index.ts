@@ -67,6 +67,83 @@ function applyCors(app: express.Express) {
   });
 }
 
+type HealthCheckResponse = {
+  ok?: boolean;
+  service?: string;
+  environment?: string;
+};
+
+async function prewarmDevelopmentApp(port: number) {
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const targets = [
+    { path: "/", timeoutMs: 4_000 },
+    { path: "/@vite/client", timeoutMs: 4_000 },
+    // The first TS module compile can legitimately take longer in Vite dev mode.
+    // Keep this best-effort and quiet on timeout.
+    { path: "/src/main.tsx", timeoutMs: 20_000 },
+  ];
+
+  for (const target of targets) {
+    try {
+      const response = await fetch(`${baseUrl}${target.path}`, {
+        signal: AbortSignal.timeout(target.timeoutMs),
+      });
+
+      // Drain the body so the connection can be cleanly reused by later requests.
+      await response.arrayBuffer();
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "TimeoutError") {
+        continue;
+      }
+      console.warn(`[Dev Warmup] Unable to prewarm ${target.path}:`, error);
+    }
+  }
+}
+
+async function getPortConflictHint(port: number) {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/healthz`, {
+      signal: AbortSignal.timeout(1_500),
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = (await response.json()) as HealthCheckResponse;
+
+    if (payload.service === "truckfixr-api") {
+      const environment =
+        typeof payload.environment === "string" ? ` (${payload.environment})` : "";
+      return `TruckFixr already appears to be running at http://localhost:${port}/${environment}.`;
+    }
+
+    return `Another local service responded on http://localhost:${port}/healthz.`;
+  } catch {
+    return null;
+  }
+}
+
+async function handleStartupError(error: NodeJS.ErrnoException, port: number) {
+  if (error.code === "EADDRINUSE") {
+    const hint = await getPortConflictHint(port);
+
+    console.error(`[Server] Port ${port} is already in use.`);
+
+    if (hint) {
+      console.error(`[Server] ${hint}`);
+    }
+
+    console.error(
+      `[Server] Reuse the existing server, stop the process using port ${port}, or restart with PORT=${port + 1}.`
+    );
+    process.exit(1);
+  }
+
+  console.error("[Server] Failed to start", error);
+  process.exit(1);
+}
+
 async function startServer() {
   const app = express();
   const server = createServer(app);
@@ -183,9 +260,17 @@ async function startServer() {
     });
   }
 
+  server.once("error", (error) => {
+    void handleStartupError(error as NodeJS.ErrnoException, port);
+  });
+
   server.listen(port, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${port}/`);
     console.log(`Bound to 0.0.0.0:${port} for container/proxy compatibility.`);
+
+    if (isDevelopment) {
+      void prewarmDevelopmentApp(port);
+    }
   });
 }
 

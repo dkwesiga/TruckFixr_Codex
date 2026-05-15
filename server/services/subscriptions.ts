@@ -189,7 +189,7 @@ function getDefaultSubscriptionState(): SubscriptionState {
     tier: "free",
     billingStatus: "active",
     effectiveTier: "free",
-    activeFleetId: 1,
+    activeFleetId: 0,
     billingCadence: "monthly",
     stripeCustomerId: null,
     stripeSubscriptionId: null,
@@ -210,7 +210,9 @@ export async function getSubscriptionState(userId: number): Promise<Subscription
   }
 
   const pilotAccess = await reconcilePilotAccessForUser(userId);
-  const primaryFleetId = await getUserPrimaryFleetId(userId);
+  const primaryFleetId =
+    (await getUserPrimaryFleetId(userId)) ?? (await getDefaultFleetIdForUser(userId));
+  const lookupFleetId = primaryFleetId ?? 0;
 
   const [fleetRow] = await db
     .select({
@@ -237,7 +239,7 @@ export async function getSubscriptionState(userId: number): Promise<Subscription
       paidPilotEndsAt: fleets.paidPilotEndsAt,
     })
     .from(fleets)
-    .where(eq(fleets.id, primaryFleetId))
+    .where(eq(fleets.id, lookupFleetId))
     .limit(1);
 
   const [userRow] = await db
@@ -266,7 +268,7 @@ export async function getSubscriptionState(userId: number): Promise<Subscription
       .where(
         or(
           eq(subscriptions.userId, userId),
-          eq(subscriptions.fleetId, primaryFleetId)
+          eq(subscriptions.fleetId, lookupFleetId)
         )
       )
       .orderBy(desc(subscriptions.updatedAt))
@@ -309,7 +311,7 @@ export async function getSubscriptionState(userId: number): Promise<Subscription
   const cancelAtPeriodEnd = fleetRow
     ? companyBilling.billingStatus === "canceled"
     : latestSubscription?.cancelAtPeriodEnd ?? userRow?.cancelAtPeriodEnd ?? false;
-  const activeFleetId = primaryFleetId || (await getDefaultFleetIdForUser(userId));
+  const activeFleetId = lookupFleetId;
 
   if (tier === "pilot_access" && pilotAccess?.status !== "active") {
     await syncSubscriptionState({
@@ -348,10 +350,13 @@ export async function getSubscriptionState(userId: number): Promise<Subscription
     trialStart,
     trialEnd,
     cancelAtPeriodEnd,
-    canManageBilling: await canManageCompanyBilling({
-      fleetId: activeFleetId,
-      user: { id: userId, role: userRow?.role ?? "driver" },
-    }).catch(() => false),
+    canManageBilling:
+      activeFleetId > 0
+        ? await canManageCompanyBilling({
+            fleetId: activeFleetId,
+            user: { id: userId, role: userRow?.role ?? "driver" },
+          }).catch(() => false)
+        : false,
     pilotAccess:
       pilotAccess ?? (tier === "pilot_access" ? await getPilotAccessOverview(userId) : null),
     companyPlanKey: fleetRow ? companyBilling.planKey : undefined,
@@ -565,6 +570,7 @@ export async function getUsageSummary(userId: number, fleetId?: number) {
       diagnosticsThisMonth: 0,
       activeVehicleCount: 0,
       billableVehicleCount: 0,
+      activeTrailerCount: 0,
       managedDriverCount: 0,
     };
   }
@@ -575,7 +581,7 @@ export async function getUsageSummary(userId: number, fleetId?: number) {
     .from(aiUsageLogs)
     .where(
       and(
-        eq(aiUsageLogs.userId, userId),
+        fleetId ? eq(aiUsageLogs.fleetId, fleetId) : eq(aiUsageLogs.userId, userId),
         eq(aiUsageLogs.usageType, "diagnostic"),
         gte(aiUsageLogs.createdAt, monthStart)
       )
@@ -644,10 +650,11 @@ export async function getEntitlementState(input: { userId: number; fleetId: numb
   const canAddTrailer = trailerLimit === null || usage.activeTrailerCount < trailerLimit;
   const canInviteDriver =
     driverLimit === null || usage.managedDriverCount < driverLimit;
+  const diagnosticLimit = subscription.aiSessionMonthlyLimit ?? plan.limits.diagnosticsPerMonth;
   const canRunDiagnostics =
-    (subscription.aiSessionMonthlyLimit ?? plan.limits.diagnosticsPerMonth) === null ||
-    usage.diagnosticsThisMonth <
-      (subscription.aiSessionMonthlyLimit ?? plan.limits.diagnosticsPerMonth ?? Number.MAX_SAFE_INTEGER);
+    input.fleetId > 0 &&
+    (diagnosticLimit === null ||
+      usage.diagnosticsThisMonth < (diagnosticLimit ?? Number.MAX_SAFE_INTEGER));
 
   const trialActive =
     subscription.billingStatus === "trialing" &&
@@ -759,7 +766,7 @@ export async function assertUsersWithinPlan(input: { userId: number; fleetId: nu
 export async function recordDiagnosticUsage(input: {
   userId: number;
   fleetId: number;
-  vehicleId: number;
+  vehicleId: string | number;
   provider?: string | null;
   model?: string | null;
   promptTokens?: number;
@@ -772,23 +779,55 @@ export async function recordDiagnosticUsage(input: {
   const db = await getDb();
   if (!db) return;
 
-  await db.insert(aiUsageLogs).values({
-    userId: input.userId,
-    fleetId: input.fleetId,
-    vehicleId: input.vehicleId,
-    usageType: "diagnostic",
-    provider: input.provider ?? null,
-    model: input.model ?? null,
-    promptTokens: input.promptTokens ?? 0,
-    completionTokens: input.completionTokens ?? 0,
-    totalTokens: input.totalTokens ?? 0,
-    latencyMs: input.latencyMs ?? null,
-    estimatedCostUsd:
-      input.estimatedCostUsd === null || input.estimatedCostUsd === undefined
-        ? null
-        : String(input.estimatedCostUsd),
-    metadata: input.metadata ?? null,
-  });
+  const estimatedCostUsd =
+    input.estimatedCostUsd === null || input.estimatedCostUsd === undefined
+      ? null
+      : String(input.estimatedCostUsd);
+
+  try {
+    await db.insert(aiUsageLogs).values({
+      userId: input.userId,
+      fleetId: input.fleetId,
+      vehicleId: String(input.vehicleId),
+      usageType: "diagnostic",
+      provider: input.provider ?? null,
+      model: input.model ?? null,
+      promptTokens: input.promptTokens ?? 0,
+      completionTokens: input.completionTokens ?? 0,
+      totalTokens: input.totalTokens ?? 0,
+      latencyMs: input.latencyMs ?? null,
+      estimatedCostUsd,
+      metadata: input.metadata ?? null,
+    });
+  } catch (error) {
+    // Some deployed databases still have the legacy aiUsageLogs.vehicleId integer column.
+    // Fall back to a NULL vehicleId so usage logging never breaks the diagnosis flow.
+    try {
+      await db.insert(aiUsageLogs).values({
+        userId: input.userId,
+        fleetId: input.fleetId,
+        vehicleId: null,
+        usageType: "diagnostic",
+        provider: input.provider ?? null,
+        model: input.model ?? null,
+        promptTokens: input.promptTokens ?? 0,
+        completionTokens: input.completionTokens ?? 0,
+        totalTokens: input.totalTokens ?? 0,
+        latencyMs: input.latencyMs ?? null,
+        estimatedCostUsd,
+        metadata: {
+          ...(input.metadata ?? {}),
+          legacyVehicleId: String(input.vehicleId),
+          aiUsageLogFallback: "vehicleId_compatibility",
+        },
+      });
+    } catch (fallbackError) {
+      console.warn(
+        "[Billing] Unable to persist AI usage log; continuing without blocking diagnosis.",
+        fallbackError
+      );
+    }
+  }
 
   await db
     .update(fleets)

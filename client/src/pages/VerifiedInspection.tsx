@@ -129,8 +129,10 @@ function VerifiedInspectionContent() {
   const params = useMemo(() => new URLSearchParams(window.location.search), []);
   const storedVehicle = useMemo(() => loadLastDriverVehicleContext(), []);
   const vehicleId = params.get("vehicle") ?? storedVehicle?.id ?? "";
-  const fleetId = Number(params.get("fleet") ?? storedVehicle?.fleetId ?? 1);
-  const isOwnerOperator = user?.role === "owner_operator" || user?.role === "owner" || user?.role === "manager";
+  const parsedFleetId = Number(params.get("fleet") ?? storedVehicle?.fleetId ?? 0);
+  const fleetId = Number.isFinite(parsedFleetId) && parsedFleetId > 0 ? parsedFleetId : 0;
+  const userRole = String(user?.role ?? "");
+  const isOwnerOperator = userRole === "owner_operator" || userRole === "owner" || userRole === "manager";
   const [inspectionSession, setInspectionSession] = useState<any>(null);
   const [location, setLocation] = useState<LocationCapture | null>(null);
   const [responses, setResponses] = useState<Record<string, ChecklistResponse>>({});
@@ -216,6 +218,11 @@ function VerifiedInspectionContent() {
 
   const startInspection = async () => {
     try {
+      if (fleetId <= 0) {
+        toast.error("Select or join a company fleet before starting an inspection.");
+        return;
+      }
+
       const startLocation = await captureLocation();
       setLocation(startLocation);
       const session = await startMutation.mutateAsync({ vehicleId, fleetId, startLocation });
@@ -339,7 +346,7 @@ function VerifiedInspectionContent() {
                 <div>
                   <CardTitle className="fleet-page-title">Verified daily inspection</CardTitle>
                   <CardDescription>
-                    {isOwnerOperator ? "Today’s inspection helps you keep a credible record of your truck’s condition." : "TruckFixr captures timing, proof photos, location status, open defect follow-up, and AI triage."}
+                    {isOwnerOperator ? "Today's inspection helps you keep a credible record of your truck's condition." : "TruckFixr captures timing, proof photos, location status, open defect follow-up, and AI triage."}
                   </CardDescription>
                 </div>
               </div>
@@ -354,7 +361,7 @@ function VerifiedInspectionContent() {
               </div>
               <Button
                 className="fleet-primary-btn h-12 w-full text-base"
-                disabled={startMutation.isPending}
+                disabled={fleetId <= 0 || startMutation.isPending}
                 onClick={startInspection}
               >
                 {startMutation.isPending ? "Starting..." : "Start today's inspection"}
@@ -369,11 +376,13 @@ function VerifiedInspectionContent() {
                 Back to dashboard
               </Button>
               {!isOwnerOperator && (
-                <VehicleAccessRequestDialog
-                  fleetId={fleetId}
-                  triggerLabel="Request Vehicle Access"
-                  triggerVariant="outline"
-                />
+                fleetId > 0 ? (
+                  <VehicleAccessRequestDialog
+                    fleetId={fleetId}
+                    triggerLabel="Request Vehicle Access"
+                    triggerVariant="outline"
+                  />
+                ) : null
               )}
             </CardContent>
           </Card>

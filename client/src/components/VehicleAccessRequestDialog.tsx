@@ -32,7 +32,7 @@ type Props = {
   triggerVariant?: "default" | "outline" | "ghost";
   title?: string;
   description?: string;
-  defaultVehicleId?: number | null;
+  defaultVehicleId?: string | number | null;
   onSubmitted?: () => void;
 };
 
@@ -47,7 +47,9 @@ export default function VehicleAccessRequestDialog({
 }: Props) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const [selectedVehicleId, setSelectedVehicleId] = useState<number | null>(defaultVehicleId);
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(
+    defaultVehicleId == null ? null : String(defaultVehicleId)
+  );
   const [reason, setReason] =
     useState<(typeof reasonOptions)[number]["value"]>("need_to_complete_inspection");
   const [note, setNote] = useState("");
@@ -112,7 +114,7 @@ export default function VehicleAccessRequestDialog({
 
   const vehicles = requestableVehiclesQuery.data ?? [];
   const selectedVehicle =
-    vehicles.find((vehicle) => vehicle.id === selectedVehicleId) ?? null;
+    vehicles.find((vehicle) => String(vehicle.id) === selectedVehicleId) ?? null;
   const grantors = grantContactsQuery.data?.grantors ?? [];
   const selectedGrantor =
     grantors.find((grantor) => grantor.id === requestedFromUserId) ??
@@ -150,9 +152,9 @@ export default function VehicleAccessRequestDialog({
           <div>
             <Label htmlFor="vehicle-access-select">Select a company vehicle or trailer</Label>
             <Select
-              value={selectedVehicleId != null ? String(selectedVehicleId) : ""}
+              value={selectedVehicleId ?? ""}
               onValueChange={(value) => {
-                const nextVehicleId = value ? Number(value) : null;
+                const nextVehicleId = value ? String(value) : null;
                 setSelectedVehicleId(nextVehicleId);
                 if (nextVehicleId != null) {
                   setManualIdentifier("");
@@ -212,7 +214,7 @@ export default function VehicleAccessRequestDialog({
                 </div>
               ) : vehicles.length > 0 ? (
                 vehicles.map((vehicle) => {
-                  const isSelected = selectedVehicleId === vehicle.id;
+                  const isSelected = selectedVehicleId === String(vehicle.id);
                   return (
                     <button
                       key={vehicle.id}
@@ -223,7 +225,7 @@ export default function VehicleAccessRequestDialog({
                           : "border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50/50"
                       }`}
                       onClick={() => {
-                        setSelectedVehicleId(vehicle.id);
+                        setSelectedVehicleId(String(vehicle.id));
                         setManualIdentifier("");
                       }}
                     >

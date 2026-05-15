@@ -1,7 +1,8 @@
 import { protectedProcedure, router } from "../_core/trpc";
+import { randomUUID } from "crypto";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, eq, gt, or } from "drizzle-orm";
+import { and, eq, gt, or, sql } from "drizzle-orm";
 import { driverInvitations, vehicleAssignments, vehicles } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { vehicleInspectionConfigSchema } from "../../shared/inspection";
@@ -19,6 +20,7 @@ import {
 } from "../services/vehicleAccess";
 import { getUserPrimaryFleetId } from "../services/companyAccess";
 import { assignDriver } from "../../vehicle.controller";
+import { VEHICLE_TYPE_VALUES, type VehicleTypeValue } from "../../shared/vehicleTypes";
 
 function normalizeAssetType(
   assetType: "tractor" | "straight_truck" | "trailer" | "truck" | "bus" | "van" | "reefer_trailer" | "flatbed_trailer" | "dry_van_trailer" | "other" | undefined
@@ -42,6 +44,96 @@ function normalizeAssetType(
   }
 }
 
+type VehicleClassificationInput = VehicleTypeValue | "truck" | undefined;
+
+function classifyVehicle(vehicleType: VehicleClassificationInput, assetType: VehicleClassificationInput) {
+  const effectiveVehicleType = vehicleType ?? assetType;
+
+  switch (effectiveVehicleType) {
+    case "truck":
+    case "tractor":
+      return {
+        assetType: "tractor" as const,
+        vehicleType: effectiveVehicleType === "truck" ? "tractor" as const : "tractor" as const,
+        assetCategory: "powered_vehicle",
+        isPoweredVehicle: true,
+        isTrailer: false,
+      };
+    case "straight_truck":
+      return {
+        assetType: "straight_truck" as const,
+        vehicleType: "straight_truck" as const,
+        assetCategory: "powered_vehicle",
+        isPoweredVehicle: true,
+        isTrailer: false,
+      };
+    case "bus":
+      return {
+        assetType: "straight_truck" as const,
+        vehicleType: "bus" as const,
+        assetCategory: "powered_vehicle",
+        isPoweredVehicle: true,
+        isTrailer: false,
+      };
+    case "van":
+      return {
+        assetType: "straight_truck" as const,
+        vehicleType: "van" as const,
+        assetCategory: "powered_vehicle",
+        isPoweredVehicle: true,
+        isTrailer: false,
+      };
+    case "reefer_trailer":
+      return {
+        assetType: "trailer" as const,
+        vehicleType: "reefer_trailer" as const,
+        assetCategory: "trailer",
+        isPoweredVehicle: false,
+        isTrailer: true,
+      };
+    case "flatbed_trailer":
+      return {
+        assetType: "trailer" as const,
+        vehicleType: "flatbed_trailer" as const,
+        assetCategory: "trailer",
+        isPoweredVehicle: false,
+        isTrailer: true,
+      };
+    case "dry_van_trailer":
+      return {
+        assetType: "trailer" as const,
+        vehicleType: "dry_van_trailer" as const,
+        assetCategory: "trailer",
+        isPoweredVehicle: false,
+        isTrailer: true,
+      };
+    case "trailer":
+      return {
+        assetType: "trailer" as const,
+        vehicleType: "trailer" as const,
+        assetCategory: "trailer",
+        isPoweredVehicle: false,
+        isTrailer: true,
+      };
+    case "other":
+      return {
+        assetType: normalizeAssetType(assetType),
+        vehicleType: "other" as const,
+        assetCategory: "powered_vehicle",
+        isPoweredVehicle: true,
+        isTrailer: false,
+      };
+    default:
+      return {
+        assetType: normalizeAssetType(assetType),
+        vehicleType: undefined,
+        assetCategory: "powered_vehicle",
+        isPoweredVehicle: true,
+        isTrailer: false,
+      };
+  }
+}
+
 export const vehiclesRouter = router({
   /**
    * Create a new vehicle (truck)
@@ -49,12 +141,13 @@ export const vehiclesRouter = router({
   create: protectedProcedure
     .input(
       z.object({
-        fleetId: z.number(),
+        fleetId: z.number().int().positive("A valid fleet is required to create a vehicle"),
         assignedDriverId: z.number().nullable().optional(),
         assetType: z.enum([
           "tractor", "straight_truck", "trailer", "truck", "bus", 
           "van", "reefer_trailer", "flatbed_trailer", "dry_van_trailer", "other"
         ]).optional(),
+        vehicleType: z.enum(VEHICLE_TYPE_VALUES).optional(),
         unitNumber: z.string().trim().min(1).max(50).optional(),
         vin: z.string().length(17, "VIN must be 17 characters"),
         licensePlate: z.string().trim().min(1).max(20).optional(),
@@ -74,25 +167,7 @@ export const vehiclesRouter = router({
         });
       }
 
-      const resolvedFleetId =
-        typeof input.fleetId === "number" && input.fleetId > 0
-          ? input.fleetId
-          : await getUserPrimaryFleetId(ctx.user.id);
-
-      if (input.fleetId !== resolvedFleetId) {
-        console.warn("[Vehicles] Recovered invalid create fleetId from user primary fleet.", {
-          requestedFleetId: input.fleetId,
-          resolvedFleetId,
-          userId: ctx.user.id,
-        });
-      }
-
-      if (!resolvedFleetId || resolvedFleetId <= 0) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "TruckFixr could not determine which fleet should own this vehicle.",
-        });
-      }
+      const resolvedFleetId = input.fleetId;
 
       const canManage = await canManageVehicleAccess({
         fleetId: resolvedFleetId,
@@ -125,7 +200,7 @@ export const vehiclesRouter = router({
         requestedAssetRecordStatus === "active" && !entitlement.canAddVehicle
           ? "draft"
           : requestedAssetRecordStatus;
-      const normalizedAssetType = normalizeAssetType(input.assetType);
+      const classification = classifyVehicle(input.vehicleType, input.assetType);
 
       if (input.assignedDriverId != null) {
         if (assetRecordStatus !== "active") {
@@ -152,9 +227,14 @@ export const vehiclesRouter = router({
         [vehicle] = await db
           .insert(vehicles)
           .values({
+            id: `veh_${randomUUID()}`,
             fleetId: resolvedFleetId,
             assignedDriverId: null,
-            assetType: normalizedAssetType,
+            assetType: classification.assetType,
+            assetCategory: classification.assetCategory,
+            vehicleType: classification.vehicleType,
+            isPoweredVehicle: classification.isPoweredVehicle,
+            isTrailer: classification.isTrailer,
             unitNumber: input.unitNumber?.trim() || null,
             vin: input.vin,
             licensePlate: input.licensePlate?.trim() || "UNKNOWN",
@@ -234,7 +314,7 @@ export const vehiclesRouter = router({
    * Get vehicle by ID
    */
   getById: protectedProcedure
-    .input(z.object({ vehicleId: z.number() }))
+    .input(z.object({ vehicleId: z.union([z.number(), z.string().trim().min(1)]) }))
     .query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) return null;
@@ -254,7 +334,7 @@ export const vehiclesRouter = router({
       const [vehicle] = await db
         .select()
         .from(vehicles)
-        .where(eq(vehicles.id, input.vehicleId))
+        .where(sql`CAST(${vehicles.id} AS text) = ${String(input.vehicleId)}`)
         .limit(1);
 
       return vehicle ?? null;
@@ -303,6 +383,10 @@ export const vehiclesRouter = router({
 
     if (ctx.user.role === "owner" || ctx.user.role === "manager") {
       const fleetId = await getUserPrimaryFleetId(ctx.user.id);
+      if (!fleetId || fleetId <= 0) {
+        return [];
+      }
+
       const allowed = await canManageVehicleAccess({
         fleetId,
         user: ctx.user,
@@ -329,7 +413,7 @@ export const vehiclesRouter = router({
   update: protectedProcedure
     .input(
       z.object({
-          vehicleId: z.number(),
+          vehicleId: z.union([z.number(), z.string().trim().min(1)]),
           assignedDriverId: z.number().nullable().optional(),
           unitNumber: z.string().trim().min(1).max(50).nullable().optional(),
           engineMake: z.string().trim().max(100).nullable().optional(),
@@ -363,7 +447,7 @@ export const vehiclesRouter = router({
       const [targetVehicle] = await db
         .select({ fleetId: vehicles.fleetId })
         .from(vehicles)
-        .where(eq(vehicles.id, input.vehicleId))
+        .where(sql`CAST(${vehicles.id} AS text) = ${String(input.vehicleId)}`)
         .limit(1);
 
       if (!targetVehicle) {
@@ -405,13 +489,13 @@ export const vehiclesRouter = router({
           status: vehicles.status,
         })
         .from(vehicles)
-        .where(eq(vehicles.id, input.vehicleId))
+        .where(sql`CAST(${vehicles.id} AS text) = ${String(input.vehicleId)}`)
         .limit(1);
 
       const [vehicle] = await db
         .update(vehicles)
         .set(updates)
-        .where(eq(vehicles.id, input.vehicleId))
+        .where(sql`CAST(${vehicles.id} AS text) = ${String(input.vehicleId)}`)
         .returning();
 
       if (

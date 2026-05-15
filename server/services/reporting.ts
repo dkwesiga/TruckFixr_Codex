@@ -4,7 +4,7 @@ type ReportChecklistItem = {
   label: string;
   category: string;
   status: "pass" | "fail";
-  classification?: "minor" | "major";
+  classification?: "minor" | "major" | "not_sure";
   comment?: string;
 };
 
@@ -14,7 +14,7 @@ type ReportInput = {
   validUntil: Date;
   complianceStatus: ComplianceStatus;
   vehicle: {
-    id: number;
+    id: string | number;
     vin?: string | null;
     licensePlate?: string | null;
     make?: string | null;
@@ -29,7 +29,7 @@ type ReportInput = {
     email?: string | null;
   };
   location: string;
-  odometer: number;
+  odometer: number | null;
   checklist: ReportChecklistItem[];
   majorDefectCount: number;
   minorDefectCount: number;
@@ -189,7 +189,9 @@ export function buildInspectionReport(input: ReportInput) {
     ...row("Vehicle", vehicleLabel || `Vehicle #${input.vehicle.id}`),
     ...row("Plate / Unit", input.vehicle.licensePlate || `Vehicle #${input.vehicle.id}`),
     ...row("VIN", input.vehicle.vin || "Not provided"),
-    ...row("Odometer (km)", input.odometer.toLocaleString("en-CA")),
+    ...(typeof input.odometer === "number"
+      ? row("Odometer (km)", input.odometer.toLocaleString("en-CA"))
+      : []),
     separator("-"),
     "INSPECTION RECORD",
     ...row("Inspection location", input.location),
@@ -207,7 +209,7 @@ export function buildInspectionReport(input: ReportInput) {
     `Checklist items passed: ${passedCount}    Minor defects: ${input.minorDefectCount}    Major defects: ${input.majorDefectCount}`,
     separator("-"),
     "INSPECTION ITEMS / DEFECT REPORT",
-    "P = pass   F = fail   MIN = minor defect   MAJ = major defect",
+    "P = pass   F = fail   MIN = minor/not sure defect   MAJ = major defect",
     separator("-"),
     "P F MIN MAJ  ITEM / DEFECT DETAILS",
     separator("-"),
@@ -220,7 +222,7 @@ export function buildInspectionReport(input: ReportInput) {
       const lead = [
         item.status === "pass" ? "X" : " ",
         item.status === "fail" ? "X" : " ",
-        item.classification === "minor" ? "X" : " ",
+        item.classification === "minor" || item.classification === "not_sure" ? "X" : " ",
         item.classification === "major" ? "X" : " ",
       ].join(" ");
 

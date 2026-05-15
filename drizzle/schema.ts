@@ -366,6 +366,97 @@ export const aiRequestLogs = pgTable("aiRequestLogs", {
   createdAt: dateTimestamp().defaultNow().notNull(),
 });
 
+export const faultCodeReferenceSources = pgTable("faultCodeReferenceSources", {
+  id: serial("id").primaryKey(),
+  title: varchar("title", { length: 255 }).notNull(),
+  sourceType: varchar("sourceType", { length: 80 }).notNull(),
+  urlOrPath: text("urlOrPath"),
+  importedAt: dateTimestamp().defaultNow().notNull(),
+  reviewStatus: varchar("reviewStatus", { length: 32 }).default("needs_review").notNull(),
+  reviewerUserId: integer("reviewerUserId"),
+  approvedAt: dateTimestamp(),
+  metadata: jsonb("metadata"),
+  createdAt: dateTimestamp().defaultNow().notNull(),
+  updatedAt: dateTimestamp().defaultNow().notNull(),
+});
+
+export const faultCodeReferences = pgTable("faultCodeReferences", {
+  id: serial("id").primaryKey(),
+  sourceId: integer("sourceId"),
+  codeSystem: varchar("codeSystem", { length: 64 }).notNull(),
+  code: varchar("code", { length: 128 }).notNull(),
+  normalizedCode: varchar("normalizedCode", { length: 128 }).notNull(),
+  category: varchar("category", { length: 100 }).notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  summary: text("summary").notNull(),
+  recommendedChecks: jsonb("recommendedChecks"),
+  riskLevel: varchar("riskLevel", { length: 32 }).default("medium").notNull(),
+  reviewStatus: varchar("reviewStatus", { length: 32 }).default("needs_review").notNull(),
+  reviewerUserId: integer("reviewerUserId"),
+  approvedAt: dateTimestamp(),
+  archivedAt: dateTimestamp(),
+  metadata: jsonb("metadata"),
+  createdAt: dateTimestamp().defaultNow().notNull(),
+  updatedAt: dateTimestamp().defaultNow().notNull(),
+});
+
+export const faultCodeReferenceApprovals = pgTable("faultCodeReferenceApprovals", {
+  id: serial("id").primaryKey(),
+  referenceId: integer("referenceId").notNull(),
+  reviewerUserId: integer("reviewerUserId").notNull(),
+  previousStatus: varchar("previousStatus", { length: 32 }),
+  nextStatus: varchar("nextStatus", { length: 32 }).notNull(),
+  notes: text("notes"),
+  createdAt: dateTimestamp().defaultNow().notNull(),
+});
+
+export const aiQualityReviews = pgTable("aiQualityReviews", {
+  id: serial("id").primaryKey(),
+  diagnosticCaseId: varchar("diagnosticCaseId", { length: 128 }).notNull(),
+  fleetId: integer("fleetId"),
+  userId: integer("userId"),
+  vehicleId: varchar("vehicleId", { length: 64 }),
+  planType: varchar("planType", { length: 64 }),
+  modelUsed: varchar("modelUsed", { length: 255 }),
+  providerUsed: varchar("providerUsed", { length: 64 }),
+  fallbackModelUsed: varchar("fallbackModelUsed", { length: 255 }),
+  fallbackUsed: boolean("fallbackUsed").default(false).notNull(),
+  caseType: varchar("caseType", { length: 64 }).notNull(),
+  escalationReason: text("escalationReason"),
+  classificationConfidence: integer("classificationConfidence"),
+  finalDiagnosisConfidence: integer("finalDiagnosisConfidence"),
+  referenceLookupUsed: boolean("referenceLookupUsed").default(false).notNull(),
+  referenceMatchStatus: varchar("referenceMatchStatus", { length: 64 }).default("none").notNull(),
+  clarificationCount: integer("clarificationCount").default(0).notNull(),
+  totalAiCalls: integer("totalAiCalls").default(0).notNull(),
+  estimatedPromptTokens: integer("estimatedPromptTokens").default(0).notNull(),
+  estimatedCompletionTokens: integer("estimatedCompletionTokens").default(0).notNull(),
+  estimatedTotalTokens: integer("estimatedTotalTokens").default(0).notNull(),
+  estimatedCostUsd: numeric("estimatedCostUsd", { precision: 10, scale: 6 }),
+  finalSafeToDriveDecision: varchar("finalSafeToDriveDecision", { length: 64 }),
+  confirmedOutcomeStatus: varchar("confirmedOutcomeStatus", { length: 64 }),
+  managerConfirmed: boolean("managerConfirmed").default(false).notNull(),
+  mechanicConfirmed: boolean("mechanicConfirmed").default(false).notNull(),
+  adminComparisonUsed: boolean("adminComparisonUsed").default(false).notNull(),
+  metadata: jsonb("metadata"),
+  createdAt: dateTimestamp().defaultNow().notNull(),
+});
+
+export const diagnosticModelComparisons = pgTable("diagnosticModelComparisons", {
+  id: serial("id").primaryKey(),
+  diagnosticCaseId: varchar("diagnosticCaseId", { length: 128 }).notNull(),
+  fleetId: integer("fleetId"),
+  vehicleId: varchar("vehicleId", { length: 64 }),
+  requestedByUserId: integer("requestedByUserId").notNull(),
+  lowCostModel: varchar("lowCostModel", { length: 255 }),
+  advancedModel: varchar("advancedModel", { length: 255 }),
+  lowCostOutput: jsonb("lowCostOutput"),
+  advancedOutput: jsonb("advancedOutput"),
+  selectedOutput: varchar("selectedOutput", { length: 32 }),
+  estimatedCostUsd: numeric("estimatedCostUsd", { precision: 10, scale: 6 }),
+  createdAt: dateTimestamp().defaultNow().notNull(),
+});
+
 export const repairOutcomes = pgTable("repairOutcomes", {
   id: serial("id").primaryKey(),
   fleetId: integer("fleetId").notNull(),

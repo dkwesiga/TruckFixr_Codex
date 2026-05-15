@@ -16,21 +16,7 @@ export type DriverVehicleRecord = {
 const DRIVER_VEHICLES_KEY = "truckfixr:driver-vehicles";
 const MAX_SAFE_TEMP_VEHICLE_ID = 2_000_000_000;
 
-const DEFAULT_DRIVER_VEHICLES = [
-  {
-    id: 42,
-    fleetId: 1,
-    label: "Unit 487964",
-    vin: "1XPWD49X91D487964",
-    licensePlate: "ABC-1234",
-    make: "Peterbilt",
-    engineMake: "PACCAR",
-    model: "579",
-    year: 2022,
-    mileage: 245320,
-    status: "Operational" as const,
-  },
-] satisfies DriverVehicleRecord[];
+const DEFAULT_DRIVER_VEHICLES: DriverVehicleRecord[] = [];
 
 function canUseStorage() {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
@@ -74,7 +60,7 @@ export function loadDriverVehicles(): DriverVehicleRecord[] {
       .filter((item): item is Partial<DriverVehicleRecord> => Boolean(item && typeof item === "object"))
       .map((item, index) => ({
         id: normalizeDriverVehicleId(item.id, Date.now() + index),
-        fleetId: typeof item.fleetId === "number" ? item.fleetId : 1,
+        fleetId: typeof item.fleetId === "number" && item.fleetId > 0 ? item.fleetId : 0,
         label: typeof item.label === "string" ? item.label : "Assigned vehicle",
         vin: typeof item.vin === "string" ? item.vin : "",
         licensePlate: typeof item.licensePlate === "string" ? item.licensePlate : "",
@@ -85,16 +71,17 @@ export function loadDriverVehicles(): DriverVehicleRecord[] {
         mileage: typeof item.mileage === "number" ? item.mileage : 0,
         assetType:
           item.assetType === "straight_truck" ||
-          item.assetType === "trailer" ||
-          item.assetType === "other"
+          item.assetType === "trailer"
             ? item.assetType
+            : item.assetType === "other"
+              ? ("other" as const)
             : ("tractor" as const),
         status:
           item.status === "Needs Review"
             ? ("Needs Review" as const)
             : ("Operational" as const),
       }))
-      .filter((item) => item.vin.trim().length > 0);
+      .filter((item) => item.vin.trim().length > 0 && item.fleetId > 0);
 
     if (normalized.length > 0) {
       window.localStorage.setItem(DRIVER_VEHICLES_KEY, JSON.stringify(normalized));

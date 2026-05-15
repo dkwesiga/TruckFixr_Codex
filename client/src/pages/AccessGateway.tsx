@@ -14,14 +14,14 @@ const accessCards = [
   },
   {
     title: "Start a 30-day trial",
-    body: "For fleet owners and managers who want to try TruckFixr with a small fleet. No credit card required.",
+    body: "For fleet owners and managers who want to try TruckFixr's AI diagnosis workflow with a small fleet. No credit card required.",
     href: "/access/start-trial",
     cta: "Start Trial",
     icon: CheckCircle2,
   },
   {
     title: "Enter pilot code",
-    body: "For selected fleets and existing customers invited by TruckFixr. Pilot access gives you higher usage limits during your 30-day pilot.",
+    body: "Have a pilot code from TruckFixr? Enter it to unlock your 30-day pilot with expanded AI diagnosis and workflow limits.",
     href: "/access/pilot-code",
     cta: "Enter Pilot Code",
     icon: Ticket,
@@ -55,12 +55,12 @@ export default function AccessGateway() {
         </header>
 
         <section className="mx-auto max-w-3xl text-center">
-          <p className="text-xs font-black uppercase tracking-[0.18em] text-[#A04100]">Access TruckFixr Fleet AI</p>
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-[#A04100]">Access TruckFixr</p>
           <h1 className="mt-3 font-['Manrope'] text-4xl font-black tracking-[-0.04em] text-[#00263F] sm:text-5xl">
             Choose the option that matches how you were invited or how you want to start.
           </h1>
           <p className="mt-4 text-base leading-8 text-[#42474E]">
-            Book a Demo remains the primary sales path. This page is for users who already have a reason to enter the app.
+            Looking for a walkthrough before creating access? Book a demo from our main site. If you already have an invite, pilot code, or trial path, choose the option below to enter TruckFixr.
           </p>
         </section>
 

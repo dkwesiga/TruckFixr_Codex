@@ -790,7 +790,7 @@ export default function LandingSaaS() {
                     <div className="mt-5 flex items-start gap-3 rounded-xl border border-white/10 bg-[#00263F] px-4 py-4">
                       <BrainCircuit className="mt-1 h-5 w-5 text-[#E32636]" />
                       <p className="text-sm leading-6 text-slate-200">
-                        TADIS flags a likely cooling-system risk. Hold dispatch, inspect coolant level, belt tension, fan response,
+                        TruckFixr AI flags a likely cooling-system risk. Hold dispatch, inspect coolant level, belt tension, fan response,
                         and recent repair history.
                       </p>
                     </div>

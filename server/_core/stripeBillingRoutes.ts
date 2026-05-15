@@ -9,11 +9,32 @@ import {
   verifyStripeWebhookSignature,
 } from "../services/stripeBilling";
 import { findUserIdByStripeReference, getSubscriptionState, syncSubscriptionState } from "../services/subscriptions";
+import type { BillingStatus } from "../../shared/billing";
+
+const processedWebhookEventIds = new Set<string>();
+
+function normalizeStripeBillingStatus(value: unknown): BillingStatus {
+  if (value === "trialing") return "trialing";
+  if (value === "past_due") return "past_due";
+  if (value === "canceled") return "canceled";
+  if (value === "incomplete") return "incomplete";
+  if (value === "incomplete_expired") return "incomplete_expired";
+  if (value === "unpaid") return "unpaid";
+  return "active";
+}
 
 export async function processStripeWebhookEvent(event: {
+  id?: string;
   type: string;
   data: { object: Record<string, unknown> };
 }) {
+  if (event.id) {
+    if (processedWebhookEventIds.has(event.id)) {
+      return;
+    }
+    processedWebhookEventIds.add(event.id);
+  }
+
   switch (event.type) {
     case "checkout.session.completed": {
       const object = event.data.object;
@@ -38,7 +59,7 @@ export async function processStripeWebhookEvent(event: {
             fleetId: truckfixrSnapshot.companyId,
             tier: truckfixrSnapshot.planKey === "fleet_pro" || truckfixrSnapshot.planKey === "custom_fleet" ? "fleet" : truckfixrSnapshot.planKey === "free_trial" ? "free" : "pro",
             billingCadence: truckfixrSnapshot.billingInterval === "annual" ? "annual" : "monthly",
-            billingStatus: truckfixrSnapshot.billingStatus === "trialing" ? "trialing" : "active",
+            billingStatus: normalizeStripeBillingStatus(truckfixrSnapshot.billingStatus),
             stripeCustomerId: truckfixrSnapshot.stripeCustomerId,
             stripeSubscriptionId: truckfixrSnapshot.stripeSubscriptionId,
             stripePriceId: truckfixrSnapshot.stripePriceId,
@@ -87,7 +108,7 @@ export async function processStripeWebhookEvent(event: {
               fleetId: truckfixrSnapshot.companyId,
               tier: truckfixrSnapshot.planKey === "fleet_pro" || truckfixrSnapshot.planKey === "custom_fleet" ? "fleet" : truckfixrSnapshot.planKey === "free_trial" ? "free" : "pro",
               billingCadence: truckfixrSnapshot.billingInterval === "annual" ? "annual" : "monthly",
-              billingStatus: truckfixrSnapshot.billingStatus === "trialing" ? "trialing" : "active",
+              billingStatus: normalizeStripeBillingStatus(truckfixrSnapshot.billingStatus),
               stripeCustomerId: truckfixrSnapshot.stripeCustomerId,
               stripeSubscriptionId: truckfixrSnapshot.stripeSubscriptionId,
               stripePriceId: truckfixrSnapshot.stripePriceId,

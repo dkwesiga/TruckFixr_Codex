@@ -1,4 +1,5 @@
 import { getDb } from './server/db';
+import { randomUUID } from 'crypto';
 import { driverInvitations, users, vehicles } from './drizzle/schema';
 import { eq, gt, or, sql } from 'drizzle-orm';
 import { TRPCError } from '@trpc/server';
@@ -23,6 +24,7 @@ export const addVehicle = async (input: any, ctx: any) => {
   }
 
   const [vehicle] = await db.insert(vehicles).values({
+    id: `veh_${randomUUID()}`,
     assetType: input.assetType,
     unitNumber: input.unitNumber,
     fleetId: ctx.user.fleetId,

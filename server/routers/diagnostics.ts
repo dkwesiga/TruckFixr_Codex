@@ -1,37 +1,45 @@
 import { z } from "zod";
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { activityLogs, defects, inspections, maintenanceLogs, tadisAlerts, users, vehicles } from "../../drizzle/schema";
+import {
+  activityLogs,
+  defects,
+  inspectionChecklistResponses,
+  inspections,
+  maintenanceLogs,
+  repairOutcomes,
+  tadisAlerts,
+  users,
+  vehicles,
+} from "../../drizzle/schema";
 import {
   ClarificationTurnSchema,
   DiagnosticVehicleSchema,
   SimilarCaseSchema,
-  analyzeDiagnosticWithAi,
-  mapDiagnosticRiskToAction,
-  mapDiagnosticRiskToUrgency,
 } from "../services/tadisCore";
-import { getDiagnosticComplianceStatus, mergeComplianceStatus } from "../../shared/compliance";
+import { mergeComplianceStatus } from "../../shared/compliance";
 import { sendEmail } from "../services/email";
 import { extractPhotoEvidenceText } from "../services/ocr";
-import { assertDiagnosticsWithinPlan, recordDiagnosticUsage } from "../services/subscriptions";
+import {
+  assertDiagnosticsWithinPlan,
+  getSubscriptionState,
+  recordDiagnosticUsage,
+} from "../services/subscriptions";
 import { recordPilotMilestone } from "../services/pilotAccess";
 import { canDiagnoseVehicle, canManageVehicleAccess } from "../services/vehicleAccess";
-
-const fallbackDiagnosticVehicles = {
-  42: {
-    id: 42,
-    make: "Peterbilt",
-    model: "579",
-    year: 2022,
-    mileage: 245320,
-    engineHours: 0,
-    status: "active",
-    configuration: { airBrakes: true },
-    complianceStatus: "green" as const,
-  },
-};
+import { insertAiQualityReviewLog } from "../services/aiQualityReviewLog";
+import { insertDiagnosticAiRequestLog } from "../services/diagnosticAiRequestLogs";
+import {
+  normalizeFaultCodes,
+  runDiagnosisWorkflow,
+  summarizeMaintenanceRecord,
+  toLegacyDiagnosisAliases,
+  type DiagnosisOutput,
+  type MinimalDiagnosisContext,
+} from "../services/diagnosisWorkflow";
+import { preprocessDiagnosticInput } from "../services/faultCodeReferences";
 
 const recentPartKeywords = [
   "hose",
@@ -64,8 +72,60 @@ function extractRecentParts(description: string | null | undefined) {
   return recentPartKeywords.filter((part) => normalized.includes(part));
 }
 
+export function tokenizeDiagnosticText(text: string) {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((word) => word.length > 2)
+  );
+}
+
+export function jaccardSimilarity(a: Set<string>, b: Set<string>) {
+  if (a.size === 0 || b.size === 0) return 0;
+
+  let intersection = 0;
+  for (const token of Array.from(a)) {
+    if (b.has(token)) intersection += 1;
+  }
+
+  const union = a.size + b.size - intersection;
+  return union > 0 ? intersection / union : 0;
+}
+
+export function scoreHistoricalDiagnosticCase(input: {
+  caseSignals: string[];
+  caseFaultCodes: string[];
+  currentSymptoms: string[];
+  currentFaultCodes: string[];
+}) {
+  const symptomScore = jaccardSimilarity(
+    tokenizeDiagnosticText(input.caseSignals.join(" ")),
+    tokenizeDiagnosticText(input.currentSymptoms.join(" "))
+  );
+
+  const normalizedCaseCodes = new Set(normalizeFaultCodes(input.caseFaultCodes));
+  const normalizedCurrentCodes = new Set(normalizeFaultCodes(input.currentFaultCodes));
+  let codeMatches = 0;
+  for (const code of Array.from(normalizedCaseCodes)) {
+    if (normalizedCurrentCodes.has(code)) codeMatches += 1;
+  }
+  const codeUnion = normalizedCaseCodes.size + normalizedCurrentCodes.size - codeMatches;
+  const codeScore = codeUnion > 0 ? codeMatches / codeUnion : 0;
+
+  return Math.min(1, symptomScore * 0.7 + codeScore * 0.3);
+}
+
 function getVehicleLifecycleStatus(complianceStatus: "green" | "yellow" | "red") {
   return complianceStatus === "red" ? "maintenance" : "active";
+}
+
+function toDiagnosisPlanType(tier: string) {
+  if (tier === "fleet") return "fleet" as const;
+  if (tier === "pro") return "pro" as const;
+  if (tier === "pilot" || tier === "pilot_access") return "pilot_access" as const;
+  return "free" as const;
 }
 
 async function resolveManagerContact(input: {
@@ -103,16 +163,7 @@ async function resolveManagerContact(input: {
 }
 
 function buildDiagnosticManagerSummary(input: {
-  analysis: {
-    systems_affected: string[];
-    possible_causes: Array<{ cause: string; probability: number }>;
-    confidence_score: number;
-    recommended_tests: string[];
-    recommended_fix: string;
-    risk_level: string;
-    maintenance_recommendations?: string[];
-    compliance_impact?: string;
-  };
+  analysis: DiagnosisOutput;
   vehicleContext: {
     id: string;
     make?: string;
@@ -123,15 +174,15 @@ function buildDiagnosticManagerSummary(input: {
   symptoms: string[];
   faultCodes: string[];
   driverNotes?: string;
-  diagnosticDefectId?: number | null;
+    diagnosticDefectId?: number | null;
 }) {
   const vehicleLabel = [input.vehicleContext.year, input.vehicleContext.make, input.vehicleContext.model]
     .filter(Boolean)
     .join(" ")
     .trim() || `Vehicle ${input.vehicleContext.id}`;
-  const topCauses = input.analysis.possible_causes
+  const topCauses = input.analysis.likely_causes
     .slice(0, 3)
-    .map((item) => `${item.cause} (${item.probability}%)`);
+    .map((item) => `${item.cause} (${item.likelihood}, ${item.probability}%)`);
 
   return {
     subject: `TruckFixr Diagnosis Summary - ${vehicleLabel}`,
@@ -146,12 +197,13 @@ function buildDiagnosticManagerSummary(input: {
       `Confidence score: ${input.analysis.confidence_score}%`,
       `Risk level: ${input.analysis.risk_level}`,
       `Compliance impact: ${input.analysis.compliance_impact ?? "none"}`,
+      `Safe-to-drive decision: ${input.analysis.safe_to_drive_decision}`,
       input.analysis.recommended_tests.length > 0
         ? `Recommended tests: ${input.analysis.recommended_tests.join("; ")}`
         : "",
-      input.analysis.recommended_fix ? `Recommended fix: ${input.analysis.recommended_fix}` : "",
-      input.analysis.maintenance_recommendations && input.analysis.maintenance_recommendations.length > 0
-        ? `Maintenance recommendations: ${input.analysis.maintenance_recommendations.join("; ")}`
+      input.analysis.likely_parts.length > 0 ? `Likely parts: ${input.analysis.likely_parts.join("; ")}` : "",
+      input.analysis.maintenance_recommendation
+        ? `Maintenance recommendation: ${input.analysis.maintenance_recommendation}`
         : "",
       input.diagnosticDefectId ? `Diagnostic action record: defect #${input.diagnosticDefectId}` : "",
       "Please review this case in TruckFixr for next action.",
@@ -169,12 +221,13 @@ function buildDiagnosticManagerSummary(input: {
       `<p>Confidence score: ${input.analysis.confidence_score}%</p>`,
       `<p>Risk level: ${input.analysis.risk_level}</p>`,
       `<p>Compliance impact: ${input.analysis.compliance_impact ?? "none"}</p>`,
+      `<p>Safe-to-drive decision: ${input.analysis.safe_to_drive_decision}</p>`,
       input.analysis.recommended_tests.length > 0
         ? `<p>Recommended tests: ${input.analysis.recommended_tests.join("; ")}</p>`
         : "",
-      input.analysis.recommended_fix ? `<p>Recommended fix: ${input.analysis.recommended_fix}</p>` : "",
-      input.analysis.maintenance_recommendations && input.analysis.maintenance_recommendations.length > 0
-        ? `<p>Maintenance recommendations: ${input.analysis.maintenance_recommendations.join("; ")}</p>`
+      input.analysis.likely_parts.length > 0 ? `<p>Likely parts: ${input.analysis.likely_parts.join("; ")}</p>` : "",
+      input.analysis.maintenance_recommendation
+        ? `<p>Maintenance recommendation: ${input.analysis.maintenance_recommendation}</p>`
         : "",
       input.diagnosticDefectId ? `<p>Diagnostic action record: defect #${input.diagnosticDefectId}</p>` : "",
       "<p>Please review this case in TruckFixr for next action.</p>",
@@ -184,17 +237,24 @@ function buildDiagnosticManagerSummary(input: {
   };
 }
 
-function inferHistoricalCauseId(text: string) {
+export function inferHistoricalCauseId(text: string) {
   const normalized = text.toLowerCase();
-  if (/coolant|overheat|thermostat|radiator|fan/.test(normalized)) return "coolant_leak";
-  if (/abs|wheel speed/.test(normalized)) return "abs_sensor_fault";
-  if (/brake|grinding|rotor|pad/.test(normalized)) return "brake_friction_wear";
-  if (/air leak|low air|pressure/.test(normalized)) return "air_brake_leak";
+  if (/def|scr|nox|aftertreatment|dpf|regen|emission|derate/.test(normalized)) return "aftertreatment_derate";
+  if (/coolant|overheat|thermostat|radiator|fan|water pump/.test(normalized)) return "cooling_system_fault";
+  if (/oil pressure|low oil|lubrication|bearing|engine knock/.test(normalized)) return "engine_lubrication_fault";
+  if (/abs|wheel speed|tone ring/.test(normalized)) return "abs_sensor_fault";
+  if (/brake chamber|air leak|low air|air pressure|compressor/.test(normalized)) return "air_brake_leak";
+  if (/brake|grinding|rotor|pad|drum|shoe/.test(normalized)) return "brake_friction_wear";
   if (/steer|wander|drag link|tie rod|free play/.test(normalized)) return "steering_linkage_wear";
-  if (/tire|wheel|vibration|shake|shimmy/.test(normalized)) return "tire_or_wheel_issue";
-  if (/fuel|misfire|rough idle|power/.test(normalized)) return "fuel_delivery_issue";
-  if (/battery|alternator|voltage|charging/.test(normalized)) return "charging_system_fault";
-  return "fuel_delivery_issue";
+  if (/tire|wheel|vibration|shake|shimmy|wheel end|bearing/.test(normalized)) return "tire_or_wheel_issue";
+  if (/fuel|misfire|rough idle|injector|fuel filter|rail pressure/.test(normalized)) return "fuel_delivery_issue";
+  if (/battery|alternator|voltage|charging|no start|starter/.test(normalized)) return "charging_system_fault";
+  if (/transmission|clutch|gear|shift/.test(normalized)) return "transmission_driveline_fault";
+  if (/hydraulic|pto|pump|cylinder|dump body|hose leak/.test(normalized)) return "hydraulic_pto_fault";
+  if (/light|lamp|marker|turn signal|brake light|wiring/.test(normalized)) return "lighting_electrical_fault";
+  if (/reefer|refrigeration|temperature control|thermo king|carrier/.test(normalized)) return "reefer_unit_fault";
+  if (/annual|safety certificate|inspection due|mto|compliance/.test(normalized)) return "compliance_inspection_due";
+  return "unclassified";
 }
 
 const vehicleSnapshotSchema = DiagnosticVehicleSchema.extend({
@@ -253,19 +313,18 @@ async function resolveVehicleContext(
     };
   }
 
-  const numericVehicleId = Number(vehicleId);
-  const fallback = Number.isFinite(numericVehicleId)
-    ? fallbackDiagnosticVehicles[numericVehicleId as keyof typeof fallbackDiagnosticVehicles]
-    : undefined;
-  if (fallback) return fallback;
-
   throw new TRPCError({
     code: "NOT_FOUND",
     message: "Diagnostics require a valid vehicle. Select an existing vehicle or add one before starting diagnosis.",
   });
 }
 
-async function loadDiagnosticSupportData(fleetId: number, vehicleId: string) {
+async function loadDiagnosticSupportData(
+  fleetId: number,
+  vehicleId: string,
+  currentSymptoms: string[] = [],
+  currentFaultCodes: string[] = []
+) {
   const db = await getDb();
   if (!db) {
     return {
@@ -281,9 +340,6 @@ async function loadDiagnosticSupportData(fleetId: number, vehicleId: string) {
     };
   }
 
-  const numericVehicleId = Number(vehicleId);
-  const hasNumericVehicleId = Number.isFinite(numericVehicleId);
-
   const safeQuery = async <T,>(label: string, query: Promise<T>, fallback: T): Promise<T> => {
     try {
       return await query;
@@ -293,7 +349,7 @@ async function loadDiagnosticSupportData(fleetId: number, vehicleId: string) {
     }
   };
 
-  const [defectRows, inspectionRows, repairRows, feedbackRows] = await Promise.all([
+  const [defectRows, inspectionRows, repairRows, feedbackRows, repairOutcomeRows] = await Promise.all([
     safeQuery(
       "defect history",
       db
@@ -306,26 +362,22 @@ async function loadDiagnosticSupportData(fleetId: number, vehicleId: string) {
     ),
     safeQuery(
       "inspection history",
-      hasNumericVehicleId
-        ? db
-            .select()
-            .from(inspections)
-            .where(eq(inspections.vehicleId, numericVehicleId))
-            .orderBy(desc(inspections.submittedAt))
-            .limit(6)
-        : Promise.resolve([]),
+      db
+        .select()
+        .from(inspections)
+        .where(eq(inspections.vehicleId, vehicleId))
+        .orderBy(desc(inspections.submittedAt))
+        .limit(6),
       []
     ),
     safeQuery(
       "maintenance history",
-      hasNumericVehicleId
-        ? db
-            .select()
-            .from(maintenanceLogs)
-            .where(eq(maintenanceLogs.vehicleId, numericVehicleId))
-            .orderBy(desc(maintenanceLogs.createdAt))
-            .limit(8)
-        : Promise.resolve([]),
+      db
+        .select()
+        .from(maintenanceLogs)
+        .where(eq(maintenanceLogs.vehicleId, vehicleId))
+        .orderBy(desc(maintenanceLogs.createdAt))
+        .limit(8),
       []
     ),
     safeQuery(
@@ -336,6 +388,16 @@ async function loadDiagnosticSupportData(fleetId: number, vehicleId: string) {
         .where(eq(activityLogs.fleetId, fleetId))
         .orderBy(desc(activityLogs.createdAt))
         .limit(20),
+      []
+    ),
+    safeQuery(
+      "repair outcomes",
+      db
+        .select()
+        .from(repairOutcomes)
+        .where(and(eq(repairOutcomes.fleetId, fleetId), eq(repairOutcomes.vehicleId, vehicleId)))
+        .orderBy(desc(repairOutcomes.createdAt))
+        .limit(12),
       []
     ),
   ]);
@@ -374,6 +436,24 @@ async function loadDiagnosticSupportData(fleetId: number, vehicleId: string) {
       outcome: row.completedAt ? "repair completed" : "repair pending",
     }));
 
+  const confirmedRepairOutcomes = repairOutcomeRows.map((row) => {
+    const parts = Array.isArray(row.partsReplaced)
+      ? row.partsReplaced.filter((value): value is string => typeof value === "string")
+      : [];
+
+    return {
+      summary: [row.confirmedFault, row.repairPerformed].filter(Boolean).join(" - "),
+      category: "repair_outcome",
+      status: row.aiDiagnosisCorrect ?? "unknown",
+      occurredAt:
+        row.returnedToServiceAt?.toISOString?.() ??
+        row.createdAt?.toISOString?.() ??
+        undefined,
+      outcome: row.repairPerformed,
+      parts,
+    };
+  });
+
   const maintenanceHistory = repairRows
     .filter((row) => row.type !== "repair")
     .map((row) => ({
@@ -403,7 +483,15 @@ async function loadDiagnosticSupportData(fleetId: number, vehicleId: string) {
     }));
   });
 
-  const priorDiagnostics = feedbackRows
+  const priorDiagnostics = [
+    ...confirmedRepairOutcomes.map((row) => ({
+      summary: row.summary,
+      category: row.category,
+      status: row.status,
+      occurredAt: row.occurredAt,
+      outcome: row.outcome,
+    })),
+    ...feedbackRows
     .filter((row) => String(row.entityType) === "vehicle" && String(row.entityId) === vehicleId && row.action === "diagnostic_feedback")
     .map((row) => {
       const details =
@@ -419,7 +507,8 @@ async function loadDiagnosticSupportData(fleetId: number, vehicleId: string) {
         occurredAt: row.createdAt?.toISOString?.() ?? undefined,
         outcome: typeof details.confirmedFix === "string" ? details.confirmedFix : undefined,
       };
-    });
+    }),
+  ];
 
   const complianceHistory = inspectionRows.map((row) => ({
     summary: `Compliance state ${row.complianceStatus} recorded on inspection ${row.id}`,
@@ -443,9 +532,44 @@ async function loadDiagnosticSupportData(fleetId: number, vehicleId: string) {
       confirmedFix: row.status === "resolved" ? "Historical repair completed" : undefined,
       resolutionSuccess: row.status === "resolved",
       risk_level: row.severity === "critical" || row.severity === "high" ? "high" : row.severity === "medium" ? "medium" : "low",
-      similarity: 0,
+      similarity: scoreHistoricalDiagnosticCase({
+        caseSignals: [row.title, row.description ?? ""].filter(Boolean),
+        caseFaultCodes: [],
+        currentSymptoms,
+        currentFaultCodes,
+      }),
     })
   );
+
+  repairOutcomeRows.forEach((row, index) => {
+    const parts = Array.isArray(row.partsReplaced)
+      ? row.partsReplaced.filter((value): value is string => typeof value === "string")
+      : [];
+    const caseSignals = [row.confirmedFault, row.repairPerformed, row.repairNotes ?? "", ...parts].filter(Boolean);
+
+    similarCases.push(
+      SimilarCaseSchema.parse({
+        id: `repair-outcome-${row.id}-${index}`,
+        source: "historical",
+        causeId: inferHistoricalCauseId(caseSignals.join(" ")),
+        cause: row.confirmedFault,
+        systems_affected: [],
+        symptomSignals: caseSignals,
+        faultCodes: [],
+        summary: [row.confirmedFault, row.repairPerformed].filter(Boolean).join(" - "),
+        resolution: row.repairPerformed,
+        confirmedFix: row.repairPerformed,
+        resolutionSuccess: row.aiDiagnosisCorrect !== "no",
+        risk_level: "medium",
+        similarity: scoreHistoricalDiagnosticCase({
+          caseSignals,
+          caseFaultCodes: [],
+          currentSymptoms,
+          currentFaultCodes,
+        }),
+      })
+    );
+  });
 
   feedbackRows
     .filter((row) => String(row.entityType) === "vehicle" && String(row.entityId) === vehicleId && row.action === "diagnostic_feedback")
@@ -486,7 +610,12 @@ async function loadDiagnosticSupportData(fleetId: number, vehicleId: string) {
               : details.complianceImpact === "warning"
                 ? "medium"
                 : "low",
-          similarity: 0,
+          similarity: scoreHistoricalDiagnosticCase({
+            caseSignals: [cause, confirmedFix, ...symptoms].filter(Boolean),
+            caseFaultCodes: faultCodes,
+            currentSymptoms,
+            currentFaultCodes,
+          }),
         })
       );
     });
@@ -496,12 +625,253 @@ async function loadDiagnosticSupportData(fleetId: number, vehicleId: string) {
     priorDefects,
     recentInspections,
     recentRepairs,
-    repairHistory,
+    repairHistory: [...repairHistory, ...confirmedRepairOutcomes],
     maintenanceHistory,
     recentPartsReplaced,
     complianceHistory,
-    similarCases,
+    similarCases: similarCases.sort((a, b) => b.similarity - a.similarity),
   };
+}
+
+function inspectionStatusForContext(row: {
+  complianceStatus?: string | null;
+  overallVehicleResult?: string | null;
+  status?: string | null;
+}) {
+  const text = [row.complianceStatus, row.overallVehicleResult, row.status]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return /red|defect|failed|fail|flagged|needs_review/.test(text) ? "failed" as const : "passed" as const;
+}
+
+async function buildMinimalDiagnosisContext(input: {
+  fleetId: number;
+  vehicleId: string;
+  vehicleContext: Awaited<ReturnType<typeof resolveVehicleContext>>;
+  symptoms: string[];
+  faultCodes: string[];
+}): Promise<MinimalDiagnosisContext> {
+  const db = await getDb();
+  const vehicle = input.vehicleContext;
+  const baseContext: MinimalDiagnosisContext = {
+    vehicle: {
+      make: vehicle.make ?? "",
+      model: vehicle.model ?? "",
+      year: vehicle.year ? String(vehicle.year) : "",
+      engine:
+        "engine" in vehicle && typeof vehicle.engine === "string"
+          ? vehicle.engine
+          : "engineMake" in vehicle && typeof vehicle.engineMake === "string"
+            ? vehicle.engineMake
+            : "",
+    },
+    user_report: {
+      symptoms: input.symptoms.join("; "),
+      fault_codes: normalizeFaultCodes(input.faultCodes),
+    },
+    maintenance_history: [],
+    last_daily_inspection: null,
+    clarification_history: [],
+    fault_code_reference: {
+      match_status: "none",
+      references: [],
+    },
+  };
+
+  if (!db) {
+    return baseContext;
+  }
+
+  const safeQuery = async <T,>(label: string, query: Promise<T>, fallback: T) => {
+    try {
+      return await query;
+    } catch (error) {
+      console.warn(`[Diagnostics] Unable to load compact ${label}; continuing:`, error);
+      return fallback;
+    }
+  };
+
+  const [maintenanceRows, inspectionRows, confirmedFeedbackRows, repairOutcomeRows] = await Promise.all([
+    safeQuery(
+      "maintenance history",
+      db
+        .select()
+        .from(maintenanceLogs)
+        .where(eq(maintenanceLogs.vehicleId, input.vehicleId))
+        .orderBy(desc(maintenanceLogs.createdAt))
+        .limit(3),
+      []
+    ),
+    safeQuery(
+      "daily inspection",
+      db
+        .select()
+        .from(inspections)
+        .where(eq(inspections.vehicleId, input.vehicleId))
+        .orderBy(desc(inspections.submittedAt))
+        .limit(1),
+      []
+    ),
+    safeQuery(
+      "confirmed feedback outcomes",
+      db
+        .select()
+        .from(activityLogs)
+        .where(eq(activityLogs.fleetId, input.fleetId))
+        .orderBy(desc(activityLogs.createdAt))
+        .limit(30),
+      []
+    ),
+    safeQuery(
+      "normalized repair outcomes",
+      db
+        .select()
+        .from(repairOutcomes)
+        .where(and(eq(repairOutcomes.fleetId, input.fleetId), eq(repairOutcomes.vehicleId, input.vehicleId)))
+        .orderBy(desc(repairOutcomes.createdAt))
+        .limit(3),
+      []
+    ),
+  ]);
+
+  const lastInspection = inspectionRows[0];
+  const defectsForInspection = lastInspection
+    ? await safeQuery(
+        "inspection defects",
+        db
+          .select({
+            defectDescription: inspectionChecklistResponses.defectDescription,
+            checklistItemLabel: inspectionChecklistResponses.checklistItemLabel,
+            result: inspectionChecklistResponses.result,
+          })
+          .from(inspectionChecklistResponses)
+          .where(
+            and(
+              eq(inspectionChecklistResponses.inspectionId, lastInspection.id),
+              ne(inspectionChecklistResponses.result, "pass")
+            )
+          )
+          .limit(8),
+        []
+      )
+    : [];
+
+  const confirmedFeedbackReferences = confirmedFeedbackRows
+    .filter((row) => {
+      if (row.action !== "diagnostic_feedback") return false;
+      if (String(row.entityType) !== "vehicle" || String(row.entityId) !== input.vehicleId) return false;
+      const details = row.details && typeof row.details === "object" ? row.details as Record<string, unknown> : {};
+      return details.confirmationState === "manager_confirmed" || details.confirmationState === "mechanic_confirmed";
+    })
+    .slice(0, 3)
+    .map((row) => {
+      const details = row.details && typeof row.details === "object" ? row.details as Record<string, unknown> : {};
+      return {
+        date: row.createdAt?.toISOString?.().slice(0, 10) ?? "",
+        summary:
+          typeof details.summary === "string"
+            ? details.summary.slice(0, 180)
+            : [details.cause, details.confirmedFix].filter(Boolean).join(" - ").slice(0, 180),
+      };
+    })
+    .filter((row) => row.summary);
+
+  const normalizedRepairReferences = repairOutcomeRows
+    .map((row) => {
+      const parts = Array.isArray(row.partsReplaced)
+        ? row.partsReplaced.filter((value): value is string => typeof value === "string")
+        : [];
+      const partsSummary = parts.length > 0 ? ` Parts: ${parts.join(", ")}.` : "";
+      const aiAccuracy =
+        row.aiDiagnosisCorrect && row.aiDiagnosisCorrect !== "unknown"
+          ? ` AI diagnosis: ${row.aiDiagnosisCorrect}.`
+          : "";
+
+      return {
+        date:
+          row.returnedToServiceAt?.toISOString?.().slice(0, 10) ??
+          row.createdAt?.toISOString?.().slice(0, 10) ??
+          "",
+        summary: `${row.confirmedFault}: ${row.repairPerformed}.${partsSummary}${aiAccuracy}`.slice(0, 180),
+      };
+    })
+    .filter((row) => row.summary);
+
+  const confirmedOutcomeReferences = [
+    ...normalizedRepairReferences,
+    ...confirmedFeedbackReferences,
+  ].slice(0, 3);
+
+  return {
+    ...baseContext,
+    maintenance_history: maintenanceRows.map((row) =>
+      summarizeMaintenanceRecord({
+        date: row.completedAt ?? row.createdAt,
+        summary: row.description || `${row.type} maintenance recorded`,
+        odometer: "",
+      })
+    ),
+    last_daily_inspection: lastInspection
+      ? {
+          date:
+            lastInspection.submittedAt?.toISOString?.().slice(0, 10) ??
+            lastInspection.inspectionDate?.toISOString?.().slice(0, 10) ??
+            "",
+          status: inspectionStatusForContext(lastInspection),
+          defects: defectsForInspection
+            .map((row) => row.defectDescription || row.checklistItemLabel)
+            .filter((value): value is string => Boolean(value))
+            .slice(0, 8),
+        }
+      : null,
+    ...(confirmedOutcomeReferences.length > 0
+      ? { confirmed_outcome_references: confirmedOutcomeReferences }
+      : {}),
+  };
+}
+
+function complianceStatusFromDiagnosis(analysis: DiagnosisOutput) {
+  if (
+    analysis.risk_level === "critical" ||
+    analysis.safe_to_drive_decision === "tow_or_repair_immediately" ||
+    analysis.compliance_impact === "critical"
+  ) {
+    return "red" as const;
+  }
+  if (
+    analysis.risk_level === "high" ||
+    analysis.risk_level === "medium" ||
+    analysis.safe_to_drive_decision === "stop_and_inspect" ||
+    analysis.safe_to_drive_decision === "drive_with_caution" ||
+    analysis.compliance_impact === "warning"
+  ) {
+    return "yellow" as const;
+  }
+  return "green" as const;
+}
+
+function tadisUrgencyFromDiagnosis(analysis: DiagnosisOutput) {
+  if (analysis.risk_level === "critical" || analysis.safe_to_drive_decision === "tow_or_repair_immediately") {
+    return "Critical" as const;
+  }
+  if (analysis.risk_level === "high" || analysis.safe_to_drive_decision === "stop_and_inspect") {
+    return "Attention" as const;
+  }
+  return "Monitor" as const;
+}
+
+function tadisActionFromDiagnosis(analysis: DiagnosisOutput) {
+  if (
+    analysis.safe_to_drive_decision === "tow_or_repair_immediately" ||
+    analysis.safe_to_drive_decision === "stop_and_inspect"
+  ) {
+    return "Stop Now" as const;
+  }
+  if (analysis.safe_to_drive_decision === "drive_with_caution") {
+    return "Inspect Soon" as const;
+  }
+  return "Keep Running" as const;
 }
 
 export const diagnosticsRouter = router({
@@ -510,20 +880,53 @@ export const diagnosticsRouter = router({
       z.object({
         fleetId: z.number(),
         vehicleId: vehicleIdInputSchema,
-        vehicleContext: DiagnosticVehicleSchema.optional(),
+        vehicleContext: vehicleSnapshotSchema.optional(),
         symptoms: z.array(z.string().trim().min(1)).min(1, "At least one symptom is required"),
         faultCodes: z.array(z.string().trim().min(1)).default([]),
         driverNotes: z.string().trim().optional(),
         operatingConditions: z.string().trim().optional(),
         photoUrls: z.array(z.string().trim().min(1)).default([]),
         clarificationHistory: z.array(ClarificationTurnSchema).max(5).default([]),
+        diagnosisSessionId: z.string().trim().min(8).max(128).optional(),
       })
     )
     .mutation(async ({ input, ctx }) => {
-      await assertDiagnosticsWithinPlan({
-        userId: ctx.user.id,
-        fleetId: input.fleetId,
+      if (!input.fleetId || input.fleetId <= 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Select or join a company fleet before starting diagnosis.",
+        });
+      }
+
+      const normalizedInputFaultCodes = normalizeFaultCodes(input.faultCodes);
+      const preliminaryPreprocessing = preprocessDiagnosticInput({
+        symptoms: [
+          ...input.symptoms,
+          input.driverNotes ?? "",
+          input.operatingConditions ?? "",
+          ...normalizedInputFaultCodes,
+        ].join(" "),
+        faultCodes: normalizedInputFaultCodes,
       });
+      let entitlement = await getSubscriptionState(ctx.user.id);
+
+      if (input.clarificationHistory.length === 0) {
+        try {
+          const entitlementResult = await assertDiagnosticsWithinPlan({
+            userId: ctx.user.id,
+            fleetId: input.fleetId,
+          });
+          entitlement = entitlementResult.subscription;
+        } catch (error) {
+          if (preliminaryPreprocessing.safetySignals.length === 0) {
+            throw error;
+          }
+          console.warn(
+            "[Diagnostics] Plan limit reached, continuing with safety-critical guidance:",
+            error
+          );
+        }
+      }
 
       const hasAccess = await canDiagnoseVehicle({
         user: ctx.user,
@@ -538,7 +941,6 @@ export const diagnosticsRouter = router({
       }
 
       const vehicleContext = await resolveVehicleContext(input.vehicleId, input.vehicleContext);
-      const supportData = await loadDiagnosticSupportData(input.fleetId, input.vehicleId);
       const ocrResult = await extractPhotoEvidenceText({
         photoUrls: input.photoUrls,
       });
@@ -547,7 +949,8 @@ export const diagnosticsRouter = router({
         console.warn("[Diagnostics] OCR fallback:", ocrResult.warning);
       }
 
-      const driverNotes = [
+      const userSymptoms = [
+        ...input.symptoms,
         input.driverNotes?.trim(),
         input.operatingConditions?.trim()
           ? `Operating conditions: ${input.operatingConditions.trim()}`
@@ -557,44 +960,31 @@ export const diagnosticsRouter = router({
           : "",
       ]
         .filter(Boolean)
-        .join("\n");
-
-      const analysis = await analyzeDiagnosticWithAi({
+        .map((value) => String(value).trim())
+        .filter(Boolean);
+      const minimalContext = await buildMinimalDiagnosisContext({
         fleetId: input.fleetId,
         vehicleId: input.vehicleId,
-        symptoms: input.symptoms,
+        vehicleContext,
+        symptoms: userSymptoms,
         faultCodes: input.faultCodes,
-        driverNotes,
-        operatingConditions: input.operatingConditions,
-        vehicle: vehicleContext,
-        issueHistory: {
-          priorDiagnostics: supportData.priorDiagnostics,
-          priorDefects: supportData.priorDefects,
-          recentInspections: supportData.recentInspections,
-          recentRepairs: supportData.recentRepairs,
-          repairHistory: supportData.repairHistory,
-          maintenanceHistory: supportData.maintenanceHistory,
-          recentPartsReplaced: supportData.recentPartsReplaced,
-          complianceHistory: supportData.complianceHistory,
-        },
-        similarCases: supportData.similarCases,
-        clarificationHistory: input.clarificationHistory,
       });
+      const workflow = await runDiagnosisWorkflow({
+        caseId: input.clarificationHistory.length > 0 ? input.diagnosisSessionId : undefined,
+        vehicleId: input.vehicleId,
+        context: minimalContext,
+        clarificationHistory: input.clarificationHistory,
+        planType: toDiagnosisPlanType(entitlement.effectiveTier),
+        includeInternalReferences: false,
+      });
+      const analysis = {
+        ...workflow.diagnosis,
+        ...toLegacyDiagnosisAliases(workflow.diagnosis),
+        diagnosis_complexity: workflow.classification,
+      };
 
       const numericVehicleId = Number(input.vehicleId);
 
-      if (Number.isFinite(numericVehicleId)) {
-        await recordDiagnosticUsage({
-          userId: ctx.user.id,
-          fleetId: input.fleetId,
-          vehicleId: numericVehicleId,
-          metadata: {
-            confidenceScore: analysis.confidence_score,
-            nextAction: analysis.next_action,
-            systemsAffected: analysis.systems_affected,
-          },
-        });
-      }
       await recordPilotMilestone({
         userId: ctx.user.id,
         fleetId: input.fleetId,
@@ -602,37 +992,168 @@ export const diagnosticsRouter = router({
         eventMetadata: {
           vehicleId: input.vehicleId,
           confidenceScore: analysis.confidence_score,
+          safeToDriveDecision: analysis.safe_to_drive_decision,
         },
       });
 
-      if (analysis.next_action === "ask_question") {
-        return analysis;
-      }
-
-      if (analysis.ai_response_available === false) {
-        return analysis;
-      }
-
-      const complianceStatus = getDiagnosticComplianceStatus(mapDiagnosticRiskToUrgency(analysis.risk_level));
-
       const db = await getDb();
+      const totalPromptTokens = workflow.aiCallHistory.reduce(
+        (total, call) => total + call.promptTokens,
+        0
+      );
+      const totalCompletionTokens = workflow.aiCallHistory.reduce(
+        (total, call) => total + call.completionTokens,
+        0
+      );
+      const totalTokens = workflow.aiCallHistory.reduce(
+        (total, call) => total + call.totalTokens,
+        0
+      );
+      const estimatedCostUsd = workflow.aiCallHistory.reduce(
+        (total, call) => total + (call.estimatedCostUsd ?? 0),
+        0
+      );
+
+      await Promise.all(
+        workflow.aiCallHistory.map((call) =>
+          insertDiagnosticAiRequestLog({
+            companyId: input.fleetId,
+            assetId: input.vehicleId,
+            diagnosticSessionId: workflow.diagnosis.case_id,
+            callType: call.callType,
+            provider: call.provider,
+            model: call.model,
+            estimatedInputCharacters: JSON.stringify(workflow.promptContext).length,
+            estimatedInputTokens: call.promptTokens,
+            messageCount: 2,
+            maxTokens: 0,
+            temperature: 0,
+            responseFormatEnabled: true,
+            simpleTadisMode: false,
+            truncationApplied: false,
+            status: call.status === "failed" ? "failed" : call.fallbackUsed ? "fallback" : "success",
+            errorCode: call.status === "failed" ? "ai_call_failed" : null,
+            errorMessage: call.errorMessage ?? null,
+            fallbackUsed: call.fallbackUsed,
+          })
+        )
+      );
+
+      await insertAiQualityReviewLog({
+        diagnosticCaseId: workflow.diagnosis.case_id,
+        fleetId: input.fleetId,
+        userId: ctx.user.id,
+        vehicleId: input.vehicleId,
+        planType: entitlement.effectiveTier,
+        modelUsed: analysis.model_used || null,
+        providerUsed:
+          workflow.aiCallHistory.find((call) => call.status === "success")?.provider ?? null,
+        fallbackModelUsed:
+          workflow.aiCallHistory.find((call) => call.fallbackUsed && call.model)?.model ?? null,
+        fallbackUsed: analysis.fallback_used,
+        caseType: workflow.routing.case_type,
+        escalationReason: workflow.routing.reason_for_escalation || null,
+        classificationConfidence: Math.round(workflow.routing.confidence_score),
+        finalDiagnosisConfidence: Math.round(analysis.confidence_score),
+        referenceLookupUsed: workflow.preprocessing.referenceLookupRequired,
+        referenceMatchStatus: workflow.referenceLookup.match_status,
+        clarificationCount: input.clarificationHistory.length,
+        totalAiCalls: workflow.aiCallHistory.length,
+        estimatedPromptTokens: totalPromptTokens,
+        estimatedCompletionTokens: totalCompletionTokens,
+        estimatedTotalTokens: totalTokens,
+        estimatedCostUsd,
+        finalSafeToDriveDecision: analysis.safe_to_drive_decision,
+        metadata: {
+          routing: workflow.routing,
+          preprocessing: workflow.preprocessing,
+          providerErrors: workflow.providerErrors.slice(-3),
+        },
+      });
+
+      if (db) {
+        try {
+          await db.insert(activityLogs).values({
+            fleetId: input.fleetId,
+            userId: ctx.user.id,
+            action:
+              analysis.status === "clarification_needed"
+                ? "diagnostic_clarification"
+                : "diagnostic_ai_result",
+            entityType: "vehicle",
+            entityId: Number.isFinite(numericVehicleId) ? numericVehicleId : null,
+            details: {
+              diagnosticSessionId: workflow.diagnosis.case_id,
+              vehicleId: input.vehicleId,
+              status: analysis.status,
+              clarificationHistory: input.clarificationHistory,
+              clarifyingQuestion: analysis.clarifying_question,
+              confidenceScore: analysis.confidence_score,
+              safeToDriveDecision: analysis.safe_to_drive_decision,
+              likelyCauses: analysis.likely_causes,
+              recommendedTests: analysis.recommended_tests,
+              likelyParts: analysis.likely_parts,
+              modelUsed: analysis.model_used,
+              fallbackUsed: analysis.fallback_used,
+              diagnosisComplexity: workflow.classification,
+              aiErrorMetadata: workflow.providerErrors.slice(-3),
+              compactContext: workflow.promptContext,
+            },
+          });
+        } catch (error) {
+          console.warn("[Diagnostics] Unable to persist compact diagnostic activity:", error);
+        }
+      }
+
+      if (analysis.status === "clarification_needed") {
+        return analysis;
+      }
+
+      await recordDiagnosticUsage({
+        userId: ctx.user.id,
+        fleetId: input.fleetId,
+        vehicleId: input.vehicleId,
+        provider:
+          workflow.aiCallHistory.find((call) => call.status === "success")?.provider ?? null,
+        model: analysis.model_used,
+        promptTokens: totalPromptTokens,
+        completionTokens: totalCompletionTokens,
+        totalTokens,
+        estimatedCostUsd,
+        metadata: {
+          confidenceScore: analysis.confidence_score,
+          nextAction: analysis.status,
+          systemsAffected: analysis.systems_affected,
+          safeToDriveDecision: analysis.safe_to_drive_decision,
+          modelUsed: analysis.model_used,
+          fallbackUsed: analysis.fallback_used,
+          advancedAiReviewUsed: analysis.advanced_ai_review_used,
+          routing: {
+            caseType: workflow.routing.case_type,
+            riskLevel: workflow.routing.risk_level,
+            referenceMatchStatus: workflow.referenceLookup.match_status,
+          },
+        },
+      });
+
+      const complianceStatus = complianceStatusFromDiagnosis(analysis);
       let persistedDefectId: number | null = null;
 
       if (db) {
         try {
-          const [defect] = Number.isFinite(numericVehicleId)
-            ? await db
+          const [defect] = await db
                 .insert(defects)
                 .values({
                   fleetId: input.fleetId,
-                  vehicleId: numericVehicleId,
+                  vehicleId: input.vehicleId,
                   driverId: ctx.user.id,
-                  title: analysis.possible_causes[0]?.cause || input.symptoms[0] || "Driver diagnostic intake",
+                  title: analysis.likely_causes[0]?.cause || input.symptoms[0] || "Driver diagnostic intake",
                   description: JSON.stringify({
                     driverNotes: input.driverNotes ?? "",
                     symptoms: input.symptoms,
                     faultCodes: input.faultCodes,
                     output: analysis,
+                    confirmationState: "unconfirmed",
                   }),
                   category: "diagnostic",
                   severity: complianceStatus === "red" ? "critical" : complianceStatus === "yellow" ? "high" : "medium",
@@ -641,8 +1162,7 @@ export const diagnosticsRouter = router({
                   photoUrls: input.photoUrls,
                   updatedAt: new Date(),
                 })
-                .returning({ id: defects.id })
-            : [undefined as { id: number } | undefined];
+                .returning({ id: defects.id });
 
           persistedDefectId = defect?.id ?? null;
 
@@ -650,9 +1170,9 @@ export const diagnosticsRouter = router({
             await db.insert(tadisAlerts).values({
               fleetId: input.fleetId,
               defectId: defect.id,
-              urgency: mapDiagnosticRiskToUrgency(analysis.risk_level),
-              recommendedAction: mapDiagnosticRiskToAction(analysis.risk_level),
-              likelyCause: analysis.possible_causes[0]?.cause,
+              urgency: tadisUrgencyFromDiagnosis(analysis),
+              recommendedAction: tadisActionFromDiagnosis(analysis),
+              likelyCause: analysis.likely_causes[0]?.cause,
               reasoning: JSON.stringify(analysis),
             });
           }
@@ -694,7 +1214,10 @@ export const diagnosticsRouter = router({
       });
       const managerSummary = buildDiagnosticManagerSummary({
         analysis,
-        vehicleContext,
+        vehicleContext: {
+          ...vehicleContext,
+          id: String(vehicleContext.id),
+        },
         symptoms: input.symptoms,
         faultCodes: input.faultCodes,
         driverNotes: input.driverNotes?.trim(),
@@ -791,9 +1314,13 @@ export const diagnosticsRouter = router({
                 row.details && typeof row.details === "object"
                   ? (row.details as Record<string, unknown>)
                   : null;
-              return typeof details?.vehicleId === "number" ? details.vehicleId : null;
+              return typeof details?.vehicleId === "string"
+                ? details.vehicleId
+                : typeof details?.vehicleId === "number"
+                  ? String(details.vehicleId)
+                  : null;
             })
-            .filter((value): value is number => typeof value === "number")
+            .filter((value): value is string => typeof value === "string")
         )
       );
       const driverIds = Array.from(
@@ -853,7 +1380,11 @@ export const diagnosticsRouter = router({
             ? (details.output as Record<string, unknown>)
             : {};
         const vehicleId =
-          typeof details.vehicleId === "number" ? details.vehicleId : null;
+          typeof details.vehicleId === "string"
+            ? details.vehicleId
+            : typeof details.vehicleId === "number"
+              ? String(details.vehicleId)
+              : null;
         const defectId =
           typeof details.defectId === "number" ? details.defectId : null;
         const sharedByDriverId =
@@ -890,9 +1421,15 @@ export const diagnosticsRouter = router({
             ? details.faultCodes.filter((value): value is string => typeof value === "string")
             : [],
           possibleCause:
-            Array.isArray(output.possible_causes) &&
-            output.possible_causes.length > 0 &&
-            output.possible_causes[0] &&
+            Array.isArray(output.likely_causes) &&
+            output.likely_causes.length > 0 &&
+            output.likely_causes[0] &&
+            typeof output.likely_causes[0] === "object" &&
+            typeof (output.likely_causes[0] as Record<string, unknown>).cause === "string"
+              ? ((output.likely_causes[0] as Record<string, unknown>).cause as string)
+              : Array.isArray(output.possible_causes) &&
+                output.possible_causes.length > 0 &&
+                output.possible_causes[0] &&
             typeof output.possible_causes[0] === "object" &&
             typeof (output.possible_causes[0] as Record<string, unknown>).cause === "string"
               ? ((output.possible_causes[0] as Record<string, unknown>).cause as string)
@@ -908,8 +1445,10 @@ export const diagnosticsRouter = router({
               ? output.compliance_impact
               : undefined,
           recommendedFix:
-            typeof output.recommended_fix === "string"
-              ? output.recommended_fix
+            typeof output.maintenance_recommendation === "string"
+              ? output.maintenance_recommendation
+              : typeof output.recommended_fix === "string"
+                ? output.recommended_fix
               : undefined,
         };
       });
@@ -919,14 +1458,25 @@ export const diagnosticsRouter = router({
     .input(
       z.object({
         fleetId: z.number(),
-        vehicleId: z.number(),
+        vehicleId: vehicleIdInputSchema,
+        defectId: z.number().int().positive().optional(),
         cause: z.string().trim().min(1),
         confirmedFix: z.string().trim().min(1),
         successful: z.boolean(),
         symptoms: z.array(z.string().trim().min(1)).default([]),
         faultCodes: z.array(z.string().trim().min(1)).default([]),
+        partsReplaced: z.array(z.string().trim().min(1)).default([]),
+        aiDiagnosisCorrect: z.enum(["yes", "partially", "no", "unknown"]).default("unknown"),
         complianceImpact: z.enum(["none", "warning", "critical"]).default("none"),
         system: z.string().trim().optional(),
+        confirmationState: z
+          .enum([
+            "unconfirmed",
+            "user_reported_resolved",
+            "manager_confirmed",
+            "mechanic_confirmed",
+          ])
+          .optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -935,24 +1485,88 @@ export const diagnosticsRouter = router({
         return { success: false, saved: false, reason: "database_unavailable" as const };
       }
 
+      const hasAccess = await canDiagnoseVehicle({
+        user: ctx.user,
+        vehicleId: input.vehicleId,
+        fleetId: input.fleetId,
+      });
+      if (!hasAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You do not have access to record feedback for this vehicle.",
+        });
+      }
+
+      const confirmationState =
+        input.confirmationState ??
+        (ctx.user.role === "owner" || ctx.user.role === "manager"
+          ? "manager_confirmed"
+          : "user_reported_resolved");
+      const normalizedVehicleId = String(input.vehicleId);
+      const numericVehicleId = Number(normalizedVehicleId);
+      let normalizedRepairOutcomeSaved = false;
+
+      if (
+        input.defectId &&
+        (ctx.user.role === "owner" || ctx.user.role === "manager") &&
+        (confirmationState === "manager_confirmed" || confirmationState === "mechanic_confirmed")
+      ) {
+        const [defect] = await db
+          .select()
+          .from(defects)
+          .where(eq(defects.id, input.defectId))
+          .limit(1);
+
+        if (!defect || defect.fleetId !== input.fleetId || String(defect.vehicleId) !== normalizedVehicleId) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "The selected defect does not belong to this vehicle and fleet.",
+          });
+        }
+
+        try {
+          await db.insert(repairOutcomes).values({
+            fleetId: input.fleetId,
+            vehicleId: normalizedVehicleId,
+            defectId: input.defectId,
+            recordedByUserId: ctx.user.id,
+            confirmedFault: input.cause,
+            repairPerformed: input.confirmedFix,
+            partsReplaced: input.partsReplaced,
+            aiDiagnosisCorrect: input.aiDiagnosisCorrect,
+            returnedToServiceAt: input.successful ? new Date() : null,
+            repairNotes: `Captured from diagnostic feedback (${confirmationState}).`,
+          });
+          normalizedRepairOutcomeSaved = true;
+        } catch (error) {
+          console.warn("[Diagnostics] Unable to persist normalized repair outcome from feedback:", error);
+        }
+      }
+
       await db.insert(activityLogs).values({
         fleetId: input.fleetId,
         userId: ctx.user.id,
         action: "diagnostic_feedback",
         entityType: "vehicle",
-        entityId: input.vehicleId,
+        entityId: Number.isFinite(numericVehicleId) ? numericVehicleId : null,
         details: {
+          vehicleId: normalizedVehicleId,
+          defectId: input.defectId ?? null,
           cause: input.cause,
           confirmedFix: input.confirmedFix,
           successful: input.successful,
           symptoms: input.symptoms,
           faultCodes: input.faultCodes,
+          partsReplaced: input.partsReplaced,
+          aiDiagnosisCorrect: input.aiDiagnosisCorrect,
           complianceImpact: input.complianceImpact,
           system: input.system,
+          confirmationState,
+          normalizedRepairOutcomeSaved,
           summary: `${input.cause} confirmed with fix: ${input.confirmedFix}`,
         },
       });
 
-      return { success: true, saved: true };
+      return { success: true, saved: true, normalizedRepairOutcomeSaved };
     }),
 });

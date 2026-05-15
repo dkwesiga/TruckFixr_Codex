@@ -43,7 +43,6 @@ export default function EmailAuth() {
     pilotCode: string;
     companyName: string;
   } | null>(null);
-  const utils = trpc.useUtils();
   const activateFreeMutation = trpc.subscriptions.activateFree.useMutation();
   const createCheckoutMutation = trpc.subscriptions.createCheckoutSession.useMutation();
   const redeemPilotAccessMutation = trpc.subscriptions.redeemPilotAccess.useMutation();
@@ -248,8 +247,6 @@ export default function EmailAuth() {
           return;
         }
         markSessionActivity();
-        await utils.auth.me.invalidate();
-        await utils.auth.me.fetch();
         trackSignup('email', { email, name });
         if (usePilotAccess) {
           const redemption = await redeemPilotAccessMutation.mutateAsync({
@@ -295,14 +292,15 @@ export default function EmailAuth() {
         if (result.success) {
           markSessionActivity();
           trackLogin('email', { email });
-          const authenticatedUser = result.user;
+          const authenticatedUser = result.user as
+            | {
+                role?: string | null;
+              }
+            | undefined;
 
           if (!authenticatedUser) {
             throw new Error("Sign-in completed, but the authenticated user payload was missing. Please try again.");
           }
-
-          utils.auth.me.setData(undefined, authenticatedUser);
-          void utils.auth.me.invalidate();
 
           const redirectPath =
             authenticatedUser.role === 'manager' || authenticatedUser.role === 'owner'
@@ -353,8 +351,8 @@ export default function EmailAuth() {
                 : isRecoveryMode
                 ? "Create a new password to finish recovery"
                 : isSignup
-                ? "Join TruckFixr to manage your fleet. We'll verify your email before app access is granted."
-                : "Welcome back to TruckFixr"}
+                ? "Join TruckFixr to manage your fleet and review AI diagnosis guidance. We'll verify your email before app access is granted."
+                : "Welcome back to TruckFixr."}
             </p>
           </div>
 
@@ -410,7 +408,7 @@ export default function EmailAuth() {
               <Input
                 id="password"
                 type={showPassword ? "text" : "password"}
-                placeholder="••••••••"
+                placeholder="Enter your password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
@@ -546,7 +544,7 @@ export default function EmailAuth() {
                         />
                       </div>
                       <p className="text-xs text-slate-500">
-                        Pilot Access is available only through a valid code and activates before you enter the app.
+                        Pilot Access is available only through a valid code and activates access before you enter the app.
                       </p>
                       {pilotCodeError ? (
                         <p className="text-xs font-medium text-red-600">{pilotCodeError}</p>

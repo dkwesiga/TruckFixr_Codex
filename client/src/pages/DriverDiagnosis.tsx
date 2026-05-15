@@ -14,7 +14,159 @@ import { trpc } from "@/lib/trpc";
 import { getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
 import { toast } from "sonner";
 import { AlertTriangle, ChevronLeft, CheckCircle2, Sparkles, Stethoscope, Truck, Wrench } from "lucide-react";
-import { getDemoDiagnosisCase, type DemoDiagnosisResult } from "../../../shared/demoAssets";
+
+type DiagnosisView = {
+  status: "clarification_needed" | "final";
+  issueSummary: string;
+  systemsAffected: string[];
+  likelyCauses: Array<{
+    cause: string;
+    likelihood: "high" | "medium" | "low";
+    probability: number;
+    reasoning: string;
+  }>;
+  confidenceScore: number;
+  clarifyingQuestion: string;
+  clarificationReason: string;
+  recommendedTests: string[];
+  likelyParts: string[];
+  safeToDriveDecision:
+    | "safe_to_drive"
+    | "drive_with_caution"
+    | "stop_and_inspect"
+    | "tow_or_repair_immediately";
+  riskLevel: "low" | "medium" | "high" | "critical";
+  maintenanceRecommendation: string;
+  complianceImpact: "none" | "warning" | "critical";
+  driverFriendlyExplanation: string;
+  managerSummary: string;
+  advancedAiReviewUsed: boolean;
+  modelUsed: string;
+  fallbackUsed: boolean;
+};
+
+function normalizeDiagnosisView(diagnosis: unknown): DiagnosisView | null {
+  if (!diagnosis || typeof diagnosis !== "object") return null;
+  const record = diagnosis as Record<string, unknown>;
+  const likelyCausesRaw = Array.isArray(record.likely_causes)
+    ? record.likely_causes
+    : Array.isArray(record.possible_causes)
+      ? record.possible_causes
+      : [];
+  const riskLevel =
+    record.risk_level === "critical" ||
+    record.risk_level === "high" ||
+    record.risk_level === "medium" ||
+    record.risk_level === "low"
+      ? record.risk_level
+      : "medium";
+  const safeDecision =
+    record.safe_to_drive_decision === "safe_to_drive" ||
+    record.safe_to_drive_decision === "drive_with_caution" ||
+    record.safe_to_drive_decision === "stop_and_inspect" ||
+    record.safe_to_drive_decision === "tow_or_repair_immediately"
+      ? record.safe_to_drive_decision
+      : riskLevel === "high" || riskLevel === "critical"
+        ? "stop_and_inspect"
+        : "drive_with_caution";
+  const confidenceScore =
+    typeof record.confidence_score === "number" ? record.confidence_score : 0;
+
+  return {
+    status:
+      record.status === "clarification_needed" || record.next_action === "ask_question"
+        ? "clarification_needed"
+        : "final",
+    issueSummary:
+      typeof record.issue_summary === "string"
+        ? record.issue_summary
+        : typeof record.top_most_likely_cause === "string"
+          ? record.top_most_likely_cause
+          : "Diagnosis summary",
+    systemsAffected: Array.isArray(record.systems_affected)
+      ? record.systems_affected.filter((item): item is string => typeof item === "string")
+      : [],
+    likelyCauses: likelyCausesRaw.map((item) => {
+      const cause = item && typeof item === "object" ? item as Record<string, unknown> : {};
+      const probability =
+        typeof cause.probability === "number" ? cause.probability : 0;
+      return {
+        cause: typeof cause.cause === "string" ? cause.cause : "Unspecified cause",
+        likelihood:
+          cause.likelihood === "high" || cause.likelihood === "medium" || cause.likelihood === "low"
+            ? cause.likelihood
+            : probability >= 70
+              ? "high"
+              : probability >= 40
+                ? "medium"
+                : "low",
+        probability,
+        reasoning:
+          typeof cause.reasoning === "string"
+            ? cause.reasoning
+            : Array.isArray(record.confidence_rationale)
+              ? record.confidence_rationale.filter((value): value is string => typeof value === "string")[0] ?? ""
+              : "",
+      };
+    }),
+    confidenceScore,
+    clarifyingQuestion:
+      typeof record.clarifying_question === "string" ? record.clarifying_question : "",
+    clarificationReason:
+      typeof record.clarification_reason === "string"
+        ? record.clarification_reason
+        : typeof record.question_rationale === "string"
+          ? record.question_rationale
+          : "",
+    recommendedTests: Array.isArray(record.recommended_tests)
+      ? record.recommended_tests.filter((item): item is string => typeof item === "string")
+      : [],
+    likelyParts: Array.isArray(record.likely_parts)
+      ? record.likely_parts.filter((item): item is string => typeof item === "string")
+      : Array.isArray(record.possible_replacement_parts)
+        ? record.possible_replacement_parts.filter((item): item is string => typeof item === "string")
+        : [],
+    safeToDriveDecision: safeDecision,
+    riskLevel,
+    maintenanceRecommendation:
+      typeof record.maintenance_recommendation === "string"
+        ? record.maintenance_recommendation
+        : Array.isArray(record.maintenance_recommendations)
+          ? record.maintenance_recommendations.filter((item): item is string => typeof item === "string").join(" ")
+          : "",
+    complianceImpact:
+      record.compliance_impact === "critical" ||
+      record.compliance_impact === "warning" ||
+      record.compliance_impact === "none"
+        ? record.compliance_impact
+        : riskLevel === "critical"
+          ? "critical"
+          : riskLevel === "high"
+            ? "warning"
+            : "none",
+    driverFriendlyExplanation:
+      typeof record.driver_friendly_explanation === "string"
+        ? record.driver_friendly_explanation
+        : typeof record.driver_message === "string"
+          ? record.driver_message
+          : typeof record.driver_action_reason === "string"
+            ? record.driver_action_reason
+            : "",
+    managerSummary:
+      typeof record.manager_summary === "string"
+        ? record.manager_summary
+        : typeof record.risk_summary === "string"
+          ? record.risk_summary
+          : "",
+    advancedAiReviewUsed: Boolean(record.advanced_ai_review_used),
+    modelUsed: typeof record.model_used === "string" ? record.model_used : "",
+    fallbackUsed: Boolean(record.fallback_used),
+  };
+}
+
+function formatSafeDecision(value: DiagnosisView["safeToDriveDecision"]) {
+  return value.replace(/_/g, " ");
+}
 
 function DriverDiagnosisContent() {
   const { user } = useAuthContext();
@@ -24,15 +176,13 @@ function DriverDiagnosisContent() {
     []
   );
   const storedVehicle = useMemo(() => loadLastDriverVehicleContext(), []);
-  const demoCase = params.get("demoCase");
-  const demoDiagnosisPreset = useMemo(() => getDemoDiagnosisCase(demoCase), [demoCase]);
   const vehicleId = params.get("vehicle") ?? (storedVehicle ? String(storedVehicle.id) : null);
   const fleetId = useMemo(() => {
     const urlFleet = params.get("fleet");
-    if (urlFleet && urlFleet.trim()) return String(Math.max(1, Number(urlFleet)));
-    if (storedVehicle?.fleetId) return String(Math.max(1, storedVehicle.fleetId));
+    if (urlFleet && Number(urlFleet) > 0) return String(Number(urlFleet));
+    if (storedVehicle?.fleetId && storedVehicle.fleetId > 0) return String(storedVehicle.fleetId);
     const subscriptionFleetId = subscriptionQuery.data?.activeFleetId;
-    return subscriptionFleetId ? String(Math.max(1, subscriptionFleetId)) : "1";
+    return subscriptionFleetId && subscriptionFleetId > 0 ? String(subscriptionFleetId) : null;
   }, [params, storedVehicle, subscriptionQuery.data?.activeFleetId]);
   const vehicleLabel = getVehicleDisplayLabel({
     label: params.get("label") ?? storedVehicle?.label,
@@ -43,54 +193,39 @@ function DriverDiagnosisContent() {
 
   const [symptom, setSymptom] = useState("");
   const [faultCode, setFaultCode] = useState("");
-  const [driverNotes, setDriverNotes] = useState("");
-  const [operatingConditions, setOperatingConditions] = useState("");
   const [diagnosisStarted, setDiagnosisStarted] = useState(false);
   const [clarificationHistory, setClarificationHistory] = useState<Array<{ question: string; answer: string }>>([]);
   const [clarificationAnswer, setClarificationAnswer] = useState("");
-  const [demoDiagnosis, setDemoDiagnosis] = useState<DemoDiagnosisResult | null>(null);
+  const [diagnosisSessionId, setDiagnosisSessionId] = useState<string | null>(null);
   const diagnoseMutation = trpc.diagnostics.analyze.useMutation();
   const vehiclesQuery = trpc.vehicles.listMine.useQuery(undefined, {
     staleTime: 30_000,
     enabled: Boolean(user?.id),
   });
 
-  const hasDiagnosisInput =
-    symptom.trim().length > 0 || faultCode.trim().length > 0 || driverNotes.trim().length > 0;
-  const diagnosis = demoDiagnosis ?? diagnoseMutation.data;
-  const diagnosisStatus = diagnosis as
-    | (typeof diagnosis & { ai_response_available?: boolean; user_notification?: string | null })
-    | null;
-  const activeClarifyingQuestion = diagnosis?.clarifying_question?.trim() ?? "";
-  const isAiUnavailable =
-    diagnosisStarted &&
-    !!diagnosisStatus &&
-    diagnosisStatus.ai_response_available === false;
-  const aiUnavailableMessage =
-    isAiUnavailable && diagnosisStatus
-      ? diagnosisStatus.user_notification ||
-        diagnosisStatus.fallback_reason ||
-        "TruckFixr could not get a usable AI diagnosis right now. No internal fallback diagnosis was generated."
-      : "";
+  const hasDiagnosisInput = symptom.trim().length > 0;
+  const diagnosis = diagnoseMutation.data;
+  const diagnosisView = useMemo(() => normalizeDiagnosisView(diagnosis), [diagnosis]);
+  const activeClarifyingQuestion = diagnosisView?.clarifyingQuestion.trim() ?? "";
   const isAwaitingClarification =
     diagnosisStarted &&
-    !!diagnosis &&
-    diagnosis.next_action === "ask_question" &&
-    diagnosis.confidence_score < 85 &&
+    !!diagnosisView &&
+    diagnosisView.status === "clarification_needed" &&
+    diagnosisView.confidenceScore < 80 &&
     activeClarifyingQuestion.length > 0;
   const isClarificationMissing =
     diagnosisStarted &&
-    !!diagnosis &&
-    diagnosis.next_action === "ask_question" &&
-    diagnosis.confidence_score < 85 &&
+    !!diagnosisView &&
+    diagnosisView.status === "clarification_needed" &&
+    diagnosisView.confidenceScore < 80 &&
     activeClarifyingQuestion.length === 0;
   const shouldShowClarificationPanel = isAwaitingClarification || isClarificationMissing;
   const isDiagnosisReady =
     diagnosisStarted &&
-    !!diagnosis &&
-    diagnosis.next_action === "proceed";
+    !!diagnosisView &&
+    diagnosisView.status === "final";
   const isLowConfidenceSummary =
-    isDiagnosisReady && !!diagnosis && diagnosis.confidence_score < 85;
+    isDiagnosisReady && !!diagnosisView && diagnosisView.confidenceScore < 80;
   const vehicleChoices = useMemo<DriverVehicleRecord[]>(
     () =>
       (vehiclesQuery.data ?? []).map((vehicle) => ({
@@ -114,14 +249,15 @@ function DriverDiagnosisContent() {
     () => vehicleChoices.find((vehicle) => String(vehicle.id) === vehicleId) ?? null,
     [vehicleChoices, vehicleId]
   );
-  const resolvedFleetId = selectedVehicle?.fleetId ?? Number(fleetId);
+  const resolvedFleetId = selectedVehicle?.fleetId ?? (fleetId ? Number(fleetId) : 0);
+  const hasResolvedFleetContext = resolvedFleetId > 0;
   const isBlockedVehicleSelection =
     Boolean(vehicleId) && !selectedVehicle && !vehiclesQuery.isLoading;
   const clarificationPanelRef = useRef<HTMLDivElement | null>(null);
   const lastAnnouncedQuestionRef = useRef("");
 
   useEffect(() => {
-    if (!diagnosisStarted || !diagnosis) {
+    if (!diagnosisStarted || !diagnosisView) {
       return;
     }
 
@@ -147,7 +283,7 @@ function DriverDiagnosisContent() {
     }
   }, [
     activeClarifyingQuestion,
-    diagnosis,
+    diagnosisView,
     diagnosisStarted,
     isAwaitingClarification,
     isClarificationMissing,
@@ -160,22 +296,22 @@ function DriverDiagnosisContent() {
       clarification_rounds: nextClarificationHistory.length,
     });
 
-    if (demoDiagnosisPreset) {
-      setDemoDiagnosis(demoDiagnosisPreset.result);
-      setDiagnosisStarted(true);
-      setClarificationAnswer("");
-      return;
-    }
-
     const normalizedFaultCodes = faultCode
-      .split(/[,\s]+/)
+      .split(/[,;\n]+/)
       .map((code) => code.trim().toUpperCase())
       .filter(Boolean);
 
     try {
-      await diagnoseMutation.mutateAsync({
+      if (!hasResolvedFleetContext) {
+        toast.error("Select or join a company fleet before starting diagnosis.");
+        return;
+      }
+
+      const result = await diagnoseMutation.mutateAsync({
         fleetId: resolvedFleetId,
         vehicleId: String(vehicleId),
+        diagnosisSessionId:
+          nextClarificationHistory.length > 0 && diagnosisSessionId ? diagnosisSessionId : undefined,
         vehicleContext: selectedVehicle
           ? {
               id: selectedVehicle.id,
@@ -188,15 +324,15 @@ function DriverDiagnosisContent() {
             }
           : undefined,
         symptoms: [
-          symptom.trim() ||
-            (normalizedFaultCodes[0] ? `Fault code ${normalizedFaultCodes[0]}` : "Driver reported concern"),
+          symptom.trim(),
         ],
         faultCodes: normalizedFaultCodes,
-        driverNotes: driverNotes.trim() || undefined,
-        operatingConditions: operatingConditions.trim() || undefined,
         photoUrls: [],
         clarificationHistory: nextClarificationHistory,
       });
+      if (typeof result?.case_id === "string" && result.case_id.trim()) {
+        setDiagnosisSessionId(result.case_id);
+      }
       setDiagnosisStarted(true);
       setClarificationAnswer("");
     } catch (error) {
@@ -213,8 +349,8 @@ function DriverDiagnosisContent() {
               <CardTitle>Select a vehicle to start diagnosis</CardTitle>
               <CardDescription>
                     {isOwnerOperator
-                      ? "TADIS needs a vehicle before it can build context and evaluate compliance impact. Select a unit from your operation to resume."
-                      : "TADIS needs a vehicle before it can build context, pull similar cases, and evaluate compliance impact. Select one of your assigned units to continue."}
+                      ? "TruckFixr needs a selected vehicle before diagnosis can begin. Select a unit from your operation to resume."
+                      : "TruckFixr needs a selected vehicle before diagnosis can begin. Select one of your assigned units to continue."}
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
@@ -254,7 +390,7 @@ function DriverDiagnosisContent() {
                 ) : (
                   <div className="rounded-2xl border border-dashed border-amber-300 bg-white p-5 text-sm text-slate-700">
                     {isOwnerOperator
-                      ? "No vehicles are available in your operation yet. Add your first truck or trailer to unlock TADIS diagnostics."
+                      ? "No vehicles are available in your operation yet. Add your first truck or trailer to unlock diagnostics."
                       : "No assigned vehicles are available yet. Request access from your fleet manager or owner, then diagnostics will unlock automatically."}
                   </div>
                 )}
@@ -262,11 +398,13 @@ function DriverDiagnosisContent() {
                   {isOwnerOperator ? (
                     <Button onClick={() => (window.location.href = "/driver")}>Add a Vehicle</Button>
                   ) : (
-                    <VehicleAccessRequestDialog
-                      fleetId={resolvedFleetId}
-                      triggerLabel="Request Vehicle Access"
-                      triggerVariant="default"
-                    />
+                    hasResolvedFleetContext ? (
+                      <VehicleAccessRequestDialog
+                        fleetId={resolvedFleetId}
+                        triggerLabel="Request Vehicle Access"
+                        triggerVariant="default"
+                      />
+                    ) : null
                   )}
                   <Button variant="outline" onClick={() => (window.location.href = "/driver")}>Back to Dashboard</Button>
                 </div>
@@ -301,11 +439,13 @@ function DriverDiagnosisContent() {
             </CardHeader>
             <CardContent className="flex flex-wrap gap-3">
               {!isOwnerOperator && (
-                <VehicleAccessRequestDialog
-                  fleetId={resolvedFleetId}
-                  triggerLabel="Request Vehicle Access"
-                  triggerVariant="default"
-                />
+                hasResolvedFleetContext ? (
+                  <VehicleAccessRequestDialog
+                    fleetId={resolvedFleetId}
+                    triggerLabel="Request Vehicle Access"
+                    triggerVariant="default"
+                  />
+                ) : null
               )}
               <Button variant="outline" onClick={() => (window.location.href = "/driver")}>
                 Back to Dashboard
@@ -342,46 +482,27 @@ function DriverDiagnosisContent() {
           </CardHeader>
           <CardContent className="space-y-5">
             <div>
-              <Label htmlFor="symptom">Primary Symptom</Label>
+              <Label htmlFor="symptom">Symptom description</Label>
               <Input
                 id="symptom"
-                placeholder="Engine overheating, brake warning, steering pull..."
+                placeholder="Low power, check engine light, air pressure dropping..."
                 value={symptom}
                 onChange={(e) => setSymptom(e.target.value)}
               />
             </div>
             <div>
-              <Label htmlFor="fault-code">Fault Code</Label>
+              <Label htmlFor="fault-code">Fault code if available</Label>
               <Input
                 id="fault-code"
-                placeholder="SPN/FMI or dashboard code"
+                placeholder="SPN 4364 FMI 18"
                 value={faultCode}
                 onChange={(e) => setFaultCode(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label htmlFor="driver-notes">Driver Notes</Label>
-              <Textarea
-                id="driver-notes"
-                placeholder="When did it start, how often does it happen, and what changed?"
-                value={driverNotes}
-                onChange={(e) => setDriverNotes(e.target.value)}
-                className="min-h-32"
-              />
-            </div>
-            <div>
-              <Label htmlFor="operating-conditions">Operating Conditions</Label>
-              <Input
-                id="operating-conditions"
-                placeholder="Under load, idling in traffic, cold start, during braking..."
-                value={operatingConditions}
-                onChange={(e) => setOperatingConditions(e.target.value)}
               />
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
               <Button
                 className="fleet-primary-btn flex-1"
-                disabled={!hasDiagnosisInput || diagnoseMutation.isPending}
+                disabled={!hasDiagnosisInput || !hasResolvedFleetContext || diagnoseMutation.isPending}
                 onClick={() => void runDiagnosis([])}
               >
                 <Stethoscope className="w-4 h-4 mr-2" />
@@ -397,7 +518,7 @@ function DriverDiagnosisContent() {
                 Start Daily Inspection Instead
               </Button>
             </div>
-            {shouldShowClarificationPanel && diagnosis ? (
+            {shouldShowClarificationPanel && diagnosisView ? (
               <div
                 ref={clarificationPanelRef}
                 className={`rounded-2xl border p-4 ${
@@ -413,8 +534,8 @@ function DriverDiagnosisContent() {
                 </p>
                 <p className="mt-2 text-sm text-slate-700">
                   {isAwaitingClarification
-                    ? `Confidence is ${diagnosis.confidence_score}%. Answer this next question so TADIS can reduce uncertainty before showing the diagnosis summary.`
-                    : "TADIS is still in clarification mode, but the next question did not come through cleanly. Retry here to request a fresh clarifying question."}
+                    ? `Confidence is ${diagnosisView.confidenceScore}%. Answer this one focused question so TruckFixr AI can reduce uncertainty before finalizing.`
+                    : "TruckFixr AI is still in clarification mode, but the next question did not come through cleanly. Retry here to request a fresh clarifying question."}
                 </p>
                 {isAwaitingClarification ? (
                   <>
@@ -428,7 +549,7 @@ function DriverDiagnosisContent() {
                       />
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <p className="text-xs text-slate-500">
-                          Clarification round {clarificationHistory.length + 1} of 5
+                          Clarification round {clarificationHistory.length + 1} of 3
                         </p>
                         <Button
                           className="bg-blue-600 hover:bg-blue-700"
@@ -462,47 +583,32 @@ function DriverDiagnosisContent() {
         </Card>
 
         <div className="space-y-6">
-            <Card className="fleet-panel border-[var(--fleet-surface-high)] bg-[var(--fleet-surface-low)] shadow-none">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-slate-900">
-                <Sparkles className="w-5 h-5 text-blue-600" />
-                TADIS Preview
-              </CardTitle>
-              <CardDescription>
-                A focused diagnosis path separate from the full daily inspection.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="text-sm text-slate-700">
-              Capture a symptom, fault code, and notes first. Then send the truck into the shop flow with better context.
-            </CardContent>
-          </Card>
-
           <Card className="fleet-panel shadow-none">
             <CardHeader>
               <CardTitle>Diagnosis Summary</CardTitle>
               <CardDescription>
                 {isAwaitingClarification
-                  ? "Answer the clarifying question in the intake panel to continue the TADIS loop."
+                  ? "Answer the clarifying question in the intake panel to continue the AI diagnosis loop."
                   : isDiagnosisReady
                     ? `Generated from vehicle context and intake details for ${isOwnerOperator ? "your records" : "fleet review"}.`
-                    : "No diagnosis generated yet."}
+                    : "No diagnosis generated yet. This is a focused diagnosis path, not the full daily inspection flow."}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {isAwaitingClarification && diagnosis ? (
+              {isAwaitingClarification && diagnosisView ? (
                 <>
                   <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
                     <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Clarification in progress</p>
                     <p className="mt-2 text-sm text-slate-700">
-                      TADIS is still separating the top causes. The next question is shown directly under the Generate Diagnosis button so it can be answered before the summary appears.
+                      TruckFixr AI is still separating the top causes. The next question is shown directly under the Generate Diagnosis button so it can be answered before the summary appears.
                     </p>
                   </div>
                   {clarificationHistory.length > 0 ? (
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Clarification history</p>
                       <div className="mt-2 space-y-2">
-                        {clarificationHistory.map((turn) => (
-                          <div key={`${turn.question}-${turn.answer}`} className="rounded-lg border border-slate-200 bg-white p-3 text-sm">
+                        {clarificationHistory.map((turn, index) => (
+                          <div key={`${index}-${turn.question}-${turn.answer}`} className="rounded-lg border border-slate-200 bg-white p-3 text-sm">
                             <p className="font-medium text-slate-900">{turn.question}</p>
                             <p className="mt-1 text-slate-600">{turn.answer}</p>
                           </div>
@@ -515,7 +621,7 @@ function DriverDiagnosisContent() {
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
                   <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Question unavailable</p>
                   <p className="mt-2 text-sm text-slate-700">
-                    TADIS is still in clarification mode, but the next question did not come through cleanly. Try generating the diagnosis again and TruckFixr will request a fresh clarifying question.
+                    TruckFixr AI is still in clarification mode, but the next question did not come through cleanly. Try generating the diagnosis again and TruckFixr will request a fresh clarifying question.
                   </p>
                   <Button
                     className="mt-4 bg-blue-600 hover:bg-blue-700"
@@ -525,47 +631,30 @@ function DriverDiagnosisContent() {
                     {diagnoseMutation.isPending ? "Retrying..." : "Retry Clarifying Question"}
                   </Button>
                 </div>
-              ) : isDiagnosisReady && diagnosis ? (
+              ) : isDiagnosisReady && diagnosisView ? (
                 <>
-                  {isAiUnavailable ? (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">AI diagnosis unavailable</p>
-                      <p className="mt-2 text-sm text-slate-700">{aiUnavailableMessage}</p>
-                      <p className="mt-2 text-sm text-slate-600">
-                        TruckFixr did not show an internal fallback diagnosis, clarifying question, repair estimate, or parts recommendation for this run.
-                      </p>
-                      <Button
-                        className="mt-4 bg-blue-600 hover:bg-blue-700"
-                        disabled={diagnoseMutation.isPending}
-                        onClick={() => void runDiagnosis(clarificationHistory)}
-                      >
-                        {diagnoseMutation.isPending ? "Retrying AI..." : "Retry AI Diagnosis"}
-                      </Button>
-                    </div>
-                  ) : isLowConfidenceSummary ? (
+                  {isLowConfidenceSummary ? (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
                       <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Low-confidence summary</p>
                       <p className="mt-2 text-sm text-slate-700">
-                        TADIS could not reach 85% AI confidence after the available clarification. Review this summary as an AI-generated recommendation and confirm the issue with hands-on inspection and testing before acting on it.
+                        TruckFixr AI could not reach 80% confidence after the available clarification. Review this as a practical recommendation and confirm it with hands-on inspection before acting on it.
                       </p>
                     </div>
                   ) : null}
-                  {!isAiUnavailable ? (
-                    <>
                   <div
                     className={`rounded-lg border p-4 ${
-                      diagnosis.risk_level === "high"
+                      diagnosisView.riskLevel === "critical" || diagnosisView.riskLevel === "high"
                         ? "border-red-200 bg-red-50"
-                        : diagnosis.risk_level === "medium"
+                        : diagnosisView.riskLevel === "medium"
                           ? "border-amber-200 bg-amber-50"
                           : "border-emerald-200 bg-emerald-50"
                     }`}
                   >
                     <p
                       className={`text-xs font-semibold uppercase tracking-wide ${
-                        diagnosis.risk_level === "high"
+                        diagnosisView.riskLevel === "critical" || diagnosisView.riskLevel === "high"
                           ? "text-red-700"
-                          : diagnosis.risk_level === "medium"
+                          : diagnosisView.riskLevel === "medium"
                             ? "text-amber-700"
                             : "text-emerald-700"
                       }`}
@@ -574,34 +663,42 @@ function DriverDiagnosisContent() {
                     </p>
                     <p
                       className={`mt-1 text-2xl font-bold ${
-                        diagnosis.risk_level === "high"
+                      diagnosisView.riskLevel === "critical" || diagnosisView.riskLevel === "high"
                           ? "text-red-600"
-                          : diagnosis.risk_level === "medium"
+                          : diagnosisView.riskLevel === "medium"
                             ? "text-amber-600"
                             : "text-emerald-600"
                       }`}
                     >
-                      {diagnosis.risk_level === "high" ? "Non-Compliant" : diagnosis.risk_level === "medium" ? "Warning" : "Compliant"}
+                      {diagnosisView.complianceImpact === "critical" ? "Critical" : diagnosisView.complianceImpact === "warning" ? "Warning" : "No compliance flag"}
                     </p>
                     <p className="mt-2 text-sm text-slate-700">
-                      {diagnosis.risk_level === "high"
+                      {diagnosisView.riskLevel === "critical" || diagnosisView.riskLevel === "high"
                         ? "Diagnostics indicate a high-risk issue. Remove the vehicle from service until verified."
-                        : diagnosis.risk_level === "medium"
+                        : diagnosisView.riskLevel === "medium"
                           ? "Diagnostics indicate a caution state. Review the truck before the next dispatch."
                           : "No high-risk diagnostic signal is currently leading the analysis."}
                     </p>
                   </div>
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Confidence score</p>
-                    <p className="mt-1 text-2xl font-bold text-slate-900">{diagnosis.confidence_score}%</p>
+                    <p className="mt-1 text-2xl font-bold text-slate-900">{diagnosisView.confidenceScore}%</p>
                   </div>
-                  {diagnosis.confidence_rationale?.length ? (
+                  {diagnosisView.advancedAiReviewUsed ? (
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Advanced AI review used</p>
+                      <p className="mt-2 text-sm text-slate-700">
+                        TruckFixr used a stronger review path because this case had higher safety risk, complexity, or uncertainty.
+                      </p>
+                    </div>
+                  ) : null}
+                  {diagnosisView.likelyCauses.some((item) => item.reasoning) ? (
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Confidence rationale</p>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Why this ranks here</p>
                       <div className="mt-2 space-y-2">
-                        {diagnosis.confidence_rationale.map((item) => (
-                          <div key={item} className="rounded-lg bg-slate-100 p-3 text-sm text-slate-700">
-                            {item}
+                        {diagnosisView.likelyCauses.filter((item) => item.reasoning).slice(0, 3).map((item) => (
+                          <div key={`${item.cause}-${item.reasoning}`} className="rounded-lg bg-slate-100 p-3 text-sm text-slate-700">
+                            {item.reasoning}
                           </div>
                         ))}
                       </div>
@@ -609,33 +706,32 @@ function DriverDiagnosisContent() {
                   ) : null}
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Compliance impact</p>
-                    <p className="mt-1 text-sm font-semibold text-slate-900">{diagnosis.compliance_impact}</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">{diagnosisView.complianceImpact}</p>
                   </div>
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Top most likely cause</p>
-                    <p className="mt-1 text-sm font-semibold text-slate-900">{diagnosis.top_most_likely_cause}</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Issue summary</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">{diagnosisView.issueSummary}</p>
                   </div>
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Driver action</p>
-                    <p className="mt-1 text-sm font-semibold text-slate-900">{diagnosis.driver_action}</p>
-                    <p className="mt-2 text-sm text-slate-700">{diagnosis.driver_action_reason}</p>
-                    <p className="mt-2 text-sm text-slate-600">{diagnosis.risk_summary}</p>
-                    {diagnosis.distance_or_time_limit ? (
-                      <p className="mt-2 text-sm text-slate-600">Limit: {diagnosis.distance_or_time_limit}</p>
-                    ) : null}
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Safe-to-drive decision</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">{formatSafeDecision(diagnosisView.safeToDriveDecision)}</p>
+                    <p className="mt-2 text-sm text-slate-700">{diagnosisView.driverFriendlyExplanation}</p>
+                    <p className="mt-2 text-sm text-slate-600">{diagnosisView.managerSummary}</p>
                   </div>
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Systems affected</p>
-                    <p className="mt-1 text-sm text-slate-800">{diagnosis.systems_affected.join(", ")}</p>
+                    <p className="mt-1 text-sm text-slate-800">
+                      {diagnosisView.systemsAffected.length ? diagnosisView.systemsAffected.join(", ") : "Not specified yet"}
+                    </p>
                   </div>
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recommended fix</p>
-                    <p className="mt-1 text-sm text-slate-800">{diagnosis.recommended_fix}</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Maintenance recommendation</p>
+                    <p className="mt-1 text-sm text-slate-800">{diagnosisView.maintenanceRecommendation || "Confirm with inspection before replacing parts."}</p>
                   </div>
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recommended tests</p>
                     <div className="mt-2 space-y-2">
-                      {diagnosis.recommended_tests.map((step) => (
+                      {diagnosisView.recommendedTests.map((step) => (
                         <div key={step} className="flex items-start gap-2 rounded-lg bg-slate-100 p-3">
                           <Wrench className="w-4 h-4 mt-0.5 text-slate-500" />
                           <p className="text-sm text-slate-700">{step}</p>
@@ -644,10 +740,10 @@ function DriverDiagnosisContent() {
                     </div>
                   </div>
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Likely replacement parts</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Likely parts</p>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      {diagnosis.possible_replacement_parts.length > 0 ? (
-                        diagnosis.possible_replacement_parts.map((item) => (
+                      {diagnosisView.likelyParts.length > 0 ? (
+                        diagnosisView.likelyParts.map((item) => (
                           <span key={item} className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-700">
                             {item}
                           </span>
@@ -657,110 +753,36 @@ function DriverDiagnosisContent() {
                       )}
                     </div>
                     <p className="mt-2 text-sm text-slate-600">
-                      {diagnosis.confirm_before_replacement
-                        ? "Confirm the fault before replacing parts."
-                        : "Replacement can proceed without additional confirmation."}
+                      Confirm the fault before replacing parts.
                     </p>
                   </div>
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Labor estimate</p>
-                    <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                      <div className="rounded-lg bg-slate-100 p-3 text-sm text-slate-700">
-                        <p className="font-medium text-slate-900">Verification</p>
-                        <p>{diagnosis.diagnostic_verification_labor_hours.min}-{diagnosis.diagnostic_verification_labor_hours.max} hrs</p>
-                      </div>
-                      <div className="rounded-lg bg-slate-100 p-3 text-sm text-slate-700">
-                        <p className="font-medium text-slate-900">Repair</p>
-                        <p>{diagnosis.repair_labor_hours.min}-{diagnosis.repair_labor_hours.max} hrs</p>
-                      </div>
-                      <div className="rounded-lg bg-slate-100 p-3 text-sm text-slate-700">
-                        <p className="font-medium text-slate-900">Total</p>
-                        <p>{diagnosis.total_estimated_labor_hours.min}-{diagnosis.total_estimated_labor_hours.max} hrs</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Possible causes</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Likely causes</p>
                     <div className="mt-2 space-y-2">
-                      {diagnosis.possible_causes.map((item) => (
+                      {diagnosisView.likelyCauses.map((item) => (
                         <div key={item.cause} className="rounded-lg bg-slate-100 p-3 text-sm text-slate-700">
                           <div className="flex items-center justify-between gap-3">
                             <span className="font-medium text-slate-900">{item.cause}</span>
-                            <span>{Math.round(item.probability)}%</span>
+                            <span>{item.likelihood} {Math.round(item.probability)}%</span>
                           </div>
                         </div>
                       ))}
                     </div>
                   </div>
-                  {diagnosis.final_llm_ranking?.length ? (
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Evidence by cause</p>
-                      <div className="mt-2 space-y-3">
-                        {diagnosis.final_llm_ranking.slice(0, 3).map((item) => (
-                          <div key={`${item.cause_id ?? item.cause_name}-${item.probability}`} className="rounded-xl border border-slate-200 bg-white p-4">
-                            <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <p className="text-sm font-semibold text-slate-900">{item.cause_name}</p>
-                                <p className="mt-1 text-xs uppercase tracking-wide text-slate-500">
-                                  {Math.round(item.probability)}% likelihood
-                                  {item.is_new_cause ? " | New AI-proposed cause" : ""}
-                                </p>
-                              </div>
-                              <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
-                                Fit {Math.round(item.cause_library_fit_score ?? item.probability)}%
-                              </div>
-                            </div>
-                            {item.evidence_summary?.length ? (
-                              <div className="mt-3">
-                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Evidence</p>
-                                <div className="mt-2 space-y-2">
-                                  {item.evidence_summary.map((reason) => (
-                                    <div key={reason} className="rounded-lg bg-slate-50 p-3 text-sm text-slate-700">
-                                      {reason}
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : null}
-                            {item.ranking_rationale?.length ? (
-                              <div className="mt-3">
-                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Why it ranks here</p>
-                                <div className="mt-2 space-y-2">
-                                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-                                      {item.ranking_rationale}
-                                    </div>
-                                </div>
-                              </div>
-                            ) : null}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                  {diagnosis.fallback_used || diagnosis.llm_status !== "ok" ? (
+                  {diagnosisView.fallbackUsed ? (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
                       <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">AI fallback used</p>
                       <p className="mt-2 text-sm text-slate-700">
-                        {diagnosis.fallback_reason || "The AI review layer was unavailable, so the rules-engine baseline was used."}
+                        TruckFixr retried or used a configured fallback model. Provider details are saved internally, not shown to drivers.
                       </p>
                     </div>
                   ) : null}
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Maintenance recommendations</p>
-                    <div className="mt-2 space-y-2">
-                      {diagnosis.maintenance_recommendations.map((item) => (
-                        <div key={item} className="rounded-lg bg-slate-100 p-3 text-sm text-slate-700">
-                          {item}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
                   {clarificationHistory.length > 0 ? (
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Clarification history</p>
                       <div className="mt-2 space-y-2">
-                        {clarificationHistory.map((turn) => (
-                          <div key={`${turn.question}-${turn.answer}`} className="rounded-lg border border-slate-200 bg-white p-3 text-sm">
+                        {clarificationHistory.map((turn, index) => (
+                          <div key={`${index}-${turn.question}-${turn.answer}`} className="rounded-lg border border-slate-200 bg-white p-3 text-sm">
                             <p className="font-medium text-slate-900">{turn.question}</p>
                             <p className="mt-1 text-slate-600">{turn.answer}</p>
                           </div>
@@ -768,18 +790,16 @@ function DriverDiagnosisContent() {
                       </div>
                     </div>
                   ) : null}
-                  {diagnosis.next_action === "ask_question" && diagnosis.question_rationale ? (
+                  {diagnosisView.status === "clarification_needed" && diagnosisView.clarificationReason ? (
                     <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
                       <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Why this question matters</p>
-                      <p className="mt-2 text-sm text-slate-700">{diagnosis.question_rationale}</p>
+                      <p className="mt-2 text-sm text-slate-700">{diagnosisView.clarificationReason}</p>
                     </div>
-                  ) : null}
-                    </>
                   ) : null}
                 </>
               ) : (
                 <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">
-                  Enter a symptom or fault code, then generate a diagnosis to create a compliance warning and {isOwnerOperator ? "health summary" : "manager-ready intake summary"}.
+                  Enter a symptom or fault code, then generate a diagnosis to create a compliance warning and {isOwnerOperator ? "health summary" : "manager-ready intake summary"}. TruckFixr uses a lighter intake here than the full daily inspection.
                 </div>
               )}
             </CardContent>

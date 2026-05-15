@@ -133,7 +133,7 @@ export default function AccessPilotCode() {
         <Card className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
           <p className="text-xs font-black uppercase tracking-[0.18em] text-[#A04100]">Enter your TruckFixr pilot code</p>
           <h1 className="mt-3 font-['Manrope'] text-3xl font-black tracking-[-0.04em] text-[#00263F] sm:text-4xl">
-            Pilot access is for selected fleets and existing customers invited by TruckFixr.
+            Pilot access is for selected fleets testing TruckFixr's AI diagnosis workflow.
           </h1>
           <form onSubmit={submitCode} className="mt-8 space-y-4">
             <div className="space-y-2">
@@ -164,7 +164,7 @@ export default function AccessPilotCode() {
           {validatedCode?.valid ? (
             <form onSubmit={handleSignup} className="mt-8 space-y-5 border-t border-slate-200 pt-6">
               <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-                Pilot code validated for {validatedCode.companyName || "your fleet"}. Enter your details to create the company account.
+                Pilot code validated for {validatedCode.companyName || "your fleet"}. Enter your details to create your TruckFixr account for this fleet.
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">

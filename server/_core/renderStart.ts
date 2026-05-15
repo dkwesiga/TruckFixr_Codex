@@ -19,4 +19,7 @@ console.log("[RenderStart] Starting TruckFixr API", {
   hasJwtSecret: Boolean(process.env.JWT_SECRET),
 });
 
-await import("./index");
+void import("./index").catch((error) => {
+  console.error("[RenderStart] Failed to import API entrypoint", error);
+  process.exit(1);
+});

@@ -204,26 +204,27 @@ describe("aiOrchestrator", () => {
   it("honors an explicit empty fallback list and does not spill into other configured providers", async () => {
     let invocationCount = 0;
 
-    await expect(
-      invokeWithOrchestration(
-        {
-          preferredProvider: "openrouter",
-          fallbackProviders: [],
-          messages: [{ role: "user", content: "Return diagnostic JSON." }],
-          responseFormat: { type: "json_object" },
-          maxTokens: 120,
+    const result = await invokeWithOrchestration(
+      {
+        preferredProvider: "openrouter",
+        fallbackProviders: [],
+        messages: [{ role: "user", content: "Return diagnostic JSON." }],
+        responseFormat: { type: "json_object" },
+        maxTokens: 120,
+      },
+      {
+        fetcher: async (url) => {
+          invocationCount += 1;
+          expect(String(url)).toContain("openrouter.ai/api/v1/chat/completions");
+          throw new Error("AI request timed out");
         },
-        {
-          fetcher: async (url) => {
-            invocationCount += 1;
-            expect(String(url)).toContain("openrouter.ai/api/v1/chat/completions");
-            throw new Error("AI request timed out");
-          },
-        }
-      )
-    ).rejects.toThrow(/openrouter/i);
+      }
+    );
 
     expect(invocationCount).toBe(1);
+    expect(result.orchestration?.provider).toBe("openrouter");
+    expect(result.orchestration?.attempts).toHaveLength(1);
+    expect(result.choices[0]?.message.content).toContain("temporarily unavailable");
   });
 
   it("uses provider-native fallback models when the preferred provider model should not carry across", async () => {

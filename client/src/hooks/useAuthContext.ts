@@ -4,7 +4,11 @@ import type { User } from "../../../drizzle/schema";
 import { identifyUser, trackLogout, setUserProperties } from "@/lib/analytics";
 
 export function useAuthContext() {
-  const { data: user, isLoading, error } = trpc.auth.me.useQuery();
+  const { data: user, isLoading, error } = trpc.auth.me.useQuery(undefined, {
+    retry: false,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
   const logoutMutation = trpc.auth.logout.useMutation();
   const isAuthenticated = Boolean(user);
 

@@ -106,7 +106,8 @@ function DriverDashboardContent() {
   const [activeVehicleId, setActiveVehicleId] = useState(initialVehicles[0].id);
   const [isAddVehicleOpen, setIsAddVehicleOpen] = useState(false);
 
-  const isOwnerOperator = user?.role === "owner_operator" || user?.role === "owner" || user?.role === "manager";
+  const userRole = String(user?.role ?? "");
+  const isOwnerOperator = userRole === "owner_operator" || userRole === "owner" || userRole === "manager";
 
   const [selectedReport, setSelectedReport] = useState<InspectionReport | null>(null);
   const [isDecodingVin, setIsDecodingVin] = useState(false);

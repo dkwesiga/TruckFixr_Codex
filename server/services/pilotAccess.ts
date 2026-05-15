@@ -379,7 +379,7 @@ async function resolveOrCreateFleet(input: {
   const [existingFleet] = await db
     .select()
     .from(fleets)
-    .where(eq(fleets.name, input.preferredName))
+    .where(and(eq(fleets.ownerId, input.userId), eq(fleets.name, input.preferredName)))
     .limit(1);
 
   if (existingFleet) return existingFleet;
@@ -621,7 +621,7 @@ export async function markPilotAccessConvertedToPaid(input: {
 
 export async function getDefaultFleetIdForUser(userId: number) {
   const db = await getDb();
-  if (!db) return 1;
+  if (!db) return null;
 
   const activeRedemption = (
     await db
@@ -645,7 +645,7 @@ export async function getDefaultFleetIdForUser(userId: number) {
     .where(eq(fleets.ownerId, userId))
     .limit(1);
 
-  return ownedFleet?.id ?? 1;
+  return ownedFleet?.id ?? null;
 }
 
 export async function recordPilotMilestone(input: {

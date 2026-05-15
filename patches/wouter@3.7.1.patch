@@ -1,28 +1,9 @@
-diff --git a/esm/index.js b/esm/index.js
-index c83bc63a2c10431fb62e25b7d490656a3796f301..bcae513cc20a4be6c38dc116e0b8d9bacda62b5b 100644
---- a/esm/index.js
-+++ b/esm/index.js
-@@ -338,6 +338,23 @@ const Switch = ({ children, location }) => {
-   const router = useRouter();
-   const [originalLocation] = useLocationFromRouter(router);
- 
-+  // Collect all route paths to window object
-+  if (typeof window !== 'undefined') {
-+    if (!window.__WOUTER_ROUTES__) {
-+      window.__WOUTER_ROUTES__ = [];
-+    }
-+
-+    const allChildren = flattenChildren(children);
-+    allChildren.forEach((element) => {
-+      if (isValidElement(element) && element.props.path) {
-+        const path = element.props.path;
-+        if (!window.__WOUTER_ROUTES__.includes(path)) {
-+          window.__WOUTER_ROUTES__.push(path);
-+        }
-+      }
-+    });
-+  }
-+
-   for (const element of flattenChildren(children)) {
-     let match = 0;
- 
+diff --git a/esm/react-deps.js b/esm/react-deps.js
+index 75b1cb485b4e7f3a89b6720cc6511604bd4f57eb..23a567a96ef66034936bbfb04e0787d27d3836fd 100644
+--- a/esm/react-deps.js
++++ b/esm/react-deps.js
+@@ -1,3 +1,3 @@
+ import * as React from 'react';
+ export { Fragment, cloneElement, createContext, createElement, forwardRef, isValidElement, useContext, useMemo, useRef, useState } from 'react';
+-export { useSyncExternalStore } from 'use-sync-external-store/shim/index.js';
++export const useSyncExternalStore = React.useSyncExternalStore;

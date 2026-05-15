@@ -28,6 +28,18 @@ export const companyRouter = router({
     if (!db) return null;
 
     const fleetId = await getUserPrimaryFleetId(ctx.user.id);
+    if (!fleetId || fleetId <= 0) {
+      return {
+        company: null,
+        membership: null,
+        permissions: {
+          canManageBilling: false,
+          canManageOperations: false,
+        },
+        activeAssetCount: 0,
+      };
+    }
+
     const [company] = await db.select().from(fleets).where(eq(fleets.id, fleetId)).limit(1);
     if (!company) return null;
 

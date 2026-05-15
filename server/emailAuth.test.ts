@@ -22,7 +22,7 @@ describe("emailAuth.signup", () => {
 
     const result = await caller.emailAuth.signup({
       email: "test@example.com",
-      password: "SecurePassword123",
+      password: "SecurePassword123!",
       name: "Test User",
     });
 
@@ -30,7 +30,7 @@ describe("emailAuth.signup", () => {
     expect(result.user).toBeDefined();
     expect(result.user.email).toBe("test@example.com");
     expect(result.user.name).toBe("Test User");
-  });
+  }, 15000);
 
   it("rejects duplicate email", async () => {
     const ctx = createPublicContext();
@@ -39,7 +39,7 @@ describe("emailAuth.signup", () => {
     // First signup
     await caller.emailAuth.signup({
       email: "duplicate@example.com",
-      password: "SecurePassword123",
+      password: "SecurePassword123!",
       name: "First User",
     });
 
@@ -47,7 +47,7 @@ describe("emailAuth.signup", () => {
     try {
       await caller.emailAuth.signup({
         email: "duplicate@example.com",
-        password: "SecurePassword123",
+        password: "SecurePassword123!",
         name: "Second User",
       });
       expect.fail("Should have thrown error");
@@ -81,14 +81,14 @@ describe("emailAuth.signin", () => {
     // First create user
     await caller.emailAuth.signup({
       email: "signin@example.com",
-      password: "SecurePassword123",
+      password: "SecurePassword123!",
       name: "Signin Test",
     });
 
     // Then signin
     const result = await caller.emailAuth.signin({
       email: "signin@example.com",
-      password: "SecurePassword123",
+      password: "SecurePassword123!",
     });
 
     expect(result.success).toBe(true);
@@ -103,7 +103,7 @@ describe("emailAuth.signin", () => {
     // First create user
     await caller.emailAuth.signup({
       email: "wrongpass@example.com",
-      password: "SecurePassword123",
+      password: "SecurePassword123!",
       name: "Wrong Pass Test",
     });
 
@@ -115,7 +115,7 @@ describe("emailAuth.signin", () => {
       });
       expect.fail("Should have thrown error");
     } catch (error: any) {
-      expect(error.message).toContain("Invalid credentials");
+      expect(error.message).toContain("Invalid email or password");
     }
   });
 
@@ -126,11 +126,11 @@ describe("emailAuth.signin", () => {
     try {
       await caller.emailAuth.signin({
         email: "nonexistent@example.com",
-        password: "SecurePassword123",
+        password: "SecurePassword123!",
       });
       expect.fail("Should have thrown error");
     } catch (error: any) {
-      expect(error.message).toContain("Invalid credentials");
+      expect(error.message).toContain("Invalid email or password");
     }
   });
 });

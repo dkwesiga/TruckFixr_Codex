@@ -3,6 +3,7 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import fs from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 import { defineConfig, type Plugin, type ViteDevServer } from "vite";
 import { vitePluginManusRuntime } from "vite-plugin-manus-runtime";
 
@@ -15,6 +16,7 @@ const PROJECT_ROOT = import.meta.dirname;
 const LOG_DIR = path.join(PROJECT_ROOT, ".manus-logs");
 const MAX_LOG_SIZE_BYTES = 1 * 1024 * 1024; // 1MB per log file
 const TRIM_TARGET_BYTES = Math.floor(MAX_LOG_SIZE_BYTES * 0.6); // Trim to 60% to avoid constant re-trimming
+const enableManusRuntime = process.env.ENABLE_MANUS_RUNTIME === "true";
 
 type LogSource = "browserConsole" | "networkRequests" | "sessionReplay";
 
@@ -150,15 +152,77 @@ function vitePluginManusDebugCollector(): Plugin {
   };
 }
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector()];
+function vitePluginTypeScriptWithoutEsbuild(): Plugin {
+  return {
+    name: "typescript-without-esbuild",
+    enforce: "pre",
+    transform(code, id) {
+      const [filePath] = id.split("?", 1);
+      if (!filePath || filePath.includes("/node_modules/") || filePath.endsWith(".d.ts")) {
+        return null;
+      }
+
+      if (!/\.(ts|tsx|mts|cts)$/.test(filePath)) {
+        return null;
+      }
+
+      const result = ts.transpileModule(code, {
+        fileName: filePath,
+        compilerOptions: {
+          module: ts.ModuleKind.ESNext,
+          moduleResolution: ts.ModuleResolutionKind.Bundler,
+          target: ts.ScriptTarget.ES2022,
+          jsx: ts.JsxEmit.ReactJSX,
+          allowImportingTsExtensions: true,
+          esModuleInterop: true,
+          sourceMap: true,
+          inlineSources: true,
+          verbatimModuleSyntax: true,
+          useDefineForClassFields: true,
+        },
+      });
+
+      return {
+        code: result.outputText,
+        map: result.sourceMapText ? JSON.parse(result.sourceMapText) : null,
+      };
+    },
+  };
+}
+
+const plugins = [
+  vitePluginTypeScriptWithoutEsbuild(),
+  react(),
+  tailwindcss(),
+  jsxLocPlugin(),
+  // The Manus runtime injects a large inline payload into index.html.
+  // Keep it opt-in so local development can boot quickly by default.
+  ...(enableManusRuntime ? [vitePluginManusRuntime()] : []),
+  vitePluginManusDebugCollector(),
+];
 
 export default defineConfig({
   plugins,
+  esbuild: false,
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "client", "src"),
       "@shared": path.resolve(import.meta.dirname, "shared"),
       "@assets": path.resolve(import.meta.dirname, "attached_assets"),
+      "use-sync-external-store/shim": path.resolve(
+        import.meta.dirname,
+        "client",
+        "src",
+        "vendor",
+        "useSyncExternalStoreShim.ts"
+      ),
+      "use-sync-external-store/shim/index.js": path.resolve(
+        import.meta.dirname,
+        "client",
+        "src",
+        "vendor",
+        "useSyncExternalStoreShim.ts"
+      ),
     },
   },
   envDir: path.resolve(import.meta.dirname),
@@ -167,6 +231,20 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+  },
+  optimizeDeps: {
+    noDiscovery: true,
+    include: [
+      "react",
+      "react/jsx-runtime",
+      "react-dom",
+      "react-dom/client",
+      "wouter",
+    ],
+    needsInterop: [
+      "react-dom",
+      "react-dom/client",
+    ],
   },
   server: {
     host: true,

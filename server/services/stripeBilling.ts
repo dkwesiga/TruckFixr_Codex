@@ -11,6 +11,7 @@ import {
   getTruckFixrPlanLimits,
   getTruckFixrPlanPrice,
   type BillingInterval as TruckFixrBillingInterval,
+  type BillingStatus as TruckFixrBillingStatus,
   type PlanKey,
 } from "../../shared/truckfixrPricing";
 

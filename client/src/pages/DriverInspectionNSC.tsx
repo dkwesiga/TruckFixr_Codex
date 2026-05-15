@@ -26,9 +26,25 @@ import { type DriverVehicleRecord } from "@/lib/driverVehicles";
 import { trpc } from "@/lib/trpc";
 import { trackInspectionSubmitted } from "@/lib/analytics";
 import { getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
-import { INSPECTION_VALIDITY_HOURS } from "../../../shared/inspection";
+import {
+  INSPECTION_VALIDITY_HOURS,
+  buildChecklistByCategory,
+  inspectionSheetLabels,
+  type InspectionSheetType,
+  type VehicleInspectionConfig,
+} from "../../../shared/inspection";
+import { getInspectionOdometerRevisionMessage } from "../../../shared/inspectionOdometer";
 import { toast } from "sonner";
 import { AlertCircle, Camera, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Download, MapPin, TriangleAlert, Truck, XCircle } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type ItemResponse = InspectionDraftItemResponse;
 
@@ -82,13 +98,18 @@ function DriverInspectionContent() {
   const searchParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const storedVehicle = useMemo(() => loadLastDriverVehicleContext(), []);
   const rawVehicleId = searchParams.get("vehicle") ?? (storedVehicle ? String(storedVehicle.id) : null);
-  const hasVehicleSelection = rawVehicleId !== null && Number.isFinite(Number(rawVehicleId));
-  const vehicleId = hasVehicleSelection ? Number(rawVehicleId) : -1;
+  const hasVehicleSelection = Boolean(rawVehicleId?.trim());
+  const vehicleId =
+    hasVehicleSelection && Number.isFinite(Number(rawVehicleId))
+      ? Number(rawVehicleId)
+      : rawVehicleId ?? "";
   const fleetId = useMemo(() => {
     const urlFleet = searchParams.get("fleet");
-    if (urlFleet && urlFleet.trim()) return Math.max(1, Number(urlFleet));
-    if (storedVehicle?.fleetId) return Math.max(1, storedVehicle.fleetId);
-    return Math.max(1, subscriptionQuery.data?.activeFleetId ?? 1);
+    if (urlFleet && Number(urlFleet) > 0) return Number(urlFleet);
+    if (storedVehicle?.fleetId && storedVehicle.fleetId > 0) return storedVehicle.fleetId;
+    return subscriptionQuery.data?.activeFleetId && subscriptionQuery.data.activeFleetId > 0
+      ? subscriptionQuery.data.activeFleetId
+      : 0;
   }, [searchParams, storedVehicle, subscriptionQuery.data?.activeFleetId]);
   const driverName = user?.name?.trim() || user?.email?.trim() || "Driver";
   const isOwnerOperator =
@@ -113,6 +134,9 @@ function DriverInspectionContent() {
   const [drawnSignature, setDrawnSignature] = useState(
     () => restoredDraft?.data.drawnSignature ?? ""
   );
+  const [inspectionSheetType, setInspectionSheetType] = useState<InspectionSheetType | null>(
+    () => restoredDraft?.data.inspectionSheetType ?? null
+  );
   const [responses, setResponses] = useState<Record<string, ItemResponse>>(
     () => restoredDraft?.data.responses ?? {}
   );
@@ -126,8 +150,14 @@ function DriverInspectionContent() {
     getQueuedInspectionSubmissions(storage).length
   );
   const [submitMode, setSubmitMode] = useState<"send" | "download">("send");
+  const [photoPickerItemId, setPhotoPickerItemId] = useState<string | null>(null);
+  const [odometerRevisionPrompt, setOdometerRevisionPrompt] = useState<{
+    enteredOdometer: number;
+    currentMileage: number;
+  } | null>(null);
   const stepContentRef = useRef<HTMLDivElement | null>(null);
   const hasScrolledBetweenStepsRef = useRef(false);
+  const odometerInputRef = useRef<HTMLInputElement | null>(null);
 
   const checklistQuery = trpc.inspections.getDailyChecklist.useQuery(
     { vehicleId },
@@ -153,9 +183,13 @@ function DriverInspectionContent() {
         mileage: vehicle.mileage ?? 0,
         assetType:
           vehicle.assetType === "tractor" ||
-          vehicle.assetType === "straight_truck" ||
-          vehicle.assetType === "trailer"
+          vehicle.assetType === "straight_truck"
             ? vehicle.assetType
+            : vehicle.assetType === "trailer" ||
+                vehicle.assetType === "reefer_trailer" ||
+                vehicle.assetType === "dry_van_trailer" ||
+                vehicle.assetType === "flatbed_trailer"
+              ? "trailer"
             : "other",
         status:
           vehicle.complianceStatus === "red" || vehicle.status === "maintenance"
@@ -165,7 +199,7 @@ function DriverInspectionContent() {
     [vehiclesQuery.data]
   );
   const selectedVehicle = useMemo(
-    () => vehicleChoices.find((vehicle) => Number(vehicle.id) === vehicleId) ?? null,
+    () => vehicleChoices.find((vehicle) => String(vehicle.id) === String(vehicleId)) ?? null,
     [vehicleChoices, vehicleId]
   );
   const resolvedFleetId = selectedVehicle?.fleetId ?? storedVehicle?.fleetId ?? fleetId;
@@ -182,7 +216,24 @@ function DriverInspectionContent() {
       },
     };
   }, [checklistQuery.data, offlineChecklist, vehicleId]);
-  const categories = checklistData?.categories ?? [];
+  const requiresInspectionSheetSelection = Boolean(checklistData?.requiresSheetSelection);
+  const selectedInspectionSheetType =
+    (requiresInspectionSheetSelection ? inspectionSheetType : checklistData?.inspectionSheetType) ??
+    inspectionSheetType;
+  const requiresOdometer = selectedInspectionSheetType !== "trailer";
+  const categories = useMemo(() => {
+    if (!checklistData) return [];
+
+    if (requiresInspectionSheetSelection) {
+      if (!selectedInspectionSheetType) return [];
+      return buildChecklistByCategory(
+        checklistData.configuration as VehicleInspectionConfig,
+        selectedInspectionSheetType
+      );
+    }
+
+    return checklistData.categories ?? [];
+  }, [checklistData, requiresInspectionSheetSelection, selectedInspectionSheetType]);
   const totalSteps = categories.length + 2;
   const isMetadataStep = stepIndex === 0;
   const isSummaryStep = stepIndex === totalSteps - 1;
@@ -202,17 +253,22 @@ function DriverInspectionContent() {
   );
   const typedSignatureValue = driverSignature.trim() || driverName;
   const hasDraftData =
-    odometer.trim().length > 0 ||
+    (requiresOdometer && odometer.trim().length > 0) ||
     location.trim().length > 0 ||
     driverSignature.trim().length > 0 ||
     drawnSignature.length > 0 ||
+    Boolean(inspectionSheetType) ||
     Object.keys(responses).length > 0 ||
     stepIndex > 0;
 
   const pendingItems = useMemo(() => {
     const nextPendingItems: string[] = [];
 
-    if (!odometer.trim()) {
+    if (requiresInspectionSheetSelection && !selectedInspectionSheetType) {
+      nextPendingItems.push("Choose the inspection sheet for this vehicle.");
+    }
+
+    if (selectedInspectionSheetType && requiresOdometer && !odometer.trim()) {
       nextPendingItems.push("Add the odometer reading.");
     }
 
@@ -229,7 +285,7 @@ function DriverInspectionContent() {
       }
 
       if (response.status === "fail" && !response.classification) {
-        nextPendingItems.push(`Classify "${item.label}" as a major or minor defect.`);
+        nextPendingItems.push(`Classify "${item.label}" as minor, major, or not sure.`);
       }
 
       if (response.status === "fail" && !response.comment?.trim()) {
@@ -257,13 +313,20 @@ function DriverInspectionContent() {
     location,
     odometer,
     responses,
+    requiresInspectionSheetSelection,
+    requiresOdometer,
+    selectedInspectionSheetType,
     signatureMode,
     typedSignatureValue,
   ]);
 
   const currentStepComplete = useMemo(() => {
     if (isMetadataStep) {
-      return odometer.trim().length > 0 && location.trim().length > 0;
+      return (
+        (!requiresInspectionSheetSelection || Boolean(selectedInspectionSheetType)) &&
+        (!selectedInspectionSheetType || !requiresOdometer || odometer.trim().length > 0) &&
+        location.trim().length > 0
+      );
     }
 
     if (isSummaryStep) {
@@ -286,8 +349,10 @@ function DriverInspectionContent() {
     location,
     odometer,
     pendingItems.length,
+    requiresInspectionSheetSelection,
     responses,
     signatureMode,
+    selectedInspectionSheetType,
     typedSignatureValue,
   ]);
 
@@ -306,8 +371,10 @@ function DriverInspectionContent() {
     try {
       const photoUrls = await filesToDataUrls(files);
       startTransition(() => {
-        updateItemResponse(itemId, { photoUrls });
+        const existingPhotos = responses[itemId]?.photoUrls ?? [];
+        updateItemResponse(itemId, { photoUrls: [...existingPhotos, ...photoUrls] });
       });
+      setPhotoPickerItemId((current) => (current === itemId ? null : current));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to read photo");
     }
@@ -318,6 +385,14 @@ function DriverInspectionContent() {
     saveChecklistSnapshot(storage, vehicleId, checklistData);
     setOfflineChecklist(checklistData);
   }, [checklistQuery.data, checklistData, storage, vehicleId]);
+
+  useEffect(() => {
+    if (!checklistData) return;
+
+    if (!checklistData.requiresSheetSelection && checklistData.inspectionSheetType) {
+      setInspectionSheetType(checklistData.inspectionSheetType);
+    }
+  }, [checklistData]);
 
   useEffect(() => {
     if (!hasDraftData) {
@@ -338,6 +413,7 @@ function DriverInspectionContent() {
         signatureMode,
         driverSignature,
         drawnSignature,
+        inspectionSheetType,
         responses,
       },
     });
@@ -346,8 +422,10 @@ function DriverInspectionContent() {
     drawnSignature,
     driverSignature,
     fleetId,
+    inspectionSheetType,
     location,
     odometer,
+    requiresOdometer,
     responses,
     signatureMode,
     stepIndex,
@@ -412,6 +490,10 @@ function DriverInspectionContent() {
   };
 
   const buildSubmissionPayload = () => {
+    if (!selectedInspectionSheetType) {
+      throw new Error("Choose the inspection sheet before submitting.");
+    }
+
     const results = allChecklistItems.map((item) => {
       const response = responses[item.id];
       if (!response?.status) {
@@ -425,7 +507,7 @@ function DriverInspectionContent() {
       return {
         itemId: item.id,
         status: "fail" as const,
-        classification: response.classification ?? "minor",
+        classification: response.classification ?? "not_sure",
         comment: response.comment?.trim() ?? "",
         photoUrls: response.photoUrls,
       };
@@ -434,7 +516,8 @@ function DriverInspectionContent() {
     return {
       vehicleId,
       fleetId,
-      odometer: Number(odometer),
+      inspectionSheetType: selectedInspectionSheetType,
+      ...(requiresOdometer ? { odometer: Number(odometer) } : {}),
       location: location.trim(),
       attested: true as const,
       driverPrintedName: driverName,
@@ -481,6 +564,25 @@ function DriverInspectionContent() {
 
   const handleSubmit = async (mode: "send" | "download") => {
     setSubmitMode(mode);
+
+    if (requiresOdometer) {
+      const enteredOdometer = Number(odometer);
+      const currentMileage =
+        typeof selectedVehicle?.mileage === "number" ? selectedVehicle.mileage : null;
+
+      if (
+        Number.isFinite(enteredOdometer) &&
+        typeof currentMileage === "number" &&
+        enteredOdometer < currentMileage
+      ) {
+        setOdometerRevisionPrompt({
+          enteredOdometer,
+          currentMileage,
+        });
+        return;
+      }
+    }
+
     const submission = buildSubmissionPayload();
 
     if (!isOnline) {
@@ -531,7 +633,11 @@ function DriverInspectionContent() {
       );
     }
 
-    const recipientSummary = formatRecipientSummary(result.reportRecipients);
+    const recipientSummary = formatRecipientSummary(
+      Array.isArray(result.reportRecipients)
+        ? result.reportRecipients
+        : result.reportRecipients?.recipients
+    );
     const deliverySummary = result.emailDelivered
       ? recipientSummary
       : `${recipientSummary} ${formatEmailDeliveryReason(result.emailDeliveryReason)}`;
@@ -709,6 +815,39 @@ function DriverInspectionContent() {
 
   return (
     <div className="min-h-screen bg-slate-50">
+      <AlertDialog
+        open={Boolean(odometerRevisionPrompt)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setOdometerRevisionPrompt(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revise odometer reading</AlertDialogTitle>
+            <AlertDialogDescription>
+              {odometerRevisionPrompt
+                ? getInspectionOdometerRevisionMessage(odometerRevisionPrompt)
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction
+              onClick={() => {
+                setOdometerRevisionPrompt(null);
+                odometerInputRef.current?.scrollIntoView({
+                  behavior: "smooth",
+                  block: "center",
+                });
+                odometerInputRef.current?.focus();
+              }}
+            >
+              Revise odometer
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/95 backdrop-blur-xl">
         <div className="mx-auto max-w-4xl px-4 py-4 sm:px-6 sm:py-5">
           <div className="flex flex-col gap-3 sm:gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -838,13 +977,48 @@ function DriverInspectionContent() {
             </CardHeader>
             <CardContent className="space-y-5 px-4 pb-5 sm:space-y-6 sm:px-6 sm:pb-6">
               <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-slate-700">
-                A failed item requires a major or minor classification and a comment before you can continue. Photo evidence is optional.
+                A failed item requires a minor, major, or not-sure classification and a comment before you can continue. Photo evidence is strongly recommended for major or uncertain defects.
               </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <Label htmlFor="odometer">Odometer</Label>
-                  <Input id="odometer" inputMode="numeric" placeholder="245320" value={odometer} onChange={(event) => setOdometer(event.target.value.replace(/[^\d]/g, ""))} className="mt-2 h-11 rounded-xl" />
+              {requiresInspectionSheetSelection ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                  <p className="text-sm font-semibold text-amber-950">
+                    TruckFixr could not confirm this vehicle type. Choose the inspection sheet for today.
+                  </p>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    {(checklistData?.availableInspectionSheets?.length
+                      ? checklistData.availableInspectionSheets
+                      : (Object.entries(inspectionSheetLabels) as Array<[InspectionSheetType, string]>).map(([value, label]) => ({ value, label }))
+                    ).map((sheet) => (
+                      <Button
+                        key={sheet.value}
+                        type="button"
+                        variant={selectedInspectionSheetType === sheet.value ? "default" : "outline"}
+                        className="h-auto rounded-2xl px-4 py-3 text-left"
+                        onClick={() => {
+                          setInspectionSheetType(sheet.value);
+                          setResponses({});
+                        }}
+                      >
+                        {sheet.label}
+                      </Button>
+                    ))}
+                  </div>
+                  <p className="mt-3 text-xs text-amber-900">
+                    Your choice is saved with this inspection. A manager can correct the vehicle category later.
+                  </p>
                 </div>
+              ) : selectedInspectionSheetType ? (
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
+                  Inspection sheet: <span className="font-semibold text-slate-950">{inspectionSheetLabels[selectedInspectionSheetType]}</span>
+                </div>
+              ) : null}
+              <div className="grid gap-4 sm:grid-cols-2">
+                {selectedInspectionSheetType && requiresOdometer ? (
+                  <div>
+                    <Label htmlFor="odometer">Odometer</Label>
+                    <Input ref={odometerInputRef} id="odometer" inputMode="numeric" placeholder="245320" value={odometer} onChange={(event) => setOdometer(event.target.value.replace(/[^\d]/g, ""))} className="mt-2 h-11 rounded-xl" />
+                  </div>
+                ) : null}
                 <div>
                   <Label htmlFor="location">Inspection location</Label>
                   <div className="relative mt-2">
@@ -894,23 +1068,70 @@ function DriverInspectionContent() {
                               id={`${item.id}-classification`}
                               className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm"
                               value={response.classification ?? ""}
-                              onChange={(event) => updateItemResponse(item.id, { classification: event.target.value as "minor" | "major" })}
+                              onChange={(event) => updateItemResponse(item.id, { classification: event.target.value as "minor" | "major" | "not_sure" })}
                             >
                               <option value="">Select...</option>
                               <option value="minor">Minor defect</option>
                               <option value="major">Major defect</option>
+                              <option value="not_sure">Not sure - manager review</option>
                             </select>
                           </div>
                           <div>
-                            <Label htmlFor={`${item.id}-photo`}>Photo evidence (optional)</Label>
-                            <Input
-                              id={`${item.id}-photo`}
-                              type="file"
-                              accept="image/*"
-                              multiple
-                              onChange={(event) => void handlePhotoUpload(item.id, event.target.files)}
-                              className="mt-2 h-11 rounded-xl"
-                            />
+                            <Label>Photo evidence (optional)</Label>
+                            <div className="mt-2 space-y-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="h-11 w-full justify-start rounded-xl"
+                                onClick={() =>
+                                  setPhotoPickerItemId((current) => (current === item.id ? null : item.id))
+                                }
+                              >
+                                <Camera className="mr-2 h-4 w-4" />
+                                Take photo
+                              </Button>
+                              {photoPickerItemId === item.id ? (
+                                <div className="grid gap-2 sm:grid-cols-2">
+                                  <Button
+                                    type="button"
+                                    variant="secondary"
+                                    className="rounded-xl"
+                                    onClick={() =>
+                                      document.getElementById(`${item.id}-camera-input`)?.click()
+                                    }
+                                  >
+                                    Use camera
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="secondary"
+                                    className="rounded-xl"
+                                    onClick={() =>
+                                      document.getElementById(`${item.id}-upload-input`)?.click()
+                                    }
+                                  >
+                                    Upload photo
+                                  </Button>
+                                </div>
+                              ) : null}
+                              <Input
+                                id={`${item.id}-camera-input`}
+                                type="file"
+                                accept="image/*"
+                                capture="environment"
+                                multiple
+                                onChange={(event) => void handlePhotoUpload(item.id, event.target.files)}
+                                className="hidden"
+                              />
+                              <Input
+                                id={`${item.id}-upload-input`}
+                                type="file"
+                                accept="image/*"
+                                multiple
+                                onChange={(event) => void handlePhotoUpload(item.id, event.target.files)}
+                                className="hidden"
+                              />
+                            </div>
                           </div>
                         </div>
                         <div>
@@ -961,9 +1182,9 @@ function DriverInspectionContent() {
                   <p className="mt-2 text-2xl font-semibold text-slate-950">{allChecklistItems.length}</p>
                 </div>
                 <div className="rounded-2xl bg-amber-50 p-4">
-                  <p className="text-xs uppercase tracking-[0.18em] text-amber-700">Minor defects</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-amber-700">Minor / not sure</p>
                   <p className="mt-2 text-2xl font-semibold text-slate-950">
-                    {failedItems.filter(({ response }) => response?.classification === "minor").length}
+                    {failedItems.filter(({ response }) => response?.classification === "minor" || response?.classification === "not_sure").length}
                   </p>
                 </div>
                 <div className="rounded-2xl bg-red-50 p-4">
@@ -984,7 +1205,7 @@ function DriverInspectionContent() {
                           <p className="mt-1 text-sm text-slate-600">{response?.comment}</p>
                         </div>
                         <span className={`rounded-full px-3 py-1 text-xs font-semibold ${response?.classification === "major" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>
-                          {response?.classification === "major" ? "Major" : "Minor"}
+                          {response?.classification === "major" ? "Major" : response?.classification === "not_sure" ? "Not sure" : "Minor"}
                         </span>
                       </div>
                     </div>

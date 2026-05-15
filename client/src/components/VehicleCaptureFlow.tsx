@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { trpc } from "@/lib/trpc";
 import { getApiUrl, readApiPayload } from "@/lib/api";
 import { saveLastDriverVehicleContext } from "@/lib/driverVehicleContext";
@@ -10,6 +11,7 @@ import { loadDriverVehicles, saveDriverVehicles, type DriverVehicleRecord } from
 import { getFallbackUnitNumber, getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
 import { toast } from "sonner";
 import { Camera, Loader2, ScanLine, Upload, CheckCircle2, PencilLine, TriangleAlert, CarFront } from "lucide-react";
+import { VEHICLE_TYPE_OPTIONS, type VehicleTypeValue } from "../../../shared/vehicleTypes";
 
 type FlowStep =
   | "entry"
@@ -32,6 +34,7 @@ export type VehicleCaptureDraft = {
   model: string;
   year: string;
   engineMake: string;
+  vehicleType: VehicleTypeValue | "";
 };
 
 type Props = {
@@ -85,6 +88,7 @@ export default function VehicleCaptureFlow({
     model: "",
     year: "",
     engineMake: "",
+    vehicleType: "",
   });
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
@@ -214,9 +218,9 @@ export default function VehicleCaptureFlow({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageDataUrl }),
       });
-      const payload = await readApiPayload<Record<string, any>>(response, {
+      const payload: Record<string, any> = await readApiPayload<Record<string, any>>(response, {
         htmlErrorMessage: "TruckFixr received an HTML page instead of the VIN extraction API response. Check the live API base URL configuration.",
-      }).catch(() => ({}));
+      }).catch(() => ({} as Record<string, any>));
 
       if (!response.ok || !payload.vin) {
         setOcrWarning(payload.warning || payload.error || "Couldn't read VIN clearly.");
@@ -250,9 +254,9 @@ export default function VehicleCaptureFlow({
 
     try {
       const response = await fetch(getApiUrl(`/api/vehicles/decode-vin/${encodeURIComponent(vin)}`));
-      const payload = await readApiPayload<Record<string, any>>(response, {
+      const payload: Record<string, any> = await readApiPayload<Record<string, any>>(response, {
         htmlErrorMessage: "TruckFixr received an HTML page instead of the VIN decode API response. Check the live API base URL configuration.",
-      }).catch(() => ({}));
+      }).catch(() => ({} as Record<string, any>));
 
       setVehicleForm((current) => ({
         ...current,
@@ -262,6 +266,7 @@ export default function VehicleCaptureFlow({
         model: payload.model || current.model,
         year: payload.year ? String(payload.year) : current.year,
         engineMake: payload.engineMake || current.engineMake,
+        vehicleType: payload.vehicleType || current.vehicleType,
       }));
 
       if (!response.ok) {
@@ -292,6 +297,10 @@ export default function VehicleCaptureFlow({
       toast.error("VIN must be 17 characters before saving.");
       return;
     }
+    if (!vehicleForm.vehicleType) {
+      toast.error("Select the vehicle type before saving.");
+      return;
+    }
 
     setStep("saving");
     try {
@@ -303,6 +312,7 @@ export default function VehicleCaptureFlow({
         model: vehicleForm.model.trim(),
         year: vehicleForm.year.trim(),
         engineMake: vehicleForm.engineMake.trim(),
+        vehicleType: vehicleForm.vehicleType,
       };
 
       if (onSaveDraft) {
@@ -319,8 +329,9 @@ export default function VehicleCaptureFlow({
         licensePlate: normalizedDraft.licensePlate.trim() || "UNKNOWN", // Satisfy DB notNull constraint
         make: normalizedDraft.make || undefined,
         model: normalizedDraft.model || undefined,
-        year: (normalizedDraft.year && !isNaN(Number(normalizedDraft.year))) ? Number(normalizedDraft.year) : null,
+        year: (normalizedDraft.year && !isNaN(Number(normalizedDraft.year))) ? Number(normalizedDraft.year) : undefined,
         engineMake: normalizedDraft.engineMake || undefined,
+        vehicleType: normalizedDraft.vehicleType || undefined,
       });
 
       await utils.vehicles.listByFleet.invalidate({ fleetId });
@@ -568,6 +579,29 @@ export default function VehicleCaptureFlow({
               <div>
                 <Label htmlFor="review-engine">Engine model</Label>
                 <Input id="review-engine" value={vehicleForm.engineMake} onChange={(event) => setVehicleForm((current) => ({ ...current, engineMake: event.target.value }))} className="mt-2" />
+              </div>
+              <div>
+                <Label htmlFor="review-vehicle-type">Vehicle Type</Label>
+                <Select
+                  value={vehicleForm.vehicleType}
+                  onValueChange={(value) =>
+                    setVehicleForm((current) => ({
+                      ...current,
+                      vehicleType: value as VehicleTypeValue,
+                    }))
+                  }
+                >
+                  <SelectTrigger id="review-vehicle-type" className="mt-2 w-full">
+                    <SelectValue placeholder="Select vehicle type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {VEHICLE_TYPE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <Label htmlFor="review-label">Unit Number</Label>

@@ -98,17 +98,17 @@ export const authRouter = router({
             try {
               const inviteDelivery = await sendEmail({
                 to: [normalizedManagerEmail],
-                subject: "You’ve been invited to TruckFixr",
+                subject: "You've been invited to TruckFixr",
                 text: [
                   `${input.name} added you as their fleet manager in TruckFixr.`,
                   "",
                   "Create or sign in to your TruckFixr account to receive daily inspection reports and fleet updates.",
-                  "Open TruckFixr at http://localhost:3000/auth/email",
+                  `Open TruckFixr at ${ENV.appBaseUrl.replace(/\/$/, "")}/auth/email`,
                 ].join("\n"),
                 html: [
                   `<p><strong>${input.name}</strong> added you as their fleet manager in TruckFixr.</p>`,
                   "<p>Create or sign in to your TruckFixr account to receive daily inspection reports and fleet updates.</p>",
-                  '<p><a href="http://localhost:3000/auth/email">Open TruckFixr</a></p>',
+                  `<p><a href="${ENV.appBaseUrl.replace(/\/$/, "")}/auth/email">Open TruckFixr</a></p>`,
                 ].join(""),
               });
 
@@ -174,7 +174,7 @@ export const authRouter = router({
   /**
    * Create or update user after OAuth callback
    */
-  upsertMe: publicProcedure
+  upsertMe: protectedProcedure
     .input(
       z.object({
         openId: z.string(),
@@ -183,8 +183,15 @@ export const authRouter = router({
         loginMethod: z.string().optional(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       try {
+        if (input.openId !== ctx.user.openId) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "You can only update the authenticated user profile.",
+          });
+        }
+
         await upsertUser({
           openId: input.openId,
           name: input.name,
@@ -280,6 +287,13 @@ export const authRouter = router({
       }
 
       const subscriptionState = await getSubscriptionState(ctx.user.id);
+      if (!subscriptionState.activeFleetId || subscriptionState.activeFleetId <= 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Create or join a company before inviting drivers.",
+        });
+      }
+
       const canInvite = await canInviteCompanyRole({
         fleetId: subscriptionState.activeFleetId,
         user: ctx.user,
@@ -425,13 +439,19 @@ export const authRouter = router({
           status: "pending",
         });
       }
-      await createCompanyInvitationRecord({
+      const invitation = await createCompanyInvitationRecord({
         fleetId: subscriptionState.activeFleetId,
         email: normalizedDriverEmail,
         name: input.name.trim(),
         role: "driver",
         invitedByUserId: ctx.user.id,
       });
+      if (!invitation) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Driver was created, but TruckFixr could not create the invitation link.",
+        });
+      }
 
       let invitationStatus: "invited" | "invite_skipped" | "invite_failed" = "invite_skipped";
       let invitationMessage = `Driver saved for ${normalizedDriverEmail}. Email delivery is not configured yet, so no invite was sent.`;

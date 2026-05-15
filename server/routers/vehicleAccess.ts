@@ -90,11 +90,7 @@ async function notifyUsers(input: {
   const db = await getDb();
   if (!db || input.recipientUserIds.length === 0) return;
   const normalizedVehicleId =
-    typeof input.vehicleId === "number"
-      ? input.vehicleId
-      : typeof input.vehicleId === "string"
-        ? toNumericVehicleId(input.vehicleId)
-        : null;
+    input.vehicleId == null ? null : String(input.vehicleId).trim() || null;
 
   const uniqueRecipientIds = Array.from(new Set(input.recipientUserIds.filter(Boolean)));
   await db.insert(inAppAlerts).values(
@@ -287,7 +283,7 @@ export const vehicleAccessRouter = router({
           numericVehicleId != null
             ? and(
                 eq(vehicleAccessRequests.fleetId, input.fleetId),
-                eq(vehicleAccessRequests.vehicleId, numericVehicleId),
+                eq(vehicleAccessRequests.vehicleId, normalizedVehicleId),
                 eq(vehicleAccessRequests.status, "pending")
               )
             : and(
@@ -366,7 +362,7 @@ export const vehicleAccessRouter = router({
         .orderBy(desc(vehicleAccessRequests.createdAt));
 
       const vehicleIds = Array.from(
-        new Set(requests.map((row) => row.vehicleId).filter((value): value is number => typeof value === "number"))
+        new Set(requests.map((row) => row.vehicleId).filter((value): value is string => typeof value === "string" && value.length > 0))
       );
       const driverIds = Array.from(new Set(requests.map((row) => row.requestedByDriverId)));
 
@@ -428,7 +424,7 @@ export const vehicleAccessRouter = router({
         .orderBy(desc(vehicleAccessRequests.createdAt));
 
       const vehicleIds = Array.from(
-        new Set(requests.map((row) => row.vehicleId).filter((value): value is number => typeof value === "number"))
+        new Set(requests.map((row) => row.vehicleId).filter((value): value is string => typeof value === "string" && value.length > 0))
       );
       const vehicleRows =
         vehicleIds.length > 0
@@ -787,7 +783,7 @@ export const vehicleAccessRouter = router({
         fleetId: assignment.fleetId,
         vehicleId: assignment.vehicleId,
         actorUserId: ctx.user.id,
-        recipientUserIds: [assignment.driverUserId],
+        recipientUserIds: assignment.driverUserId ? [assignment.driverUserId] : [],
         alertType: "vehicle_access_revoked",
         severity: "warning",
         title: "Vehicle access removed",
@@ -801,7 +797,7 @@ export const vehicleAccessRouter = router({
     .input(
       z.object({
         fleetId: z.number().int().positive(),
-        vehicleId: z.number().int().positive().optional(),
+        vehicleId: vehicleIdentifierSchema.optional(),
         requestedVehicleIdentifier: z.string().trim().max(255).optional(),
         requestedFromUserId: z.number().int().positive().optional(),
         reason: requestReasonSchema,
@@ -857,7 +853,7 @@ export const vehicleAccessRouter = router({
             eq(vehicleAccessRequests.requestedByDriverId, ctx.user.id),
             eq(vehicleAccessRequests.status, "pending"),
             input.vehicleId
-              ? eq(vehicleAccessRequests.vehicleId, input.vehicleId)
+              ? eq(vehicleAccessRequests.vehicleId, String(input.vehicleId))
               : eq(
                   vehicleAccessRequests.requestedVehicleIdentifier,
                   input.requestedVehicleIdentifier?.trim() || ""
@@ -877,7 +873,7 @@ export const vehicleAccessRouter = router({
         .insert(vehicleAccessRequests)
         .values({
           fleetId: input.fleetId,
-          vehicleId: input.vehicleId ?? null,
+          vehicleId: input.vehicleId == null ? null : String(input.vehicleId),
           requestedVehicleIdentifier: input.requestedVehicleIdentifier?.trim() || null,
           requestedByDriverId: ctx.user.id,
           reason: input.reason,
@@ -893,7 +889,7 @@ export const vehicleAccessRouter = router({
         ? await db
             .select({ unitNumber: vehicles.unitNumber, vin: vehicles.vin, licensePlate: vehicles.licensePlate })
             .from(vehicles)
-            .where(eq(vehicles.id, input.vehicleId))
+            .where(sql`CAST(${vehicles.id} AS text) = ${String(input.vehicleId)}`)
             .limit(1)
         : [null];
 
@@ -976,7 +972,7 @@ export const vehicleAccessRouter = router({
           assetRecordStatus: vehicles.assetRecordStatus,
         })
         .from(vehicles)
-        .where(eq(vehicles.id, request.vehicleId))
+        .where(sql`CAST(${vehicles.id} AS text) = ${String(request.vehicleId)}`)
         .limit(1);
 
       if (!requestedVehicle || requestedVehicle.assetRecordStatus !== "active") {

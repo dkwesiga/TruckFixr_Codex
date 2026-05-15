@@ -32,6 +32,8 @@ TruckFixr is a fleet operations platform for inspections, AI diagnostics, compli
   Starts the production backend bundle
 - `pnpm test`
   Runs the test suite
+- `pnpm seed:fault-codes`
+  Seeds the starter fault-code reference review queue into the configured database
 
 ## Local Development
 
@@ -41,6 +43,19 @@ TruckFixr is a fleet operations platform for inspections, AI diagnostics, compli
 4. Run `pnpm dev`
 
 Local development serves the frontend and backend from the same origin, so `VITE_API_BASE_URL` can stay blank locally.
+
+## Fault-Code Reference Starter Seed
+
+The new diagnosis workflow supports a curated fault-code reference layer backed by `faultCodeReferences`, `faultCodeReferenceSources`, and `faultCodeReferenceApprovals`.
+
+- Run `pnpm seed:fault-codes` after setting `DATABASE_URL`.
+- The seed loads a small starter set focused on aftertreatment/emissions, brake or air pressure, oil pressure, coolant or overheating, and derate or shutdown scenarios.
+- Imported seed records are created as `needs_review` by design.
+- Review them at `/admin/fault-codes` while signed in as an `owner` or `manager`.
+- Open each record, validate the source link and draft guidance, add reviewer notes, and then approve or reject it.
+- Only `approved` records are used in the normal customer-facing diagnosis flow.
+- The currently approved starter set is heavy-duty-first for J1939/SPN-FMI-oriented fleets, not a broad generic OBD library.
+- `P204F` and `P20EE` are intentionally still in `needs_review` pending broader fleet-fit review for more generic OBD-style aftertreatment coverage.
 
 ## Public Homepage, SEO, and Demo Leads
 
@@ -141,15 +156,28 @@ Optional backend env vars:
 - `OPENROUTER_API_KEY`
 - `OPENROUTER_MODEL`
 - `OPENROUTER_FALLBACK_MODEL`
+- `DEFAULT_CLASSIFICATION_MODEL`
+- `DEFAULT_DIAGNOSIS_MODEL`
+- `LOW_COST_CLARIFICATION_MODEL`
+- `ADVANCED_DIAGNOSIS_MODEL`
+- `SAFETY_CRITICAL_MODEL`
+- `COMPLEX_FAULT_CODE_MODEL`
+- `JSON_REPAIR_MODEL`
+- `FALLBACK_MODEL_1`
+- `FALLBACK_MODEL_2`
+- `ADMIN_COMPARISON_MODEL`
 - `GROQ_API_KEY`
 - `GROQ_MODEL`
 - `ANTHROPIC_API_KEY`
 - `ANTHROPIC_MODEL`
 - `DIAGNOSTIC_CONFIDENCE_THRESHOLD`
+- `DIAGNOSTIC_MAX_CLARIFICATIONS`
+- `DIAGNOSTIC_LLM_RETRY_COUNT`
 - `DIAGNOSTIC_NEW_CAUSE_MIN_CONFIDENCE`
 - `DIAGNOSTIC_TIMEOUT_MS`
 - `DIAGNOSTIC_INTAKE_MAX_TOKENS`
 - `DIAGNOSTIC_REVIEW_MAX_TOKENS`
+- `DIAGNOSIS_MAX_TOKENS`
 - `SIMPLE_TADIS_MODE` set to `true` to force the minimal classifier/diagnosis path during provider stabilization
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
@@ -159,15 +187,43 @@ Optional backend env vars:
 - `ADMIN_EMAILS`
 - `SALES_NOTIFICATION_EMAIL`
 
-Diagnostic LLM defaults:
+### Diagnosis Workflow Env Contract
+
+Required for the OpenRouter-driven diagnosis workflow:
+
+- `OPENROUTER_API_KEY`
+
+Recommended to set explicitly in every environment so rollout behavior stays consistent:
+
+- `OPENROUTER_MODEL=deepseek/deepseek-v4-flash`
+- `OPENROUTER_FALLBACK_MODEL=google/gemini-2.5-flash`
+- `DEFAULT_CLASSIFICATION_MODEL=deepseek/deepseek-v4-flash`
+- `DEFAULT_DIAGNOSIS_MODEL=deepseek/deepseek-v4-flash`
+- `LOW_COST_CLARIFICATION_MODEL=deepseek/deepseek-v4-flash`
+- `ADVANCED_DIAGNOSIS_MODEL=openai/gpt-4.1-mini`
+- `SAFETY_CRITICAL_MODEL=openai/gpt-4.1-mini`
+- `COMPLEX_FAULT_CODE_MODEL=google/gemini-2.5-flash`
+- `JSON_REPAIR_MODEL=openai/gpt-4.1-mini`
+- `FALLBACK_MODEL_1=google/gemini-2.5-flash`
+- `FALLBACK_MODEL_2=openai/gpt-4.1-mini`
+
+Runtime tuning defaults:
 
 - provider: OpenRouter only
-- primary model: `openrouter/free`
-- fallback model: `openrouter/free`
-- clarification confidence threshold: `85`
+- default classification and diagnosis: `deepseek/deepseek-v4-flash`
+- default fallback lane: `google/gemini-2.5-flash`
+- safety-critical and JSON repair lane: `openai/gpt-4.1-mini`
+- fault-code escalation lane: `google/gemini-2.5-flash`
+- clarification confidence threshold: `80`
+- max clarifications: `3`
 - intake completion cap: `320`
 - review completion cap: `380`
+- diagnosis completion cap: `900`
 - OpenRouter 402 credit-limit responses automatically retry with a smaller affordable `max_tokens` budget when possible
+
+Legacy compatibility:
+
+- `OPENROUTER_MODEL_PRIMARY`, `SAFETY_CRITICAL_DIAGNOSIS_MODEL`, `FALLBACK_DIAGNOSIS_MODEL_1`, and `FALLBACK_DIAGNOSIS_MODEL_2` are still read as fallback aliases at runtime for older deployments, but new configs should use the canonical keys above.
 
 ## Render Checklist
 

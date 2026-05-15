@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useLocation } from "wouter";
 import AppLogo from "@/components/AppLogo";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
+import { useAuthContext } from "@/hooks/useAuthContext";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { trpc } from "@/lib/trpc";
@@ -11,7 +12,9 @@ type DvirRow = {
   code: string;
   item: string;
   originalItem: string;
+  categoryLabel?: string;
   defectCode: string;
+  statusLabel?: string;
   defectMarked: boolean;
   repairedMarked: boolean;
   severity?: string | null;
@@ -27,7 +30,19 @@ function CheckMark({ checked }: { checked: boolean }) {
   return <span className="font-mono text-base leading-none">{checked ? "X" : ""}</span>;
 }
 
-function DvirRows({ rows }: { rows: DvirRow[] }) {
+function InspectionStatusMark({ defectMarked }: { defectMarked: boolean }) {
+  return (
+      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold [&>span:first-child]:hidden ${
+      defectMarked ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700"
+    }`}>
+      <span className="text-xs leading-none">{defectMarked ? "✗" : "✓"}</span>
+      <span className="text-xs leading-none">{defectMarked ? "✕" : "✓"}</span>
+      <span>{defectMarked ? "Defect" : "Pass"}</span>
+    </span>
+  );
+}
+
+function DvirRows({ rows, minimumRows = 4 }: { rows: DvirRow[]; minimumRows?: number }) {
   return (
     <tbody>
       {rows.map((row, index) => (
@@ -41,17 +56,19 @@ function DvirRows({ rows }: { rows: DvirRow[] }) {
           </td>
           <td className="w-12 border-r border-black px-1 py-1 text-center align-top text-[11px]">{row.code}</td>
           <td className="px-2 py-1 align-top text-[11px]">
-            <div className="font-semibold">{row.item}</div>
-            {row.defectMarked ? (
-              <div className="mt-0.5 text-[10px] leading-snug">
-                {row.originalItem}
-                {row.severity ? ` | ${row.severity}` : ""}
-              </div>
-            ) : null}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="font-semibold">{row.item}</div>
+              <InspectionStatusMark defectMarked={row.defectMarked} />
+            </div>
+            <div className="mt-0.5 text-[10px] leading-snug">
+              {row.originalItem}
+              {row.defectMarked && row.severity ? ` | ${row.severity}` : ""}
+              {row.defectMarked && row.note ? ` | ${row.note}` : ""}
+            </div>
           </td>
         </tr>
       ))}
-      {Array.from({ length: Math.max(0, 10 - rows.length) }).map((_, index) => (
+      {Array.from({ length: Math.max(0, minimumRows - rows.length) }).map((_, index) => (
         <tr key={`blank-${index}`} className="border-b border-black">
           <td className="border-r border-black px-1 py-1">&nbsp;</td>
           <td className="border-r border-black px-1 py-1">&nbsp;</td>
@@ -66,6 +83,7 @@ function DvirRows({ rows }: { rows: DvirRow[] }) {
 
 function InspectionReportDvirContent() {
   const [, navigate] = useLocation();
+  const { user } = useAuthContext();
   const inspectionId = useMemo(() => {
     const match = window.location.pathname.match(/inspection-report\/(\d+)/);
     return match ? Number(match[1]) : 0;
@@ -75,6 +93,27 @@ function InspectionReportDvirContent() {
     { enabled: inspectionId > 0 }
   );
   const report = reportQuery.data as any;
+  const role = String(user?.role ?? "");
+  const fallbackPath =
+    role === "driver" || role === "owner_operator"
+      ? "/driver"
+      : role === "manager" || role === "owner"
+        ? "/manager"
+        : "/app";
+
+  function handleBack() {
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      const currentPath = window.location.pathname;
+      window.history.back();
+      window.setTimeout(() => {
+        if (window.location.pathname === currentPath) {
+          navigate(fallbackPath);
+        }
+      }, 150);
+      return;
+    }
+    navigate(fallbackPath);
+  }
 
   if (reportQuery.isLoading) {
     return (
@@ -89,7 +128,7 @@ function InspectionReportDvirContent() {
       <div className="app-shell min-h-screen px-4 py-8">
         <Card className="mx-auto max-w-4xl p-6">
           <p className="text-sm text-slate-600">Inspection report not found or unavailable.</p>
-          <Button className="mt-4" variant="outline" onClick={() => navigate("/driver")}>
+          <Button className="mt-4" variant="outline" onClick={handleBack}>
             <ChevronLeft className="mr-2 h-4 w-4" />
             Back
           </Button>
@@ -100,13 +139,14 @@ function InspectionReportDvirContent() {
 
   const tractorRows = (report.tractorRows ?? []) as DvirRow[];
   const trailerRows = (report.trailerRows ?? []) as DvirRow[];
+  const sheetSections = (report.sheetSections ?? []) as Array<{ label: string; rows: DvirRow[] }>;
   const defects = (report.defectsNotCodedAbove ?? []) as string[];
   const flags = (report.flags ?? []) as Array<{ message?: string }>;
 
   return (
     <div className="min-h-screen bg-slate-100 px-3 py-4 print:bg-white">
       <div className="mx-auto mb-4 flex max-w-6xl flex-wrap items-center justify-between gap-3 print:hidden">
-        <Button variant="outline" onClick={() => navigate(-1 as any)}>
+        <Button variant="outline" onClick={handleBack}>
           <ChevronLeft className="mr-2 h-4 w-4" />
           Back
         </Button>
@@ -177,38 +217,33 @@ function InspectionReportDvirContent() {
           </span>
         </section>
 
-        <section className="mt-2 grid gap-2 md:grid-cols-2">
-          <table className="w-full border border-black text-left">
-            <thead>
-              <tr className="bg-black text-white">
-                <th colSpan={5} className="px-2 py-1 text-xs uppercase">Tractor / Truck</th>
-              </tr>
-              <tr className="border-b border-black text-[11px]">
-                <th className="border-r border-black px-1">Code(s)</th>
-                <th className="border-r border-black px-1 text-center">D</th>
-                <th className="border-r border-black px-1 text-center">R</th>
-                <th className="border-r border-black px-1 text-center">NSC #</th>
-                <th className="px-2">Inspection Item</th>
-              </tr>
-            </thead>
-            <DvirRows rows={tractorRows} />
-          </table>
-
-          <table className="w-full border border-black text-left">
-            <thead>
-              <tr className="bg-black text-white">
-                <th colSpan={5} className="px-2 py-1 text-xs uppercase">Trailer / Load</th>
-              </tr>
-              <tr className="border-b border-black text-[11px]">
-                <th className="border-r border-black px-1">Code(s)</th>
-                <th className="border-r border-black px-1 text-center">D</th>
-                <th className="border-r border-black px-1 text-center">R</th>
-                <th className="border-r border-black px-1 text-center">NSC #</th>
-                <th className="px-2">Inspection Item</th>
-              </tr>
-            </thead>
-            <DvirRows rows={trailerRows} />
-          </table>
+        <section className="mt-2 space-y-2">
+          <div className="border border-black bg-slate-50 px-2 py-1 text-xs font-bold uppercase">
+            {valueOrLine(report.inspectionSheetLabel)}
+          </div>
+          {(sheetSections.length > 0
+            ? sheetSections
+            : [
+                { label: "Tractor / Truck", rows: tractorRows },
+                { label: "Trailer / Load", rows: trailerRows },
+              ].filter((section) => section.rows.length > 0)
+          ).map((section) => (
+            <table key={section.label} className="w-full border border-black text-left">
+              <thead>
+                <tr className="bg-black text-white">
+                  <th colSpan={5} className="px-2 py-1 text-xs uppercase">{section.label}</th>
+                </tr>
+                <tr className="border-b border-black text-[11px]">
+                  <th className="border-r border-black px-1">Code(s)</th>
+                  <th className="border-r border-black px-1 text-center">D</th>
+                  <th className="border-r border-black px-1 text-center">R</th>
+                  <th className="border-r border-black px-1 text-center">NSC #</th>
+                  <th className="px-2">Inspection Item</th>
+                </tr>
+              </thead>
+              <DvirRows rows={section.rows} />
+            </table>
+          ))}
         </section>
 
         <section className="mt-2 space-y-2 text-xs">

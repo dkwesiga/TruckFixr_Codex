@@ -1,10 +1,16 @@
-import { AXIOS_TIMEOUT_MS, COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import {
+  AXIOS_TIMEOUT_MS,
+  COOKIE_NAME,
+  SESSION_DURATION_MS,
+  SESSION_REFRESH_WINDOW_MS,
+} from "@shared/const";
 import { ForbiddenError } from "@shared/_core/errors";
 import { parse as parseCookieHeader } from "cookie";
-import type { Request } from "express";
+import type { Request, Response } from "express";
 import { SignJWT, jwtVerify } from "jose";
 import type { User } from "../../drizzle/schema";
 import * as db from "../db";
+import { getSessionCookieOptions } from "./cookies";
 import { ENV } from "./env";
 import type {
   ExchangeTokenRequest,
@@ -13,6 +19,8 @@ import type {
   GetUserInfoWithJwtRequest,
   GetUserInfoWithJwtResponse,
 } from "./types/manusTypes";
+
+const AUTH_ACTIVITY_REFRESH_MS = 15 * 60 * 1000;
 // Utility function
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0;
@@ -21,6 +29,10 @@ export type SessionPayload = {
   openId: string;
   appId: string;
   name: string;
+};
+
+type VerifiedSessionPayload = SessionPayload & {
+  expiresAt: Date;
 };
 
 const EXCHANGE_TOKEN_PATH = `/webdev.v1.WebDevAuthPublicService/ExchangeToken`;
@@ -173,6 +185,17 @@ class SDKServer {
     return new TextEncoder().encode(secret);
   }
 
+  private shouldRefreshAuthActivity(user: User, now: Date) {
+    const lastAuthAt =
+      user.lastAuthAt instanceof Date
+        ? user.lastAuthAt
+        : user.lastAuthAt
+          ? new Date(user.lastAuthAt)
+          : null;
+
+    return !lastAuthAt || now.getTime() - lastAuthAt.getTime() >= AUTH_ACTIVITY_REFRESH_MS;
+  }
+
   /**
    * Create a session token for a Manus user openId
    * @example
@@ -197,7 +220,7 @@ class SDKServer {
     options: { expiresInMs?: number } = {}
   ): Promise<string> {
     const issuedAt = Date.now();
-    const expiresInMs = options.expiresInMs ?? ONE_YEAR_MS;
+    const expiresInMs = options.expiresInMs ?? SESSION_DURATION_MS;
     const expirationSeconds = Math.floor((issuedAt + expiresInMs) / 1000);
     const secretKey = this.getSessionSecret();
 
@@ -213,7 +236,7 @@ class SDKServer {
 
   async verifySession(
     cookieValue: string | undefined | null
-  ): Promise<{ openId: string; appId: string; name: string } | null> {
+  ): Promise<VerifiedSessionPayload | null> {
     if (!cookieValue) {
       console.warn("[Auth] Missing session cookie");
       return null;
@@ -224,10 +247,15 @@ class SDKServer {
       const { payload } = await jwtVerify(cookieValue, secretKey, {
         algorithms: ["HS256"],
       });
-      const { openId, appId, name } = payload as Record<string, unknown>;
+      const { openId, appId, name, exp } = payload as Record<string, unknown>;
 
       if (!isNonEmptyString(openId) || !isNonEmptyString(appId)) {
         console.warn("[Auth] Session payload missing required fields");
+        return null;
+      }
+
+      if (typeof exp !== "number") {
+        console.warn("[Auth] Session payload missing expiration");
         return null;
       }
 
@@ -235,6 +263,7 @@ class SDKServer {
         openId,
         appId,
         name: typeof name === "string" ? name : "",
+        expiresAt: new Date(exp * 1000),
       };
     } catch (error) {
       console.warn("[Auth] Session verification failed", String(error));
@@ -277,7 +306,7 @@ class SDKServer {
     }
 
     const sessionUserId = session.openId;
-    const signedInAt = new Date();
+    const now = new Date();
     let user = await db.getUserByOpenId(sessionUserId);
 
     // If user not in DB, sync from OAuth server automatically
@@ -289,7 +318,8 @@ class SDKServer {
           name: userInfo.name || null,
           email: userInfo.email ?? null,
           loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
-          lastSignedIn: signedInAt,
+          lastSignedIn: now,
+          lastAuthAt: now,
         });
         user = await db.getUserByOpenId(userInfo.openId);
       } catch (error) {
@@ -302,12 +332,43 @@ class SDKServer {
       throw ForbiddenError("User not found");
     }
 
-    await db.upsertUser({
-      openId: user.openId,
-      lastSignedIn: signedInAt,
-    });
+    if (this.shouldRefreshAuthActivity(user, now)) {
+      await db.upsertUser({
+        openId: user.openId,
+        lastAuthAt: now,
+      });
+    }
 
     return user;
+  }
+
+  async refreshSessionCookieIfNeeded(
+    req: Request,
+    res: Response,
+    user: User
+  ): Promise<void> {
+    const cookies = this.parseCookies(req.headers.cookie);
+    const sessionCookie = cookies.get(COOKIE_NAME);
+    const session = await this.verifySession(sessionCookie);
+
+    if (!session) {
+      return;
+    }
+
+    const remainingMs = session.expiresAt.getTime() - Date.now();
+    if (remainingMs > SESSION_REFRESH_WINDOW_MS) {
+      return;
+    }
+
+    const refreshedToken = await this.createSessionToken(user.openId, {
+      name: user.name || "",
+      expiresInMs: SESSION_DURATION_MS,
+    });
+    const cookieOptions = getSessionCookieOptions(req);
+    res.cookie(COOKIE_NAME, refreshedToken, {
+      ...cookieOptions,
+      maxAge: SESSION_DURATION_MS,
+    });
   }
 }
 

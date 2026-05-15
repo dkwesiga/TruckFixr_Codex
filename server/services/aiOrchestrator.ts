@@ -258,7 +258,7 @@ function resolveProviderConfig(provider: AiProvider): ProviderConfig {
     case "openrouter":
       return {
         key: ENV.openRouterApiKey,
-        model: ENV.openRouterModelPrimary || ENV.openRouterModel || DEFAULT_MODELS.openrouter,
+        model: ENV.openRouterModel || DEFAULT_MODELS.openrouter,
         supportsImages: false,
         supportsTools: false,
         supportsJsonSchema: false,

@@ -85,9 +85,9 @@ const RecentPartReplacementSchema = z.object({
     "possible_incomplete_root_cause_repair",
     "possible_adjacent_failure",
     "unknown",
-  ]),
-  replacement_decay_weight: z.number().min(0).max(1),
-  relevance_score: z.number().min(0).max(100),
+  ]).default("unknown"),
+  replacement_decay_weight: z.number().min(0).max(1).default(0),
+  relevance_score: z.number().min(0).max(100).default(0),
 });
 
 export const DiagnosticInputSchema = z.object({
@@ -2721,8 +2721,15 @@ function getCauseDefinitionByName(causeName: string): CauseDefinition | null {
 function getBaselineGuidance(causeDef: CauseDefinition | null, causeName: string) {
   const guidance = causeDef ? BASELINE_PARTS_GUIDANCE[causeDef.id] : undefined;
   if (guidance) {
+    const recommendedTests = uniqueStrings([
+      ...guidance.inspectionRelatedParts.slice(0, 2).map((part) => `Inspect ${part}`),
+      ...guidance.adjacentPartsToCheck.slice(0, 2).map((part) => `Check ${part}`),
+      `Verify ${causeName.toLowerCase()} directly before replacing parts`,
+    ]).slice(0, 4);
     return {
       ...guidance,
+      recommendedTests,
+      recommendedFix: `Verify ${causeName} with the recommended tests before replacing parts.`,
       totalEstimatedLaborHours: {
         min: Number((guidance.diagnosticVerificationLaborHours.min + guidance.repairLaborHours.min).toFixed(1)),
         max: Number((guidance.diagnosticVerificationLaborHours.max + guidance.repairLaborHours.max).toFixed(1)),
@@ -4135,6 +4142,10 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
   const topCause = finalRanking[0];
   const topCauseDef = topCause ? getCauseDefinitionByName(topCause.cause_name) : null;
   const llmRepairGuidance = !criticalEvidenceOverride.applied ? llmReview.parsed.top_cause_repair_guidance : null;
+  const baselineGuidance = getBaselineGuidance(
+    topCauseDef,
+    topCause?.cause_name ?? baselineStage.baseline.possible_causes[0]?.cause ?? "the leading cause"
+  );
   const systemsAffected = resolveFinalSystemsAffected(topCauseDef, baselineStage.baseline.systems_affected);
   const initialRiskLevel = determineRiskLevel(
     finalRanking.slice(0, 2).map((item) => ({
@@ -4213,26 +4224,26 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
   const recommendedTests =
     llmRepairGuidance?.recommended_tests?.length
       ? llmRepairGuidance.recommended_tests
-      : [];
+      : baselineGuidance.recommendedTests;
   const possibleReplacementParts =
     llmRepairGuidance?.likely_replacement_parts?.length
       ? llmRepairGuidance.likely_replacement_parts
-      : [];
+      : baselineGuidance.likelyReplacementParts;
   const inspectionRelatedParts =
     llmRepairGuidance?.inspection_related_parts?.length
       ? llmRepairGuidance.inspection_related_parts
-      : [];
+      : baselineGuidance.inspectionRelatedParts;
   const adjacentPartsToCheck =
     llmRepairGuidance?.adjacent_parts_to_check?.length
       ? llmRepairGuidance.adjacent_parts_to_check
-      : [];
+      : baselineGuidance.adjacentPartsToCheck;
   const diagnosticVerificationLaborHours =
-    llmRepairGuidance?.diagnostic_verification_labor_hours ?? { min: 0, max: 0 };
-  const repairLaborHours = llmRepairGuidance?.repair_labor_hours ?? { min: 0, max: 0 };
+    llmRepairGuidance?.diagnostic_verification_labor_hours ?? baselineGuidance.diagnosticVerificationLaborHours;
+  const repairLaborHours = llmRepairGuidance?.repair_labor_hours ?? baselineGuidance.repairLaborHours;
   const totalEstimatedLaborHours =
-    llmRepairGuidance?.total_estimated_labor_hours ?? { min: 0, max: 0 };
-  const laborTimeConfidence = llmRepairGuidance?.labor_time_confidence ?? 0;
-  const laborTimeBasis = llmRepairGuidance?.labor_time_basis ?? [];
+    llmRepairGuidance?.total_estimated_labor_hours ?? baselineGuidance.totalEstimatedLaborHours;
+  const laborTimeConfidence = llmRepairGuidance?.labor_time_confidence ?? baselineGuidance.laborTimeConfidence;
+  const laborTimeBasis = llmRepairGuidance?.labor_time_basis ?? baselineGuidance.laborTimeBasis;
   const topEvidence = topCause?.evidence_summary[0];
   const driverActionReason =
       synthesizeDriverActionReason(
@@ -4267,7 +4278,7 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
     llmRepairGuidance?.confirm_before_replacement ?? true,
     llmRepairGuidance
       ? `Verify ${topCause?.cause_name ?? "the leading cause"} with the AI-recommended tests before replacing parts.`
-      : "AI did not provide repair guidance for this response."
+      : baselineGuidance.recommendedFix
   );
   const similarConfirmedCasesUsed = buildSimilarConfirmedCaseEvidence(baselineStage.context);
   const overallEvidenceSummary = uniqueStrings([
@@ -4438,7 +4449,11 @@ export async function analyzeDiagnostic(input: DiagnosticInputRequest): Promise<
 }
 
 export async function analyzeDiagnosticWithAi(input: DiagnosticInputRequest): Promise<TadisOutput> {
-  return analyzeDiagnosticDetailed(input);
+  try {
+    return await analyzeDiagnosticSimpleMode(input);
+  } catch (error) {
+    return buildSimpleTadisEmergencyFallback(input, error);
+  }
 }
 
 export function mapDiagnosticRiskToUrgency(riskLevel: z.infer<typeof riskLevelSchema>) {

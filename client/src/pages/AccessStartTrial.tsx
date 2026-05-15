@@ -126,10 +126,10 @@ export default function AccessStartTrial() {
         <Card className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
           <p className="text-xs font-black uppercase tracking-[0.18em] text-[#A04100]">Start your 30-day TruckFixr trial</p>
           <h1 className="mt-3 font-['Manrope'] text-3xl font-black tracking-[-0.04em] text-[#00263F] sm:text-4xl">
-            Try TruckFixr Fleet AI with a small fleet. No credit card required.
+            Try TruckFixr's AI diagnosis workflow with a small fleet. No credit card required.
           </h1>
           <p className="mt-4 text-sm leading-7 text-[#42474E]">
-            TruckFixr helps your team capture inspection issues, driver reports, fault codes, and maintenance decisions in one place.
+            TruckFixr helps your team capture inspection issues, driver reports, fault codes, and AI diagnosis guidance in one place.
           </p>
 
           <form onSubmit={handleSubmit} className="mt-8 space-y-5">

@@ -1,4 +1,4 @@
-import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import { COOKIE_NAME, SESSION_DURATION_MS } from "@shared/const";
 import type { Express, Request, Response } from "express";
 import * as db from "../db";
 import { getSessionCookieOptions } from "./cookies";
@@ -36,8 +36,7 @@ import {
 import { redeemPilotAccessCode } from "../services/pilotAccess";
 
 function getSessionDurationMs(role?: string | null) {
-  if (role === "owner" || role === "manager") return 7 * 24 * 60 * 60 * 1000;
-  return 30 * 24 * 60 * 60 * 1000;
+  return SESSION_DURATION_MS;
 }
 
 function sendGenericLoginFailure(res: Response, email: string) {
@@ -52,6 +51,7 @@ export function registerEmailAuthRoutes(app: Express) {
     name: string;
     loginMethod: string;
     passwordHash?: string;
+    emailVerified?: boolean;
   }) => {
     const userDb = await db.getDb();
     if (!userDb) return null;
@@ -77,6 +77,7 @@ export function registerEmailAuthRoutes(app: Express) {
         name: input.name,
         loginMethod: input.loginMethod,
         ...(input.passwordHash ? { passwordHash: input.passwordHash } : {}),
+        ...(input.emailVerified !== undefined ? { emailVerified: input.emailVerified } : {}),
         updatedAt: new Date(),
         lastSignedIn: new Date(),
       })
