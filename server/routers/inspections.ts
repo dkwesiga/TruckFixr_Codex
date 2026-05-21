@@ -1882,6 +1882,7 @@ export const inspectionsRouter = router({
     .input(
       z.object({
         defectId: z.number().int().positive(),
+        diagnosticCaseId: z.string().trim().min(8).max(128).optional(),
         confirmedFault: z.string().trim().min(1),
         repairPerformed: z.string().trim().min(1),
         partsReplaced: z.array(z.string().trim().min(1)).default([]),
@@ -1926,11 +1927,14 @@ export const inspectionsRouter = router({
           fleetId: defect.fleetId,
           vehicleId: defect.vehicleId,
           defectId: defect.id,
+          diagnosticCaseId: input.diagnosticCaseId ?? null,
           recordedByUserId: ctx.user.id,
           confirmedFault: input.confirmedFault,
           repairPerformed: input.repairPerformed,
           partsReplaced: input.partsReplaced,
           aiDiagnosisCorrect: input.aiDiagnosisCorrect,
+          confirmationState: "manager_confirmed",
+          source: "inspection_repair_outcome",
           downtimeStart: input.downtimeStart ? new Date(input.downtimeStart) : null,
           downtimeEnd: input.downtimeEnd ? new Date(input.downtimeEnd) : null,
           returnedToServiceAt: input.returnedToServiceAt ? new Date(input.returnedToServiceAt) : null,

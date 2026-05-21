@@ -1,13 +1,13 @@
 import { lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
-import VerifiedInspection from "./pages/VerifiedInspection";
-import LandingSaaS from "./pages/LandingSaaS";
 
+const NotFound = lazy(() => import("./pages/NotFound"));
+const LandingSaaS = lazy(() => import("./pages/LandingSaaS"));
+const VerifiedInspection = lazy(() => import("./pages/VerifiedInspection"));
 const Home = lazy(() => import("./pages/Home"));
 const ManagerDashboard = lazy(() => import("./pages/ManagerDashboard"));
 const DriverDashboardSaaS = lazy(() => import("./pages/DriverDashboardSaaS"));

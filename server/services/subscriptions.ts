@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "../db";
 import {
@@ -454,17 +454,23 @@ export async function syncSubscriptionState(input: {
     updatedAt: now,
   };
 
-  const existing = (
-    await db
-      .select()
-      .from(subscriptions)
-      .where(
-        input.fleetId != null
-          ? or(eq(subscriptions.userId, input.userId), eq(subscriptions.fleetId, input.fleetId))
-          : eq(subscriptions.userId, input.userId)
-      )
-      .limit(1)
-  )[0];
+  const existing = input.fleetId != null
+    ? (
+        await db
+          .select()
+          .from(subscriptions)
+          .where(eq(subscriptions.fleetId, input.fleetId))
+          .orderBy(desc(subscriptions.updatedAt))
+          .limit(1)
+      )[0]
+    : (
+        await db
+          .select()
+          .from(subscriptions)
+          .where(and(eq(subscriptions.userId, input.userId), isNull(subscriptions.fleetId)))
+          .orderBy(desc(subscriptions.updatedAt))
+          .limit(1)
+      )[0];
   const currentTier = normalizeSubscriptionTier(existing?.tier ?? (
     await db
       .select({ subscriptionTier: users.subscriptionTier })

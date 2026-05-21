@@ -61,9 +61,10 @@ function patchWindowsViteExecProbe() {
 export async function setupVite(app: Express, server: Server) {
   patchWindowsViteExecProbe();
 
+  const viteConfigModuleUrl = new URL("../../vite.config.mjs", import.meta.url).href;
   const [{ createServer: createViteServer }, { default: viteConfig }] = await Promise.all([
     import("vite"),
-    import("../../vite.config"),
+    import(viteConfigModuleUrl),
   ]);
 
   const serverOptions = {

@@ -13,6 +13,7 @@ import { companyRouter } from "./routers/company";
 import { leadsRouter } from "./routers/leads";
 import { accessRouter } from "./routers/access";
 import { faultCodeReferencesRouter } from "./routers/faultCodeReferences";
+import { supportRecoveryRouter } from "./routers/supportRecovery";
 
 export const appRouter = router({
   system: systemRouter,
@@ -29,6 +30,7 @@ export const appRouter = router({
   leads: leadsRouter,
   access: accessRouter,
   faultCodeReferences: faultCodeReferencesRouter,
+  supportRecovery: supportRecoveryRouter,
 });
 
 export type AppRouter = typeof appRouter;

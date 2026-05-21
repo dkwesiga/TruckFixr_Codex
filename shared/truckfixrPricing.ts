@@ -243,3 +243,10 @@ export function getTruckFixrPlanLimits(planKey: PlanKey) {
     aiDiagnosticSessionLimit: plan.aiDiagnosticSessionLimit,
   };
 }
+
+export function getTruckFixrStripeLookupKey(
+  planKey: Extract<PlanKey, "owner_operator" | "small_fleet" | "fleet_growth" | "fleet_pro">,
+  billingInterval: "monthly" | "annual"
+) {
+  return `truckfixr_${planKey}_${billingInterval}_cad`;
+}

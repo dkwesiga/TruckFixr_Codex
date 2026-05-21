@@ -47,14 +47,16 @@ services:
     plan: free
     rootDir: .
     autoDeploy: true
-    buildCommand: npm install -g pnpm@10.15.1 && CI=true pnpm install --frozen-lockfile --force --reporter=append-only && pnpm exec tsx --version
-    startCommand: pnpm exec cross-env NODE_ENV=production tsx server/_core/renderStart.ts
+    buildCommand: npm install -g pnpm@10.15.1 && CI=true pnpm install --frozen-lockfile --force --reporter=append-only && pnpm build
+    startCommand: pnpm start:server
     healthCheckPath: /healthz
     envVars:
       - key: NODE_VERSION
         value: 20.19.5
       - key: NODE_ENV
         value: production
+      - key: ALLOW_RUNTIME_SCHEMA_REPAIR
+        value: "false"
       - key: VITE_APP_ID
         value: truckfixr-render
       - key: APP_BASE_URL
@@ -144,6 +146,28 @@ services:
       - key: STRIPE_SECRET_KEY
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: ENABLE_STRIPE_DIAGNOSTICS_ENDPOINT
+        value: "false"
+      - key: STRIPE_PRICE_OWNER_OPERATOR_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_OWNER_OPERATOR_ANNUAL
+        sync: false
+      - key: STRIPE_PRICE_SMALL_FLEET_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_SMALL_FLEET_ANNUAL
+        sync: false
+      - key: STRIPE_PRICE_FLEET_GROWTH_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_FLEET_GROWTH_ANNUAL
+        sync: false
+      - key: STRIPE_PRICE_FLEET_PRO_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_FLEET_PRO_ANNUAL
+        sync: false
+      - key: STRIPE_PRICE_FLEET_PILOT_30_DAY
+        sync: false
+      - key: STRIPE_PRICE_EXTRA_TRAILER_MONTHLY
         sync: false
       - key: STRIPE_PRICE_PRO_MONTHLY
         sync: false

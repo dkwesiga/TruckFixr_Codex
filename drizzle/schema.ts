@@ -149,7 +149,7 @@ export const activityLogs = pgTable("activityLogs", {
 
 export const defectActions = pgTable("defectActions", {
   id: serial("id").primaryKey(),
-  defectId: integer("defectId").notNull(),
+  defectId: integer("defectId"),
   managerId: integer("managerId").notNull(),
   actionType: defectActionTypeEnum("actionType").notNull(),
   notes: text("notes"),
@@ -461,12 +461,15 @@ export const repairOutcomes = pgTable("repairOutcomes", {
   id: serial("id").primaryKey(),
   fleetId: integer("fleetId").notNull(),
   vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
-  defectId: integer("defectId").notNull(),
+  defectId: integer("defectId"),
+  diagnosticCaseId: varchar("diagnosticCaseId", { length: 128 }),
   recordedByUserId: integer("recordedByUserId").notNull(),
   confirmedFault: text("confirmedFault").notNull(),
   repairPerformed: text("repairPerformed").notNull(),
   partsReplaced: jsonb("partsReplaced"),
   aiDiagnosisCorrect: varchar("aiDiagnosisCorrect", { length: 32 }).default("unknown").notNull(),
+  confirmationState: varchar("confirmationState", { length: 64 }).default("manager_confirmed").notNull(),
+  source: varchar("source", { length: 64 }).default("inspection_repair_outcome").notNull(),
   downtimeStart: dateTimestamp(),
   downtimeEnd: dateTimestamp(),
   returnedToServiceAt: dateTimestamp(),
@@ -796,6 +799,23 @@ export const adminAlerts = pgTable("adminAlerts", {
   status: varchar("status", { length: 64 }).default("open").notNull(),
   createdAt: dateTimestamp().defaultNow().notNull(),
   updatedAt: dateTimestamp().defaultNow().notNull(),
+});
+
+export const supportRecoveryActions = pgTable("supportRecoveryActions", {
+  id: serial("id").primaryKey(),
+  actionType: varchar("actionType", { length: 100 }).notNull(),
+  staffUserId: integer("staffUserId").notNull(),
+  targetFleetId: integer("targetFleetId"),
+  targetUserId: integer("targetUserId"),
+  targetVehicleId: varchar("targetVehicleId", { length: 64 }),
+  targetInspectionId: integer("targetInspectionId"),
+  targetDiagnosticCaseId: varchar("targetDiagnosticCaseId", { length: 128 }),
+  targetMembershipId: integer("targetMembershipId"),
+  targetPilotCodeId: integer("targetPilotCodeId"),
+  reason: text("reason").notNull(),
+  beforeState: jsonb("beforeState"),
+  afterState: jsonb("afterState"),
+  createdAt: dateTimestamp().defaultNow().notNull(),
 });
 
 export const aiUsageLogs = pgTable("aiUsageLogs", {

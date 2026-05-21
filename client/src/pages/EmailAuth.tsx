@@ -10,11 +10,6 @@ import { getApiUrl, readApiPayload } from "@/lib/api";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { trackSignup, trackLogin } from "@/lib/analytics";
-import {
-  formatCad,
-  SUBSCRIPTION_PLANS,
-  type SubscriptionTier,
-} from "../../../shared/billing";
 import { splitFullName, validateTruckFixrPassword } from "../../../shared/passwordPolicy";
 import { Eye, EyeOff } from "lucide-react";
 import { loadCompanyName, saveCompanyName } from "@/lib/companyIdentity";
@@ -26,7 +21,6 @@ export default function EmailAuth() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [name, setName] = useState("");
-  const [selectedTier, setSelectedTier] = useState<SubscriptionTier>("free");
   const [usePilotAccess, setUsePilotAccess] = useState(false);
   const [pilotCode, setPilotCode] = useState("");
   const [pilotCompanyName, setPilotCompanyName] = useState(loadCompanyName());
@@ -44,9 +38,7 @@ export default function EmailAuth() {
     companyName: string;
   } | null>(null);
   const activateFreeMutation = trpc.subscriptions.activateFree.useMutation();
-  const createCheckoutMutation = trpc.subscriptions.createCheckoutSession.useMutation();
   const redeemPilotAccessMutation = trpc.subscriptions.redeemPilotAccess.useMutation();
-  const publicPlans = Object.values(SUBSCRIPTION_PLANS).filter((plan) => plan.publicSelectable);
   const nameParts = useMemo(() => splitFullName(name), [name]);
   const passwordValidation = useMemo(
     () =>
@@ -237,6 +229,7 @@ export default function EmailAuth() {
           return;
         }
         const signupResult = await handleSignup(email, password, name);
+        const postSignupPath = inviteContext ? "/profile" : "/onboarding";
         if ((signupResult as any)?.requiresVerification) {
           toast.success("Check your email to verify your account before signing in.");
           setIsSignup(false);
@@ -254,38 +247,17 @@ export default function EmailAuth() {
             companyName: pilotCompanyName,
           });
           toast.success(
-            `Pilot Access activated through ${redemption.pilotAccess?.fleetName || "your fleet"}. Redirecting to profile setup...`
+            `Pilot Access activated through ${redemption.pilotAccess?.fleetName || "your fleet"}. Redirecting to your next setup step...`
           );
           setTimeout(() => {
-            window.location.href = '/profile';
-          }, 600);
-        } else if (selectedTier === "free") {
-          await activateFreeMutation.mutateAsync();
-          toast.success("Account created! Redirecting to profile setup...");
-          setTimeout(() => {
-            window.location.href = '/profile';
+            window.location.href = postSignupPath;
           }, 600);
         } else {
-          if (selectedTier === "fleet") {
-            toast.success("Account created. Complete your profile and request a Fleet quote from Settings.");
-            setTimeout(() => {
-              window.location.href = "/profile";
-            }, 600);
-          } else {
-            const checkout = await createCheckoutMutation.mutateAsync({
-              tier: "pro",
-              billingCadence: "monthly",
-              successPath: "/profile?subscription=success",
-              cancelPath: "/pricing?subscription=cancelled",
-            });
-
-            if (!checkout.checkoutUrl) {
-              throw new Error("Stripe checkout could not be started.");
-            }
-
-            toast.success(`Account created! Redirecting to ${SUBSCRIPTION_PLANS[selectedTier].label} checkout...`);
-            window.location.href = checkout.checkoutUrl;
-          }
+          await activateFreeMutation.mutateAsync();
+          toast.success("Account created! Redirecting to first-time setup...");
+          setTimeout(() => {
+            window.location.href = postSignupPath;
+          }, 600);
         }
       } else {
         const result = await handleSignin(email, password);
@@ -351,7 +323,7 @@ export default function EmailAuth() {
                 : isRecoveryMode
                 ? "Create a new password to finish recovery"
                 : isSignup
-                ? "Join TruckFixr to manage your fleet and review AI diagnosis guidance. We'll verify your email before app access is granted."
+                ? "Create your TruckFixr account, then we’ll walk you through fleet setup, your first truck, and your first inspection."
                 : "Welcome back to TruckFixr."}
             </p>
           </div>
@@ -368,6 +340,18 @@ export default function EmailAuth() {
                   {inviteContext.companyName ? ` for ${inviteContext.companyName}` : ""}.
                 </p>
               ) : null}
+            </div>
+          ) : null}
+
+          {isSignup && !inviteContext ? (
+            <div className="mb-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+              <p className="font-semibold text-slate-900">Start simple</p>
+              <p className="mt-1">
+                New self-serve accounts begin on a free trial so you can create your fleet, add your first truck, and test the workflow before choosing a paid plan.
+              </p>
+              <p className="mt-2">
+                Need pricing details first? <a href="/pricing" className="font-semibold text-blue-700 hover:text-blue-800">View plans</a>.
+              </p>
             </div>
           ) : null}
 
@@ -454,55 +438,18 @@ export default function EmailAuth() {
             )}
 
             {!isRecoveryMode && isSignup && (
-              <div>
-                <Label>Select Plan</Label>
-                <div className="mt-2 grid gap-3">
-                  {publicPlans.map((plan) => (
-                    <button
-                      key={plan.tier}
-                      type="button"
-                      onClick={() => setSelectedTier(plan.tier)}
-                      className={`rounded-xl border px-4 py-3 text-left transition ${
-                        selectedTier === plan.tier
-                          ? "border-blue-600 bg-blue-50 ring-2 ring-blue-100"
-                          : "border-slate-200 bg-white hover:border-slate-300"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900">{plan.label}</p>
-                          <p className="mt-1 text-xs text-slate-600">{plan.description}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-sm font-semibold text-slate-900">
-                            {plan.tier === "free"
-                              ? "CAD $0"
-                              : plan.tier === "pro"
-                                ? `${formatCad(plan.monthlyPriceCad ?? 0)}/vehicle`
-                                : plan.publicPriceAnchor}
-                          </p>
-                          <p className="text-xs text-slate-500">
-                            {plan.limits.activeVehicleCount === null
-                              ? "Scales with active vehicles"
-                              : `${plan.limits.activeVehicleCount} active vehicles`}
-                          </p>
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-                <p className="mt-2 text-xs text-slate-500">
-                  Free plans continue directly. Paid plans go to Stripe checkout before activation.
+              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
+                <p className="text-sm font-semibold text-slate-900">Pilot or invite-based access</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Only use this if TruckFixr gave you a pilot code or sent you an invitation-based setup path.
                 </p>
-                <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
+                <div className="mt-4">
                   <button
                     type="button"
                     onClick={() => {
                       setUsePilotAccess((current) => {
                         const next = !current;
-                        if (next) {
-                          setSelectedTier("free");
-                        } else {
+                        if (!next) {
                           setPilotCode("");
                           setPilotCompanyName("");
                           setPilotCodeError("");
@@ -569,7 +516,7 @@ export default function EmailAuth() {
                   : isSignup
                   ? usePilotAccess
                     ? "Create Account & Activate Pilot Access"
-                    : "Create Account"
+                    : "Create Account & Start Setup"
                   : "Sign In"}
             </Button>
           </form>
@@ -609,7 +556,6 @@ export default function EmailAuth() {
                   setPassword("");
                   setConfirmPassword("");
                   setName("");
-                  setSelectedTier("free");
                   setUsePilotAccess(false);
                   setPilotCode("");
                   setPilotCompanyName("");

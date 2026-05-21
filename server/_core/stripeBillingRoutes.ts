@@ -1,4 +1,7 @@
 import express, { type Express, type Request, type Response } from "express";
+import { ENV } from "./env";
+import { sdk } from "./sdk";
+import { isStaffAdminUser } from "./trpc";
 import {
   getTruckFixrBillingSnapshotFromStripeSubscription,
   getSubscriptionSnapshotFromStripeSubscription,
@@ -8,6 +11,7 @@ import {
   retrieveStripeSubscription,
   verifyStripeWebhookSignature,
 } from "../services/stripeBilling";
+import { getStripeAdminReadinessSummary } from "../services/stripeReadiness";
 import { findUserIdByStripeReference, getSubscriptionState, syncSubscriptionState } from "../services/subscriptions";
 import type { BillingStatus } from "../../shared/billing";
 
@@ -23,11 +27,18 @@ function normalizeStripeBillingStatus(value: unknown): BillingStatus {
   return "active";
 }
 
-export async function processStripeWebhookEvent(event: {
-  id?: string;
-  type: string;
-  data: { object: Record<string, unknown> };
-}) {
+export async function processStripeWebhookEvent(
+  event: {
+    id?: string;
+    type: string;
+    data: { object: Record<string, unknown> };
+  },
+  options?: {
+    loadSubscription?: typeof retrieveStripeSubscription;
+  }
+) {
+  const loadSubscription = options?.loadSubscription ?? retrieveStripeSubscription;
+
   if (event.id) {
     if (processedWebhookEventIds.has(event.id)) {
       return;
@@ -51,7 +62,7 @@ export async function processStripeWebhookEvent(event: {
         }));
 
       if (userId && subscriptionId) {
-        const subscription = await retrieveStripeSubscription(subscriptionId);
+        const subscription = await loadSubscription(subscriptionId);
         const truckfixrSnapshot = getTruckFixrBillingSnapshotFromStripeSubscription(subscription);
         if (truckfixrSnapshot.companyId && truckfixrSnapshot.planKey) {
           await syncSubscriptionState({
@@ -185,7 +196,7 @@ export async function processStripeWebhookEvent(event: {
         if (userId) {
           const current = await getSubscriptionState(userId);
           if (object.subscription) {
-            const subscription = await retrieveStripeSubscription(object.subscription);
+            const subscription = await loadSubscription(object.subscription);
             const truckfixrSnapshot = getTruckFixrBillingSnapshotFromStripeSubscription(subscription);
             if (truckfixrSnapshot.companyId && truckfixrSnapshot.planKey) {
               await syncSubscriptionState({
@@ -242,6 +253,25 @@ export async function processStripeWebhookEvent(event: {
 }
 
 export function registerStripeBillingRoutes(app: Express) {
+  app.get("/api/admin/stripe/readiness", async (req: Request, res: Response) => {
+    if (!ENV.enableStripeDiagnosticsEndpoint) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+
+    try {
+      const user = await sdk.authenticateRequest(req);
+      if (!user || !isStaffAdminUser(user)) {
+        res.status(403).json({ error: "This action is limited to TruckFixr staff administrators." });
+        return;
+      }
+
+      res.status(200).json(getStripeAdminReadinessSummary());
+    } catch {
+      res.status(403).json({ error: "This action is limited to TruckFixr staff administrators." });
+    }
+  });
+
   app.post(
     "/api/stripe/webhook",
     express.raw({ type: "application/json" }),

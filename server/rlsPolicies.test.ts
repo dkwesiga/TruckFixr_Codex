@@ -6,10 +6,23 @@ const migration = readFileSync(
   resolve(process.cwd(), "drizzle/0015_harden_rls_and_sessions.sql"),
   "utf8"
 );
+const expandedMigration = readFileSync(
+  resolve(process.cwd(), "drizzle/0016_expand_fleet_scoped_rls.sql"),
+  "utf8"
+);
+const supportRecoveryMigration = readFileSync(
+  resolve(process.cwd(), "drizzle/0017_support_recovery_actions.sql"),
+  "utf8"
+);
+const mvpHardeningMigration = readFileSync(
+  resolve(process.cwd(), "drizzle/0019_mvp_readiness_hardening.sql"),
+  "utf8"
+);
+const allRlsMigrations = `${migration}\n${expandedMigration}\n${supportRecoveryMigration}\n${mvpHardeningMigration}`;
 
 function policyBlock(name: string) {
   const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = migration.match(
+  const match = allRlsMigrations.match(
     new RegExp(`CREATE POLICY "${escapedName}"[\\s\\S]*?(?=\\nDROP POLICY|\\nCREATE POLICY|$)`)
   );
   return match?.[0] ?? "";
@@ -75,5 +88,58 @@ describe("RLS hardening migration", () => {
     expect(insertPolicy).not.toContain("WITH CHECK (true)");
     expect(updatePolicy).toContain('FOR UPDATE USING ("userId" = "current_app_user_id"())');
     expect(updatePolicy).toContain('WITH CHECK ("userId" = "current_app_user_id"())');
+  });
+
+  it("adds tenant-scoped read policies for newer operational tables", () => {
+    [
+      "companyMemberships_select_policy",
+      "companyJoinRequests_select_policy",
+      "vehicleAssignments_select_policy",
+      "vehicleAccessRequests_select_policy",
+      "inspectionChecklistResponses_select_policy",
+      "inspectionPhotos_select_policy",
+      "randomProofRequests_select_policy",
+      "inspectionFlags_select_policy",
+      "repairOutcomes_select_policy",
+      "aiUsageLogs_select_policy",
+      "aiRequestLogs_select_policy",
+      "aiQualityReviews_select_policy",
+      "diagnosticReviewQueue_select_policy",
+      "subscriptions_select_policy",
+      "pilotAccessRedemptions_select_policy",
+      "adminAlerts_select_policy",
+    ].forEach((name) => {
+      expect(policyBlock(name), name).toContain("current_app_user_id");
+    });
+
+    expect(policyBlock("repairOutcomes_select_policy")).toContain('"user_has_fleet_access"');
+    expect(policyBlock("vehicleAssignments_select_policy")).toContain('"driverUserId" = "current_app_user_id"()');
+    expect(policyBlock("subscriptions_select_policy")).toContain('"userId" = "current_app_user_id"()');
+  });
+
+  it("does not reintroduce legacy manager linkage or blanket authenticated access in expanded policies", () => {
+    expect(expandedMigration).not.toContain("managerUserId");
+    expect(expandedMigration).not.toContain("WITH CHECK (true)");
+    expect(expandedMigration).not.toContain("USING (true)");
+  });
+
+  it("keeps support recovery audit rows staff-service-only and indexed for pilot troubleshooting", () => {
+    expect(supportRecoveryMigration).toContain('ALTER TABLE "supportRecoveryActions" ENABLE ROW LEVEL SECURITY');
+    expect(policyBlock("supportRecoveryActions_service_role_full_access")).toContain("FOR ALL TO service_role");
+    expect(supportRecoveryMigration).not.toContain("TO authenticated");
+    expect(mvpHardeningMigration).toContain('"targetInspectionId"');
+    expect(mvpHardeningMigration).toContain('"targetDiagnosticCaseId"');
+    expect(mvpHardeningMigration).toContain('"supportRecoveryActions_targetVehicle_created_idx"');
+  });
+
+  it("adds lookup indexes for core pilot workflows that need fast support and history checks", () => {
+    [
+      "inspections_fleet_vehicle_created_idx",
+      "activityLogs_fleet_vehicle_action_created_idx",
+      "aiQualityReviews_fleet_vehicle_case_idx",
+      "aiUsageLogs_fleet_vehicle_created_idx",
+    ].forEach((indexName) => {
+      expect(mvpHardeningMigration).toContain(`"${indexName}"`);
+    });
   });
 });

@@ -2,13 +2,16 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import AppLogo from "@/components/AppLogo";
 import { Check, ChevronRight, Clock, Zap, BarChart3, AlertCircle, ArrowRight } from "lucide-react";
-import { getLoginUrl } from "@/const";
 import { useState } from "react";
 import {
   formatTruckFixrCad,
   getPublicTruckFixrPlans,
   getTruckFixrPlanPrice,
 } from "../../../shared/truckfixrPricing";
+
+const pricingPlans = getPublicTruckFixrPlans().filter((plan) =>
+  ["free_trial", "small_fleet", "fleet_growth", "fleet_pro"].includes(plan.planKey)
+);
 
 export default function Landing() {
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
@@ -36,60 +39,6 @@ export default function Landing() {
     },
   ];
 
-const legacyPricingPlans = [
-    {
-      name: "Starter",
-      trucks: "2–5 trucks",
-      price: "$99",
-      period: "/month",
-      features: [
-        "Daily inspections & defect capture",
-        "Basic TADIS diagnostics",
-        "Morning fleet summary",
-        "Action queue & defect tracking",
-        "Up to 3 team members",
-        "Email support",
-      ],
-      cta: "Start Free Trial",
-      highlighted: false,
-    },
-    {
-      name: "Growth",
-      trucks: "6–10 trucks",
-      price: "$249",
-      period: "/month",
-      features: [
-        "Everything in Starter, plus:",
-        "Advanced reporting & analytics",
-        "Maintenance history & logs",
-        "Up to 10 team members",
-        "Priority email support",
-        "Truck health trends",
-      ],
-      cta: "Start Free Trial",
-      highlighted: true,
-    },
-    {
-      name: "Fleet",
-      trucks: "11–20 trucks",
-      price: "$499",
-      period: "/month",
-      features: [
-        "Everything in Growth, plus:",
-        "Custom inspection templates",
-        "Predictive maintenance insights",
-        "Unlimited team members",
-        "Phone & email support",
-        "API access (coming soon)",
-      ],
-      cta: "Start Free Trial",
-      highlighted: false,
-    },
-  ];
-
-  const pricingPlans = getPublicTruckFixrPlans().filter((plan) =>
-    ["free_trial", "small_fleet", "fleet_growth", "fleet_pro"].includes(plan.planKey)
-  );
 
   const supporters = [
     {
@@ -448,3 +397,4 @@ const legacyPricingPlans = [
     </div>
   );
 }
+

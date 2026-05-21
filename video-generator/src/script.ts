@@ -8,70 +8,13 @@ export const brandNarrative = {
   cta: "Start a TruckFixr Fleet AI pilot.",
 };
 
-export const voiceoverScripts: Record<DurationKey, string> = {
-  "30": `Commercial fleet maintenance is too often scattered across driver messages, inspections, phone calls, and repair notes.
-
-TruckFixr Fleet AI brings it into one intelligent workflow.
-
-Drivers report issues. TruckFixr analyzes symptoms, fault codes, inspections, and vehicle history. Managers see what needs attention and act faster.
-
-Built from real commercial truck repair experience, TruckFixr helps fleets improve visibility, strengthen inspection follow-up, and reduce preventable downtime.
-
-Start a TruckFixr Fleet AI pilot.`,
-  "60": `Commercial fleets lose time and money when maintenance decisions are scattered across phone calls, paper inspections, driver messages, and mechanic memory.
-
-A warning light appears. A driver reports a defect. A manager has to decide fast: keep moving, schedule service, or pull the vehicle off the road.
-
-TruckFixr Fleet AI brings those signals into one intelligent maintenance workflow.
-
-Built from real commercial truck repair experience, TruckFixr helps fleets turn inspections, driver reports, fault symptoms, and maintenance history into faster repair decisions.
-
-Drivers can submit inspections, report issues, and capture symptoms from the road.
-
-Instead of loose messages and incomplete notes, every issue becomes structured maintenance information.
-
-TruckFixr analyzes symptoms, fault codes, inspection results, and vehicle history to help prioritize the next step.
-
-It helps managers understand what may be urgent, what can be monitored, and what should be sent for repair.
-
-Fleet managers get a clearer view of vehicle condition, open issues, repair history, and maintenance priorities.
-
-Drivers report issues. Managers act faster. Repair teams receive better information.
-
-The result is better visibility, faster decisions, stronger inspection follow-up, and fewer preventable surprises.
-
-Start a TruckFixr Fleet AI pilot and turn daily fleet issues into faster maintenance decisions.`,
-  "90": `Commercial fleets lose time and money when maintenance decisions are reactive.
-
-A driver reports a defect. A warning light comes on. An inspection is missed. A repair note gets buried in a text message. By the time the issue becomes urgent, the fleet may already be facing downtime.
-
-TruckFixr Fleet AI helps fleets manage those signals before they turn into preventable breakdowns.
-
-Built from real commercial truck repair experience, TruckFixr turns inspections, driver reports, fault symptoms, and maintenance history into a structured maintenance workflow.
-
-Drivers can complete inspections, report defects, and submit symptoms from the road.
-
-Fleet managers can see open issues, vehicle status, maintenance history, and repair priorities in one place.
-
-TruckFixr’s AI helps triage reported issues by reviewing symptoms, fault codes, inspection results, and previous maintenance records.
-
-That helps managers decide what needs immediate attention, what can be monitored, and what should be sent for repair.
-
-Instead of relying on scattered messages and memory, fleets get clearer information, better follow-up, and faster maintenance decisions.
-
-Drivers report issues. Managers act faster. Repair teams receive better information. Fleet owners gain visibility across their vehicles.
-
-TruckFixr Fleet AI is built for commercial fleets that want fewer surprises, stronger inspection discipline, and better control over maintenance decisions.
-
-Start a TruckFixr Fleet AI pilot and turn daily fleet issues into faster maintenance decisions.`,
-};
-
 type SceneSeed = {
   key: ScenePlan["key"];
   label: string;
   headline: string;
   body: string;
   seconds: number;
+  narration: string;
 };
 
 const sceneSeeds: Record<DurationKey, SceneSeed[]> = {
@@ -82,6 +25,8 @@ const sceneSeeds: Record<DurationKey, SceneSeed[]> = {
       headline: "Fleet maintenance is still too scattered.",
       body: "Messages, inspections, warning lights, and repair notes often live in different places.",
       seconds: 4,
+      narration:
+        "Commercial fleet maintenance is too often scattered across driver messages, inspections, phone calls, and repair notes.",
     },
     {
       key: "productIntro",
@@ -89,6 +34,7 @@ const sceneSeeds: Record<DurationKey, SceneSeed[]> = {
       headline: "Meet TruckFixr Fleet AI.",
       body: "One workflow for field reports, inspections, and maintenance decisions.",
       seconds: 4,
+      narration: "TruckFixr Fleet AI brings it into one intelligent workflow.",
     },
     {
       key: "driverWorkflow",
@@ -96,6 +42,8 @@ const sceneSeeds: Record<DurationKey, SceneSeed[]> = {
       headline: "Drivers report issues from the road.",
       body: "Inspections, defects, and symptoms become structured maintenance information.",
       seconds: 6,
+      narration:
+        "Drivers report issues. TruckFixr analyzes symptoms, fault codes, inspections, and vehicle history.",
     },
     {
       key: "aiTriage",
@@ -103,6 +51,7 @@ const sceneSeeds: Record<DurationKey, SceneSeed[]> = {
       headline: "AI reviews symptoms, fault codes, and history.",
       body: "TruckFixr helps sort what looks urgent from what can be monitored.",
       seconds: 6,
+      narration: "Managers see what needs attention and act faster.",
     },
     {
       key: "managerVisibility",
@@ -110,6 +59,8 @@ const sceneSeeds: Record<DurationKey, SceneSeed[]> = {
       headline: "Managers see what needs attention and act faster.",
       body: "Priority, vehicle status, and next steps show up in one place.",
       seconds: 5,
+      narration:
+        "Built from real commercial truck repair experience, TruckFixr helps fleets improve visibility and strengthen inspection follow-up.",
     },
     {
       key: "outcome",
@@ -117,6 +68,7 @@ const sceneSeeds: Record<DurationKey, SceneSeed[]> = {
       headline: "Better visibility. Better follow-up. Less preventable downtime.",
       body: "Built for practical fleet operations, not hype.",
       seconds: 3,
+      narration: "That means fewer preventable downtime surprises.",
     },
     {
       key: "cta",
@@ -124,6 +76,7 @@ const sceneSeeds: Record<DurationKey, SceneSeed[]> = {
       headline: "Start a TruckFixr Fleet AI pilot.",
       body: "Turn daily fleet issues into faster maintenance decisions.",
       seconds: 2,
+      narration: "Start a TruckFixr Fleet AI pilot.",
     },
   ],
   "60": [
@@ -133,6 +86,8 @@ const sceneSeeds: Record<DurationKey, SceneSeed[]> = {
       headline: "Fleet maintenance is still too scattered.",
       body: "Commercial fleets juggle warning lights, phone calls, paper inspections, texts, and mechanic memory.",
       seconds: 6,
+      narration:
+        "Commercial fleets lose time and money when maintenance decisions are scattered across phone calls, paper inspections, driver messages, and mechanic memory.",
     },
     {
       key: "productIntro",
@@ -140,6 +95,8 @@ const sceneSeeds: Record<DurationKey, SceneSeed[]> = {
       headline: "Meet TruckFixr Fleet AI.",
       body: "A practical maintenance workflow built from real truck repair experience.",
       seconds: 6,
+      narration:
+        "A warning light appears. A driver reports a defect. A manager has to decide fast: keep moving, schedule service, or pull the vehicle off the road.",
     },
     {
       key: "driverWorkflow",
@@ -147,6 +104,8 @@ const sceneSeeds: Record<DurationKey, SceneSeed[]> = {
       headline: "Drivers submit inspections and report issues.",
       body: "Symptoms, photos, and notes move from loose messages into structured fleet information.",
       seconds: 9,
+      narration:
+        "TruckFixr Fleet AI brings those signals into one intelligent maintenance workflow. Drivers can submit inspections, report issues, and capture symptoms from the road.",
     },
     {
       key: "aiTriage",
@@ -154,6 +113,8 @@ const sceneSeeds: Record<DurationKey, SceneSeed[]> = {
       headline: "AI triages symptoms, fault codes, and history.",
       body: "TruckFixr helps managers decide what may be urgent, what can be monitored, and what should be sent for repair.",
       seconds: 11,
+      narration:
+        "Instead of loose messages and incomplete notes, every issue becomes structured maintenance information. TruckFixr analyzes symptoms, fault codes, inspection results, and vehicle history to help prioritize the next step.",
     },
     {
       key: "managerVisibility",
@@ -161,20 +122,26 @@ const sceneSeeds: Record<DurationKey, SceneSeed[]> = {
       headline: "Managers see priority, status, and next steps.",
       body: "Dashboards, vehicle context, and maintenance history are visible in one place.",
       seconds: 10,
+      narration:
+        "It helps managers understand what may be urgent, what can be monitored, and what should be sent for repair. Fleet managers get a clearer view of vehicle condition, open issues, repair history, and maintenance priorities.",
     },
     {
       key: "outcome",
       label: "Outcome",
       headline: "Faster decisions. Better follow-up. Less preventable downtime.",
       body: "Drivers report issues, managers act faster, and repair teams receive better information.",
-      seconds: 7,
+      seconds: 8,
+      narration:
+        "Built from real commercial truck repair experience, TruckFixr helps fleets turn inspections, driver reports, fault symptoms, and maintenance history into faster repair decisions. Drivers report issues. Managers act faster. Repair teams receive better information.",
     },
     {
       key: "cta",
       label: "CTA",
       headline: "Start a TruckFixr Fleet AI pilot.",
       body: "Turn daily fleet issues into faster maintenance decisions.",
-      seconds: 5,
+      seconds: 10,
+      narration:
+        "The result is better visibility, faster decisions, stronger inspection follow-up, and fewer preventable surprises. Start a TruckFixr Fleet AI pilot and turn daily fleet issues into faster maintenance decisions.",
     },
   ],
   "90": [
@@ -184,6 +151,8 @@ const sceneSeeds: Record<DurationKey, SceneSeed[]> = {
       headline: "Reactive maintenance creates preventable downtime.",
       body: "Defects, missed inspections, and buried repair notes all slow down maintenance decisions.",
       seconds: 12,
+      narration:
+        "Commercial fleets lose time and money when maintenance decisions are reactive. A driver reports a defect. A warning light comes on. An inspection is missed. A repair note gets buried in a text message. By the time the issue becomes urgent, the fleet may already be facing downtime.",
     },
     {
       key: "productIntro",
@@ -191,6 +160,8 @@ const sceneSeeds: Record<DurationKey, SceneSeed[]> = {
       headline: "TruckFixr brings those signals into one workflow.",
       body: "Built for commercial fleets that need operational clarity instead of more scattered communication.",
       seconds: 12,
+      narration:
+        "TruckFixr Fleet AI helps fleets manage those signals before they turn into preventable breakdowns. Built from real commercial truck repair experience, TruckFixr turns inspections, driver reports, fault symptoms, and maintenance history into a structured maintenance workflow.",
     },
     {
       key: "driverWorkflow",
@@ -198,13 +169,17 @@ const sceneSeeds: Record<DurationKey, SceneSeed[]> = {
       headline: "Drivers complete inspections, report defects, and submit symptoms from the road.",
       body: "That creates structured maintenance information the rest of the team can actually act on.",
       seconds: 14,
+      narration:
+        "Drivers can complete inspections, report defects, and submit symptoms from the road. Fleet managers can see open issues, vehicle status, maintenance history, and repair priorities in one place.",
     },
     {
       key: "aiTriage",
       label: "AI Triage",
-      headline: "TruckFixr’s AI reviews symptoms, fault codes, inspection results, and maintenance history.",
+      headline: "TruckFixr's AI reviews symptoms, fault codes, inspection results, and maintenance history.",
       body: "That helps separate issues that need immediate attention from those that can be monitored or scheduled.",
       seconds: 18,
+      narration:
+        "TruckFixr's AI helps triage reported issues by reviewing symptoms, fault codes, inspection results, and previous maintenance records. That helps managers decide what needs immediate attention, what can be monitored, and what should be sent for repair.",
     },
     {
       key: "managerVisibility",
@@ -212,6 +187,8 @@ const sceneSeeds: Record<DurationKey, SceneSeed[]> = {
       headline: "Fleet managers see open issues, vehicle status, repair history, and priorities in one place.",
       body: "The workflow supports stronger follow-up and faster decision-making across the fleet.",
       seconds: 16,
+      narration:
+        "Instead of relying on scattered messages and memory, fleets get clearer information, better follow-up, and faster maintenance decisions. Drivers report issues. Managers act faster. Repair teams receive better information. Fleet owners gain visibility across their vehicles.",
     },
     {
       key: "outcome",
@@ -219,6 +196,8 @@ const sceneSeeds: Record<DurationKey, SceneSeed[]> = {
       headline: "Fewer surprises. Stronger inspection discipline. Better control over maintenance decisions.",
       body: "Better information helps owners, dispatchers, managers, and repair teams stay aligned.",
       seconds: 11,
+      narration:
+        "TruckFixr Fleet AI is built for commercial fleets that want fewer surprises, stronger inspection discipline, and better control over maintenance decisions.",
     },
     {
       key: "cta",
@@ -226,8 +205,16 @@ const sceneSeeds: Record<DurationKey, SceneSeed[]> = {
       headline: "Start a TruckFixr Fleet AI pilot.",
       body: "Turn daily fleet issues into faster maintenance decisions.",
       seconds: 7,
+      narration:
+        "Start a TruckFixr Fleet AI pilot and turn daily fleet issues into faster maintenance decisions.",
     },
   ],
+};
+
+export const voiceoverScripts: Record<DurationKey, string> = {
+  "30": sceneSeeds["30"].map((scene) => scene.narration).join("\n\n"),
+  "60": sceneSeeds["60"].map((scene) => scene.narration).join("\n\n"),
+  "90": sceneSeeds["90"].map((scene) => scene.narration).join("\n\n"),
 };
 
 export const screenshotLibrary: Record<ScreenshotAsset, string> = {
@@ -276,7 +263,12 @@ export const sceneShotPreferences: Record<
     vertical: ["mobileSymptomEntry", "mobileAiResult", "mobileNextAction"],
   },
   managerVisibility: {
-    landscape: ["desktopMainDashboard", "desktopVehicleProfile", "desktopMaintenanceHistory", "desktopManagerPriority"],
+    landscape: [
+      "desktopMainDashboard",
+      "desktopVehicleProfile",
+      "desktopMaintenanceHistory",
+      "desktopManagerPriority",
+    ],
     vertical: ["mobileAiResult", "mobileNextAction", "desktopManagerPriority"],
   },
   outcome: {

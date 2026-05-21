@@ -2,67 +2,67 @@
 
 ## Open Tasks
 
-- Task ID: TFX-CR-0001
-  - Task: Complete live verification of the RLS hardening migration so company separation no longer depends on legacy `managerUserId` policy logic or the old open `activityLogs` insert rule.
-  - Category: Security & access control
-  - Severity: Critical
-  - First discovered date: 2026-05-11
-  - Last seen date: 2026-05-14
-  - Affected files: `drizzle/0005_rls_policies.sql`, `drizzle/0015_harden_rls_and_sessions.sql`, `server/rlsPolicies.test.ts`, `server/companyAccess.test.ts`
-  - Status: Open
-  - Recommended fix: The local hardening and static verification are in place; now run migration `0015` in a Supabase-like environment and validate real cross-company denial cases with normal user-context queries.
-  - Verification command or check required: Seed multiple companies, authenticate as normal users, and verify cross-company reads and writes fail for vehicles, inspections, diagnostics, defects, activity logs, repair outcomes, attachments, and billing.
-
 - Task ID: TFX-CR-0003
   - Task: Finish normalizing confirmed diagnosis outcomes so repair confirmation, confirmed cause, AI correctness, and follow-on learning do not depend on loose JSON trails.
   - Category: Knowledge base/history growth
   - Severity: High
   - First discovered date: 2026-05-11
-  - Last seen date: 2026-05-14
-  - Affected files: `server/routers/diagnostics.ts`, `server/services/diagnosisWorkflow.ts`, `server/services/aiQualityReviewLog.ts`, `server/services/tadisCore.ts`, `activityLogs` table, `repairOutcomes` table, `aiQualityReviews` table
+  - Last seen date: 2026-05-19
+  - Affected files: `server/routers/diagnostics.ts`, `server/services/diagnosisWorkflow.ts`, `server/services/aiQualityReviewLog.ts`, `server/services/tadisCore.ts`, `drizzle/schema.ts`, `drizzle/0018_link_repair_outcomes_to_diagnostics.sql`, `drizzle/0019_mvp_readiness_hardening.sql`, `server/diagnosticFeedbackPersistence.test.ts`, `activityLogs` table, `repairOutcomes` table, `aiQualityReviews` table
   - Status: Open
-  - Recommended fix: Strengthen dedicated schema and retrieval paths for confirmed causes, fixes, confirmation state, linked diagnosis sessions, parts, downtime, and AI correctness so future similar-case retrieval uses clean structured records.
-  - Verification command or check required: Confirm a repair outcome, verify it appears in normalized storage, and confirm it is retrieved as a future similar solved case within the same fleet only.
+  - Recommended fix: Approved Batch G now persists solved-case context, same-fleet retrieval signals, and manager/mechanic feedback into normalized `repairOutcomes` plus AI review metadata; next verify retrieval quality with real repaired cases and tighten any remaining normalization gaps.
+  - Verification command or check required: Confirm a repair outcome, verify it appears in normalized storage, and confirm it is retrieved as a future similar solved case within the same fleet only with the expected cause/fix context.
 
 - Task ID: TFX-CR-0004
   - Task: Remove broad runtime schema mutation from `server/db.ts` and reduce it to connection and bootstrap responsibilities.
   - Category: Code quality & maintainability
   - Severity: High
   - First discovered date: 2026-05-11
-  - Last seen date: 2026-05-14
-  - Affected files: `server/db.ts`
+  - Last seen date: 2026-05-19
+  - Affected files: `server/db.ts`, `render.yaml`, `server/dbStartupPolicy.test.ts`
   - Status: Open
-  - Recommended fix: Move schema creation and repair logic into reviewed Drizzle migrations, then verify clean startup from migrations only.
-  - Verification command or check required: Run clean database migration, app startup, demo seed validation, `pnpm check`, `pnpm test`, and `pnpm build`.
+  - Recommended fix: Approved Batch I and the live readiness backfills are enough to keep the current environment running, but the remaining startup-time schema repair in `server/db.ts` should still be removed in favor of the reviewed migration path so future environments do not depend on ad hoc repair logic.
+  - Verification command or check required: Bring up a fresh database from the canonical migrations only, then run app startup, demo seed validation, `pnpm check`, `pnpm test`, `pnpm build`, and browser smoke without extra live backfill scripts.
 
 - Task ID: TFX-CR-0006
   - Task: Add stronger automated coverage for assigned-driver inspection and diagnosis happy paths after access hardening.
   - Category: Daily inspection workflow
   - Severity: Medium
   - First discovered date: 2026-05-11
-  - Last seen date: 2026-05-13
+  - Last seen date: 2026-05-19
   - Affected files: `server/routers/diagnostics.ts`, `server/routers/inspections.ts`, related test files
   - Status: Open
-  - Recommended fix: Add seeded assignment-based tests for inspection start, diagnosis start, submission, DVIR report viewing, and manager visibility.
-  - Verification command or check required: Run targeted inspection and diagnosis route tests plus browser smoke checks.
+  - Recommended fix: Production browser smoke now proves the driver login, inspection entry, and diagnosis result routes load successfully. Remaining work is to add deeper automated happy-path coverage for actual submission, DVIR completion, and manager review visibility.
+  - Verification command or check required: Run targeted inspection/diagnosis route tests plus browser smoke that exercises a full submit/review flow.
 
 - Task ID: TFX-CR-0007
   - Task: Reduce repeated AI cost and latency across multi-question diagnosis sessions.
   - Category: Performance & AI cost control
   - Severity: Medium
   - First discovered date: 2026-05-11
-  - Last seen date: 2026-05-14
-  - Affected files: `server/routers/diagnostics.ts`, `server/services/diagnosisWorkflow.ts`, `server/services/aiOrchestrator.ts`
+  - Last seen date: 2026-05-19
+  - Affected files: `server/routers/diagnostics.ts`, `server/services/diagnosisWorkflow.ts`, `server/services/aiOrchestrator.ts`, `server/_core/index.ts`, `drizzle/0019_mvp_readiness_hardening.sql`
   - Status: Open
-  - Recommended fix: Persist compact diagnosis session state, reuse support context across clarification rounds, and add retry or cost ceilings.
-  - Verification command or check required: Multi-clarification diagnosis tests with token, retry, and cost assertions.
+  - Recommended fix: Approved Batch E/C reduced the diagnosis smoke route to `3092 ms` total duration and `1461 ms` usable time. Keep this task open only for live multi-clarification timing/cost proof, prompt compaction, and lower-end device validation.
+  - Verification command or check required: Multi-clarification diagnosis tests with token, retry, and cost assertions, then rerun `pnpm verify:browser-smoke` and confirm live diagnosis paths stay below the MVP thresholds.
+
+- Task ID: TFX-CR-0023
+  - Task: Unblock sandbox/CI-safe verification so `pnpm test`, `pnpm build`, and `pnpm verify:browser-smoke` don't fail with `spawn EPERM` when Vite/Vitest/esbuild or Playwright attempts to launch child processes.
+  - Category: Developer experience / verification reliability
+  - Severity: High
+  - First discovered date: 2026-05-18
+  - Last seen date: 2026-05-20
+  - Affected files: `scripts/run-vitest.mjs`, `scripts/run-build-client.mjs`, `scripts/verify/browser-smoke.ts`, Vite/Vitest/esbuild toolchain configuration
+  - Status: Open (regressed)
+  - Recommended fix: Restore the sandbox-safe verification approach so builds/tests/smokes run without blocked `spawn` calls in constrained environments, and keep it stable across dependency upgrades.
+  - Verification command or check required: In this sandbox/CI-like environment, `pnpm test`, `pnpm build`, and `pnpm verify:browser-smoke` all pass end-to-end.
 
 - Task ID: TFX-CR-0017
   - Task: Add production observability and error monitoring coverage for backend, AI provider, Supabase, and Stripe failures.
   - Category: Observability, logging & error monitoring
   - Severity: Medium
   - First discovered date: 2026-05-12
-  - Last seen date: 2026-05-14
+  - Last seen date: 2026-05-19
   - Affected files: backend services, deployment/runtime configuration
   - Status: Open
   - Recommended fix: Add a production-safe error monitoring path and capture key operational failures without exposing secrets or customer data.
@@ -73,7 +73,7 @@
   - Category: Demo/test/production data separation
   - Severity: Medium
   - First discovered date: 2026-05-12
-  - Last seen date: 2026-05-14
+  - Last seen date: 2026-05-19
   - Affected files: `scripts/demo/demoSeedWorkflow.ts`, `shared/demoAssets.ts`, analytics/reporting/learning consumers, billing/reporting queries
   - Status: Open
   - Recommended fix: Add explicit demo filters or a first-class demo marker wherever aggregate analytics, billing, customer reporting, or diagnostic learning consumes seeded records.
@@ -84,39 +84,59 @@
   - Category: Customer support/admin recovery
   - Severity: High
   - First discovered date: 2026-05-13
-  - Last seen date: 2026-05-14
-  - Affected files: support/admin router and UI to be created, `server/_core/trpc.ts`, company/vehicle/access services
+  - Last seen date: 2026-05-19
+  - Affected files: `server/routers/supportRecovery.ts`, `server/services/supportRecovery.ts`, `server/supportRecovery.test.ts`, `drizzle/schema.ts`, `drizzle/0017_support_recovery_actions.sql`, `drizzle/0019_mvp_readiness_hardening.sql`, `server/_core/trpc.ts`, company/vehicle/access services
   - Status: Open
-  - Recommended fix: Add staff-only audited actions for wrong company assignment, driver invite correction, vehicle reassignment, user deactivation or reactivation, pilot-code reset or reissue, failed inspection or diagnosis recovery visibility, and subscription status support.
-  - Verification command or check required: Staff-only permission tests, audit log checks, and negative tests for owners, managers, and drivers.
+  - Recommended fix: Approved Batch J added staff-only user reactivation, richer pilot-code/subscription recovery snapshot data, and the earlier audited recovery actions; remaining work is to verify audit writes under real DB permissions and add any still-missing operator-facing recovery entry points.
+  - Verification command or check required: Staff-only permission tests, audit log checks, service-role or policy verification for `supportRecoveryActions`, and negative tests for owners, managers, and drivers.
 
 - Task ID: TFX-CR-0021
   - Task: Verify pilot-to-paid billing conversion and subscription enforcement in staging.
   - Category: Billing / subscription readiness
   - Severity: Medium
   - First discovered date: 2026-05-13
-  - Last seen date: 2026-05-14
-  - Affected files: `server/services/stripeBilling.ts`, `server/_core/stripeBillingRoutes.ts`, `server/services/subscriptions.ts`, billing UI
+  - Last seen date: 2026-05-19
+  - Affected files: `server/services/stripeBilling.ts`, `server/_core/stripeBillingRoutes.ts`, `server/services/subscriptions.ts`, `server/subscriptions.billing.test.ts`, billing UI
   - Status: Open
-  - Recommended fix: Run Stripe test-mode checkout and webhook scenarios for company-level billing, trial or pilot expiry, failed payment, cancellation, and data preservation after conversion.
-  - Verification command or check required: Staging Stripe checkout, webhook replay, subscription state assertions, and route-level plan enforcement tests.
+  - Recommended fix: Approved Stripe hardening aligned readiness to canonical lookup-key fallback, turned missing explicit plan envs into warnings, and safely refuses `sk_live_...` verification. The current live blocker is that `pnpm verify:stripe` fails with `Invalid API Key provided` for the active `sk_test_...` credential; replace the invalid test key, keep explicit non-local `APP_BASE_URL`, then rerun checkout, webhook, failed-payment, cancellation, and conversion scenarios.
+  - Verification command or check required: Replace the invalid Stripe test-mode secret and set a non-local app base URL as needed, then run `pnpm verify:stripe`, staging checkout, webhook replay, subscription state assertions, and route-level plan enforcement tests.
 
 - Task ID: TFX-CR-0022
   - Task: Reduce the oversized shared frontend bundle and re-check mobile-first loading speed risk.
   - Category: Performance / Loading Speed
   - Severity: Medium
   - First discovered date: 2026-05-14
-  - Last seen date: 2026-05-14
-  - Affected files: `vite.config.ts`, `client/src/App.tsx`, shared dashboard and auth bundles
+  - Last seen date: 2026-05-19
+  - Affected files: `vite.config.ts`, `client/src/App.tsx`, `server/_core/index.ts`, `drizzle/0019_mvp_readiness_hardening.sql`, shared dashboard and auth bundles
   - Status: Open
-  - Recommended fix: Inspect shared dependency composition, split large common chunks where safe, and re-check route-level loading behavior on the highest-traffic mobile flows.
-  - Verification command or check required: `pnpm build`, compare chunk sizes, and smoke-test login, dashboard, inspection, and diagnosis routes on mobile-sized viewports.
+  - Recommended fix: Route-load timing is still green and core diagnosis timing improved sharply, but the shared chunk remains large and the public pricing route still measured `6065 ms` total in local smoke. Keep the shared chunk under watch and use smaller Batch E follow-up work for public-route/page-settling polish before broader rollout.
+  - Verification command or check required: `pnpm build`, compare chunk sizes against the 2026-05-15 baseline, rerun `pnpm verify:browser-smoke`, and repeat mobile-sized smoke checks on lower-end hardware or slower network conditions.
 
 ## In Progress Tasks
 
-- None recorded today.
+- Task ID: TFX-CR-0003
+  - Task: Finish normalizing confirmed diagnosis outcomes so repair confirmation, confirmed cause, AI correctness, and follow-on learning do not depend on loose JSON trails.
+  - Category: Knowledge base/history growth
+  - Severity: High
+  - Owner, if known: Codex / current Batch G follow-up
+  - Status: Implemented, verification follow-up active
+  - Notes: Batch G code landed this pass; remaining work is real-data retrieval proof and any final normalization cleanup.
+
+- Task ID: TFX-CR-0020
+  - Task: Add audited staff/admin recovery workflows for pilot support issues.
+  - Category: Customer support/admin recovery
+  - Severity: High
+  - Owner, if known: Codex / current Batch J follow-up
+  - Status: Implemented, verification follow-up active
+  - Notes: Batch J code landed this pass; remaining work is live audit-write proof and any still-missing support entry points.
 
 ## Resolved Tasks
+
+- Task ID: TFX-CR-0001
+  - Task: Complete live verification of the RLS hardening migrations so company separation no longer depends on legacy `managerUserId` policy logic, the old open `activityLogs` insert rule, or unverified support-recovery audit access.
+  - Category: Security & access control
+  - Resolved date: 2026-05-18
+  - Evidence of resolution: Live `pnpm verify:rls` passed after the approved readiness migration rollouts, confirming assigned-vehicle visibility, cross-fleet hiding, denied cross-fleet activity-log writes, support-recovery audit isolation, and fleet-scoped subscription visibility.
 
 - Task ID: TFX-CR-0002
   - Task: Restore a fully green automated test suite after the recent auth, access, and AI workflow changes.
@@ -164,13 +184,13 @@
   - Task: Repair Supabase Auth UUID to app-user ID mapping in RLS policies.
   - Category: Security & access control
   - Resolved date: 2026-05-13
-  - Evidence of resolution: File inspection confirmed `drizzle/0015_harden_rls_and_sessions.sql` defines `current_app_user_id()` and resolves `auth.uid()` through `users.openId` using `supabase_<uuid>` or raw UUID. Live tenant-isolation verification remains open under `TFX-CR-0001`.
+  - Evidence of resolution: File inspection confirmed `drizzle/0015_harden_rls_and_sessions.sql` defines `current_app_user_id()` and resolves `auth.uid()` through `users.openId` using `supabase_<uuid>` or raw UUID; live verification was then completed under `TFX-CR-0001` on 2026-05-18.
 
 - Task ID: TFX-CR-0019
   - Task: Resolve critical/high dependency audit advisories.
   - Category: Security / Dependency Risk
   - Resolved date: 2026-05-14
-  - Evidence of resolution: `pnpm audit --audit-level=high` completed with no high or critical advisories; today it reported 11 vulnerabilities total, all below the review threshold (`1 low`, `10 moderate`).
+  - Evidence of resolution: `pnpm audit --audit-level=high` completed with no high or critical advisories on 2026-05-14, was rechecked on 2026-05-15 with the same result, and remained unchanged on 2026-05-18 (`1 low`, `10 moderate`).
 
 - Task ID: TFX-CR-0005
   - Task: Audit and constrain `getUserPrimaryFleetId` fallback auto-membership creation from assignments and legacy manager linkage.
@@ -183,37 +203,31 @@
 - Task ID: TFX-CR-0014
   - Task: Expand onboarding to support larger initial team setup flows.
   - Category: UI/UX & mobile usability
-  - Reason deferred: The current branch still has higher-priority tenant-isolation, support-recovery, knowledge-model, and maintainability work.
-  - Revisit date or trigger: Revisit after `TFX-CR-0001`, `TFX-CR-0003`, and `TFX-CR-0020` are resolved.
+  - Reason deferred: The current branch still has higher-priority support-recovery, knowledge-model, billing-readiness, and maintainability work.
+  - Revisit date or trigger: Revisit after `TFX-CR-0003`, `TFX-CR-0020`, and `TFX-CR-0021` are resolved.
 
 - Task ID: TFX-CR-0016
   - Task: Verify and repair possible diagnosis router drift around historical similarity and cause taxonomy.
   - Category: AI diagnosis workflow
-  - Reason deferred: Current diagnosis workflow tests are passing; tenant isolation, support recovery, and runtime schema hardening remain higher-priority.
+  - Reason deferred: Current diagnosis workflow tests are passing; support recovery, runtime schema hardening, and staging billing remain higher-priority.
   - Revisit date or trigger: Revisit when Batch C is approved.
 
 ## New Tasks From Today
 
-- Task ID: TFX-CR-0022
-  - Task: Reduce the oversized shared frontend bundle and re-check mobile-first loading speed risk.
-  - Category: Performance / Loading Speed
-  - Severity: Medium
-  - Affected files: `vite.config.ts`, `client/src/App.tsx`, shared dashboard and auth bundles
-  - Recommended next action: Profile the shared client chunk, split the biggest common dependencies, then rerun `pnpm build` and smoke-test key mobile flows.
+- No new task IDs added. Re-opened `TFX-CR-0023` on 2026-05-20 due to `spawn EPERM` regressions affecting `pnpm test`, `pnpm build`, and `pnpm verify:browser-smoke`.
+
 
 ## Rolling Implementation Roadmap
 
 | Order | Workstream / Batch | Current Priority | Why It Matters | Status | Dependencies | Last Updated |
 |---:|---|---|---|---|---|---|
-| 1 | Security, authentication, roles, tenant isolation | Critical | Protects fleet and customer data and blocks any real pilot use until live RLS verification is complete | Active | Supabase-like verification environment | 2026-05-14 |
-| 2 | Data integrity and record ownership | High | Ensures confirmed outcomes and cross-feature history stay tied to the correct fleet, vehicle, and diagnosis | Active | Workstream 1 | 2026-05-14 |
-| 3 | Daily inspection workflow blockers | High | Core daily fleet workflow must remain reliable after access hardening | Monitoring | Workstreams 1-2 | 2026-05-14 |
-| 4 | AI safety, fallback, diagnostic reliability | High | Core product value and liability control depend on safe fallback and trustworthy outputs | Monitoring | Workstreams 1-2 | 2026-05-14 |
-| 5 | Core workflow performance and app loading speed | High | Mobile-first adoption will suffer if the oversized shared chunk or slow routes remain | Active | Build profiling, browser smoke tests | 2026-05-14 |
-| 6 | Support/admin recovery | High | Controlled pilots need safe, audited recovery actions before support must edit data manually | Active | Workstream 1 | 2026-05-14 |
-| 7 | Revenue/billing readiness | Medium/High | Needed for pilot-to-paid conversion without account confusion or data loss | Blocked on staging verification | Stripe staging access | 2026-05-14 |
-| 8 | Knowledge base/history and TADIS learning data | Medium/High | Long-term diagnostic advantage depends on clean confirmed-outcome capture and reuse | Active | Workstream 2 | 2026-05-14 |
-| 9 | Performance and AI cost control optimizations | Medium | Keeps response latency and operating cost practical during multi-question diagnosis sessions | Active | Workstreams 4-5 | 2026-05-14 |
-| 10 | UX/mobile usability and onboarding | Medium | Improves activation after the core trust and performance blockers are reduced | Deferred | Workstreams 1, 5, 6 | 2026-05-14 |
-| 11 | Demo/test/production separation | Medium | Prevents seeded/demo records from polluting analytics, billing, and learning | Active | Workstreams 2 and 7 | 2026-05-14 |
-| 12 | Backup/recovery, maintainability, refactoring | Medium | Reduces future technical risk, especially around runtime schema mutation | Active | Workstreams 1-2 | 2026-05-14 |
+| 1 | Revenue/billing readiness | Critical | Billing is still the clearest hard gate preventing a full paid-pilot GO call | Blocked on a valid Stripe test credential | Stripe staging access and a working Stripe test secret / non-local `APP_BASE_URL` | 2026-05-19 |
+| 2 | Data integrity and record ownership | High | Ensures confirmed outcomes and cross-feature history stay tied to the correct fleet, vehicle, and diagnosis | Active next batch | None beyond current schema | 2026-05-19 |
+| 3 | Support/admin recovery | High | Controlled pilots need safe, audited recovery actions before support must edit data manually | Active next batch | Verified RLS baseline | 2026-05-19 |
+| 4 | Daily inspection workflow blockers | High | Core daily fleet workflow should now move from route-load verification to full happy-path proof | Route smoke green / deeper workflow proof pending | Workstreams 2-3 | 2026-05-19 |
+| 5 | Core workflow performance and app loading speed | Medium/High | Route load is good and diagnosis improved, but public-route polish and lower-end device proof still matter | Improved / monitor | Lower-end device checks and public-route polish | 2026-05-19 |
+| 6 | Observability and operational troubleshooting | Medium | Makes pilot incidents faster to diagnose without manual digging | Active | Workstreams 1-5 | 2026-05-19 |
+| 7 | Demo/test/production separation | Medium | Prevents seeded/demo records from polluting analytics, billing, and learning | Active | Workstreams 1-2 | 2026-05-19 |
+| 8 | Performance and AI cost control optimizations | Medium | Keeps response latency and operating cost practical during multi-question diagnosis sessions | Active with stronger timing evidence | Workstreams 2 and 5 | 2026-05-19 |
+| 9 | Backup/recovery, maintainability, refactoring | Medium | Reduces future technical risk, especially around startup schema repair and live schema drift | Active | Canonical migration cleanup | 2026-05-19 |
+| 10 | UX/mobile usability and onboarding | Medium | Improves activation after the core trust, billing, and support blockers are reduced | Deferred | Workstreams 1, 3, 5 | 2026-05-19 |

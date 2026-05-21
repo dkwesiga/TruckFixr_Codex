@@ -12,6 +12,7 @@ import { type DriverVehicleRecord } from "@/lib/driverVehicles";
 import { useAuthContext } from "@/hooks/useAuthContext";
 import { trpc } from "@/lib/trpc";
 import { getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
+import { getDemoDiagnosisCase } from "../../../shared/demoAssets";
 import { toast } from "sonner";
 import { AlertTriangle, ChevronLeft, CheckCircle2, Sparkles, Stethoscope, Truck, Wrench } from "lucide-react";
 
@@ -175,6 +176,9 @@ function DriverDiagnosisContent() {
     () => new URLSearchParams(window.location.search),
     []
   );
+  const demoCaseKey = params.get("demoCase");
+  const demoMode = params.get("demoMode");
+  const demoCase = useMemo(() => getDemoDiagnosisCase(demoCaseKey), [demoCaseKey]);
   const storedVehicle = useMemo(() => loadLastDriverVehicleContext(), []);
   const vehicleId = params.get("vehicle") ?? (storedVehicle ? String(storedVehicle.id) : null);
   const fleetId = useMemo(() => {
@@ -191,9 +195,9 @@ function DriverDiagnosisContent() {
   });
   const isOwnerOperator = user?.role === "owner" || user?.role === "manager";
 
-  const [symptom, setSymptom] = useState("");
-  const [faultCode, setFaultCode] = useState("");
-  const [diagnosisStarted, setDiagnosisStarted] = useState(false);
+  const [symptom, setSymptom] = useState(() => demoCase?.symptom ?? "");
+  const [faultCode, setFaultCode] = useState(() => demoCase?.faultCodes.join(", ") ?? "");
+  const [diagnosisStarted, setDiagnosisStarted] = useState(() => demoMode === "result" && Boolean(demoCase));
   const [clarificationHistory, setClarificationHistory] = useState<Array<{ question: string; answer: string }>>([]);
   const [clarificationAnswer, setClarificationAnswer] = useState("");
   const [diagnosisSessionId, setDiagnosisSessionId] = useState<string | null>(null);
@@ -203,8 +207,42 @@ function DriverDiagnosisContent() {
     enabled: Boolean(user?.id),
   });
 
+  const demoDiagnosisPayload = useMemo(() => {
+    if (!demoCase || demoMode !== "result") return null;
+
+    return {
+      ...demoCase.result,
+      case_id: `demo-${demoCase.key}`,
+      vehicle_id: vehicleId ?? "demo-vehicle",
+      issue_summary: demoCase.result.top_most_likely_cause,
+      likely_causes: demoCase.result.possible_causes.map((cause: { cause: string; probability: number }) => ({
+        cause: cause.cause,
+        probability: cause.probability,
+        likelihood: cause.probability >= 70 ? "high" : cause.probability >= 40 ? "medium" : "low",
+        reasoning:
+          demoCase.result.final_llm_ranking.find((entry: { cause_name: string; ranking_rationale: string }) => entry.cause_name === cause.cause)?.ranking_rationale ?? "",
+      })),
+      clarifying_question: demoCase.result.clarifying_question ?? "",
+      clarification_reason: demoCase.result.question_rationale ?? "",
+      recommended_tests: demoCase.result.recommended_tests,
+      likely_parts: demoCase.result.possible_replacement_parts,
+      safe_to_drive_decision:
+        demoCase.key === "air_leak"
+          ? "tow_or_repair_immediately"
+          : demoCase.result.risk_level === "high"
+            ? "stop_and_inspect"
+            : "drive_with_caution",
+      maintenance_recommendation: demoCase.result.recommended_fix,
+      driver_friendly_explanation: demoCase.result.driver_message,
+      advanced_ai_review_used: false,
+      model_used: "demo-precomputed",
+      fallback_used: demoCase.result.fallback_used,
+      status: demoCase.result.next_action === "ask_question" ? "clarification_needed" : "final",
+    };
+  }, [demoCase, demoMode, vehicleId]);
+
   const hasDiagnosisInput = symptom.trim().length > 0;
-  const diagnosis = diagnoseMutation.data;
+  const diagnosis = diagnoseMutation.data ?? demoDiagnosisPayload;
   const diagnosisView = useMemo(() => normalizeDiagnosisView(diagnosis), [diagnosis]);
   const activeClarifyingQuestion = diagnosisView?.clarifyingQuestion.trim() ?? "";
   const isAwaitingClarification =
@@ -257,6 +295,15 @@ function DriverDiagnosisContent() {
   const lastAnnouncedQuestionRef = useRef("");
 
   useEffect(() => {
+    if (!demoCase) return;
+    setSymptom((current: string) => current || demoCase.symptom);
+    setFaultCode((current: string) => current || demoCase.faultCodes.join(", "));
+    if (demoMode === "result") {
+      setDiagnosisStarted(true);
+    }
+  }, [demoCase, demoMode]);
+
+  useEffect(() => {
     if (!diagnosisStarted || !diagnosisView) {
       return;
     }
@@ -298,10 +345,16 @@ function DriverDiagnosisContent() {
 
     const normalizedFaultCodes = faultCode
       .split(/[,;\n]+/)
-      .map((code) => code.trim().toUpperCase())
+      .map((code: string) => code.trim().toUpperCase())
       .filter(Boolean);
 
     try {
+      if (demoDiagnosisPayload && nextClarificationHistory.length === 0) {
+        setDiagnosisStarted(true);
+        setClarificationAnswer("");
+        return;
+      }
+
       if (!hasResolvedFleetContext) {
         toast.error("Select or join a company fleet before starting diagnosis.");
         return;

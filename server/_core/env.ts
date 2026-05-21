@@ -18,12 +18,24 @@ export const ENV = {
   fleetManagerEmail: readEnv("FLEET_MANAGER_EMAIL"),
   stripeSecretKey: readEnv("STRIPE_SECRET_KEY"),
   stripeWebhookSecret: readEnv("STRIPE_WEBHOOK_SECRET"),
-  stripePriceOwnerOperatorMonthly: readEnv("STRIPE_PRICE_OWNER_OPERATOR_MONTHLY"),
-  stripePriceSmallFleetMonthly: readEnv("STRIPE_PRICE_SMALL_FLEET_MONTHLY"),
-  stripePriceFleetGrowthMonthly: readEnv("STRIPE_PRICE_FLEET_GROWTH_MONTHLY"),
-  stripePriceFleetProMonthly: readEnv("STRIPE_PRICE_FLEET_PRO_MONTHLY"),
-  stripePriceOwnerOperatorAnnual: readEnv("STRIPE_PRICE_OWNER_OPERATOR_ANNUAL"),
-  stripePriceSmallFleetAnnual: readEnv("STRIPE_PRICE_SMALL_FLEET_ANNUAL"),
+  stripePriceOwnerOperatorMonthly: readEnvWithAliases("STRIPE_PRICE_OWNER_OPERATOR_MONTHLY", [
+    "STRIPE_PRICE_PRO_MONTHLY",
+  ]),
+  stripePriceSmallFleetMonthly: readEnvWithAliases("STRIPE_PRICE_SMALL_FLEET_MONTHLY", [
+    "STRIPE_PRICE_PRO_MONTHLY",
+  ]),
+  stripePriceFleetGrowthMonthly: readEnvWithAliases("STRIPE_PRICE_FLEET_GROWTH_MONTHLY", [
+    "STRIPE_PRICE_FLEET_MONTHLY",
+  ]),
+  stripePriceFleetProMonthly: readEnvWithAliases("STRIPE_PRICE_FLEET_PRO_MONTHLY", [
+    "STRIPE_PRICE_FLEET_MONTHLY",
+  ]),
+  stripePriceOwnerOperatorAnnual: readEnvWithAliases("STRIPE_PRICE_OWNER_OPERATOR_ANNUAL", [
+    "STRIPE_PRICE_PRO_ANNUAL",
+  ]),
+  stripePriceSmallFleetAnnual: readEnvWithAliases("STRIPE_PRICE_SMALL_FLEET_ANNUAL", [
+    "STRIPE_PRICE_PRO_ANNUAL",
+  ]),
   stripePriceFleetGrowthAnnual: readEnv("STRIPE_PRICE_FLEET_GROWTH_ANNUAL"),
   stripePriceFleetProAnnual: readEnv("STRIPE_PRICE_FLEET_PRO_ANNUAL"),
   stripePriceFleetPilot30Day: readEnv("STRIPE_PRICE_FLEET_PILOT_30_DAY"),
@@ -31,6 +43,7 @@ export const ENV = {
   stripePriceProMonthly: readEnv("STRIPE_PRICE_PRO_MONTHLY"),
   stripePriceProAnnual: readEnv("STRIPE_PRICE_PRO_ANNUAL"),
   stripePriceFleetMonthly: readEnv("STRIPE_PRICE_FLEET_MONTHLY"),
+  enableStripeDiagnosticsEndpoint: readBooleanEnv("ENABLE_STRIPE_DIAGNOSTICS_ENDPOINT"),
   adminEmails: readEnv("ADMIN_EMAILS"),
   salesNotificationEmail: readEnv("SALES_NOTIFICATION_EMAIL") || "info@truckfixr.com",
   appBaseUrl:

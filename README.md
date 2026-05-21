@@ -181,11 +181,29 @@ Optional backend env vars:
 - `SIMPLE_TADIS_MODE` set to `true` to force the minimal classifier/diagnosis path during provider stabilization
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
+- `ENABLE_STRIPE_DIAGNOSTICS_ENDPOINT` for the staff-only readiness endpoint
+- `STRIPE_PRICE_OWNER_OPERATOR_MONTHLY`
+- `STRIPE_PRICE_OWNER_OPERATOR_ANNUAL`
+- `STRIPE_PRICE_SMALL_FLEET_MONTHLY`
+- `STRIPE_PRICE_SMALL_FLEET_ANNUAL`
+- `STRIPE_PRICE_FLEET_GROWTH_MONTHLY`
+- `STRIPE_PRICE_FLEET_GROWTH_ANNUAL`
+- `STRIPE_PRICE_FLEET_PRO_MONTHLY`
+- `STRIPE_PRICE_FLEET_PRO_ANNUAL`
+- `STRIPE_PRICE_FLEET_PILOT_30_DAY`
+- `STRIPE_PRICE_EXTRA_TRAILER_MONTHLY`
 - `STRIPE_PRICE_PRO_MONTHLY`
 - `STRIPE_PRICE_PRO_ANNUAL`
 - `STRIPE_PRICE_FLEET_MONTHLY`
 - `ADMIN_EMAILS`
 - `SALES_NOTIFICATION_EMAIL`
+
+Canonical `STRIPE_PRICE_*` env values can be either:
+
+- a direct Stripe Price id like `price_123...`, or
+- a Stripe lookup key like `truckfixr_small_fleet_monthly_cad`
+
+When canonical price envs are omitted, TruckFixr now falls back to the standard lookup-key convention for the public MVP plans.
 
 ### Diagnosis Workflow Env Contract
 

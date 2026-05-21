@@ -1,4 +1,6 @@
 import "dotenv/config";
+import fs from "node:fs";
+import path from "node:path";
 import express from "express";
 import { createServer } from "http";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
@@ -8,6 +10,7 @@ import { registerStripeBillingRoutes } from "./stripeBillingRoutes";
 import { registerBillingRoutes } from "./billingRoutes";
 import { registerVehicleLookupRoutes } from "./vehicleLookupRoutes";
 import { getAiProviderStatus, probeAiProviderStatus } from "../services/aiOrchestrator";
+import { getStripeReadinessReport } from "../services/stripeReadiness";
 import { ENV } from "./env";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
@@ -72,6 +75,37 @@ type HealthCheckResponse = {
   service?: string;
   environment?: string;
 };
+
+function resolveBuiltClientIndexPath() {
+  const candidates = [
+    path.resolve(process.cwd(), "dist", "public", "index.html"),
+    path.resolve(import.meta.dirname, "public", "index.html"),
+    path.resolve(import.meta.dirname, "../..", "dist", "public", "index.html"),
+  ];
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0];
+}
+
+function applyRequestTiming(app: express.Express) {
+  app.use((req, res, next) => {
+    const startedAt = process.hrtime.bigint();
+
+    res.on("finish", () => {
+      const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+
+      if (req.path.startsWith("/api/") && durationMs >= 2_000) {
+        console.warn("[Performance] Slow API route", {
+          method: req.method,
+          path: req.path,
+          statusCode: res.statusCode,
+          durationMs: Math.round(durationMs),
+        });
+      }
+    });
+
+    next();
+  });
+}
 
 async function prewarmDevelopmentApp(port: number) {
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -149,9 +183,19 @@ async function startServer() {
   const server = createServer(app);
   const isDevelopment = process.env.NODE_ENV === "development";
   const port = Number.parseInt(process.env.PORT || "3000", 10);
+  const stripeReadiness = getStripeReadinessReport();
+
+  if (stripeReadiness.hasAnyConfiguredValues && (!stripeReadiness.ok || stripeReadiness.warnings.length > 0)) {
+    console.warn("[Stripe] Readiness warnings detected.", {
+      errors: stripeReadiness.errors,
+      warnings: stripeReadiness.warnings,
+    });
+  }
 
   app.disable("x-powered-by");
   app.set("trust proxy", 1);
+
+  applyRequestTiming(app);
 
   app.use((req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -247,17 +291,25 @@ async function startServer() {
     const { setupVite } = await import("./vite");
     await setupVite(app, server);
   } else {
-    app.get("/", (_req, res) => {
-      res.status(200).json({
-        service: "TruckFixr API",
-        health: "/healthz",
-        trpc: "/api/trpc",
-      });
-    });
-
     app.use("/api/*", (_req, res) => {
       res.status(404).json({ error: "Not found" });
     });
+
+    const { serveStatic } = await import("./vite");
+    const distIndexPath = resolveBuiltClientIndexPath();
+
+    if (fs.existsSync(distIndexPath)) {
+      serveStatic(app);
+    } else {
+      app.get("/", (_req, res) => {
+        res.status(200).json({
+          service: "TruckFixr API",
+          health: "/healthz",
+          trpc: "/api/trpc",
+          frontend: "Build the client or deploy the static frontend service to serve the SPA.",
+        });
+      });
+    }
   }
 
   server.once("error", (error) => {

@@ -1,15 +1,12 @@
-import {getScenePlan, voiceoverScripts} from "./script";
+import {getScenePlan} from "./script";
 import type {CaptionCue, DurationKey} from "./types";
 
-function normalizeSentenceLines(script: string) {
+function splitNarrationSentences(script: string) {
   return script
-    .split(/\n+/)
-    .flatMap((chunk) =>
-      chunk
-        .split(/(?<=[.!?])\s+/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-    );
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
 function splitCaption(text: string) {
@@ -28,32 +25,32 @@ function splitCaption(text: string) {
 
 export function getCaptionCues(durationKey: DurationKey): CaptionCue[] {
   const scenes = getScenePlan(durationKey);
-  const sentences = normalizeSentenceLines(voiceoverScripts[durationKey]);
   const cues: CaptionCue[] = [];
-  let sentenceIndex = 0;
 
   for (const scene of scenes) {
+    const sceneStartMs = Math.round((scene.startFrame / 30) * 1000);
     const sceneEndMs = Math.round(((scene.startFrame + scene.durationInFrames) / 30) * 1000);
-    const sentenceBudget =
-      scene.key === "cta" ? 1 : Math.max(1, Math.round(scene.durationInFrames / 180));
-    const sceneSentences = sentences.slice(sentenceIndex, sentenceIndex + sentenceBudget);
-    sentenceIndex += sceneSentences.length;
+    const sceneSentences = splitNarrationSentences(scene.narration);
 
     if (sceneSentences.length === 0) {
       continue;
     }
 
-    const segmentMs = Math.max(
-      1200,
-      Math.floor((scene.durationInFrames / 30 / sceneSentences.length) * 1000)
-    );
+    const weights = sceneSentences.map((sentence) => Math.max(sentence.length, 18));
+    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+    let cursor = sceneStartMs;
 
     sceneSentences.forEach((sentence, index) => {
-      const startMs = Math.round((scene.startFrame / 30) * 1000) + index * segmentMs;
+      const proportionalMs = Math.round(
+        ((sceneEndMs - sceneStartMs) * weights[index]) / totalWeight
+      );
+      const startMs = cursor;
       const endMs =
         index === sceneSentences.length - 1
           ? sceneEndMs
-          : Math.min(sceneEndMs, startMs + segmentMs);
+          : Math.min(sceneEndMs, cursor + proportionalMs);
+
+      cursor = endMs;
 
       cues.push({
         startMs,
@@ -61,14 +58,6 @@ export function getCaptionCues(durationKey: DurationKey): CaptionCue[] {
         text: splitCaption(sentence),
       });
     });
-  }
-
-  if (sentenceIndex < sentences.length && cues.length > 0) {
-    const trailing = sentences.slice(sentenceIndex).join(" ");
-    cues[cues.length - 1] = {
-      ...cues[cues.length - 1],
-      text: `${cues[cues.length - 1].text}\n${splitCaption(trailing)}`,
-    };
   }
 
   return cues;

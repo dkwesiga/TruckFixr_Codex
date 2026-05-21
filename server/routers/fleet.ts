@@ -115,7 +115,12 @@ export const fleetRouter = router({
       const memberships = await db
         .select({ fleetId: companyMemberships.fleetId })
         .from(companyMemberships)
-        .where(eq(companyMemberships.userId, ctx.user.id));
+        .where(
+          and(
+            eq(companyMemberships.userId, ctx.user.id),
+            eq(companyMemberships.status, "active")
+          )
+        );
 
       const membershipFleetIds = memberships.map((row) => row.fleetId);
       const ownedFleets = await db.select().from(fleets).where(eq(fleets.ownerId, ctx.user.id));
@@ -138,7 +143,12 @@ export const fleetRouter = router({
       await db
         .select({ fleetId: companyMemberships.fleetId })
         .from(companyMemberships)
-        .where(eq(companyMemberships.userId, ctx.user.id))
+        .where(
+          and(
+            eq(companyMemberships.userId, ctx.user.id),
+            eq(companyMemberships.status, "active")
+          )
+        )
     ).map((row) => row.fleetId);
 
     const fleetIds = Array.from(new Set([...assignedVehicles.map((v) => v.fleetId), ...membershipFleetIds]));

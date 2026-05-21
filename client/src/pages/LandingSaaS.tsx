@@ -643,7 +643,7 @@ export default function LandingSaaS() {
               variant="outline"
               className="rounded-full border-[#00263F] bg-white px-3 font-['Manrope'] text-xs font-bold text-[#00263F] hover:border-[#E32636] hover:bg-[#F4F7FD] sm:px-4 sm:text-sm"
             >
-              <a href="/access">Sign In / Get Access</a>
+              <a href="/auth/email">Sign In</a>
             </Button>
             <Button
               asChild
@@ -656,7 +656,7 @@ export default function LandingSaaS() {
               asChild
               className="rounded-full bg-[#E32636] px-3 font-['Manrope'] text-xs font-bold text-white hover:bg-[#BC1E2C] sm:px-5 sm:text-sm"
             >
-              <a href="#beta" onClick={() => handleBetaCtaClick("nav")}>Join the Beta</a>
+              <a href="/signup">Start Free Trial</a>
             </Button>
           </div>
         </div>
@@ -678,7 +678,7 @@ export default function LandingSaaS() {
                 symptoms, and repair history into faster, clearer maintenance decisions.
               </p>
               <p className="mt-4 text-sm font-semibold uppercase tracking-[0.16em] text-[#A04100]">
-                Now onboarding selected Ontario and Canadian fleets for early access.
+                Start with one truck, get your first inspection flowing, and expand from there.
               </p>
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
                 <Button
@@ -686,7 +686,7 @@ export default function LandingSaaS() {
                   size="lg"
                   className="rounded-full bg-[#E32636] px-8 font-['Manrope'] text-base font-bold text-white shadow-[0_18px_35px_-22px_rgba(227,38,54,0.72)] hover:bg-[#BC1E2C]"
                 >
-                  <a href="#book-demo" onClick={() => handleLeadCtaClick("hero")}>Book a Demo</a>
+                  <a href="/signup">Create Account</a>
                 </Button>
                 <Button
                   asChild
@@ -694,9 +694,12 @@ export default function LandingSaaS() {
                   variant="outline"
                   className="rounded-full border-2 border-[#00263F] bg-transparent px-8 font-['Manrope'] text-base font-bold text-[#00263F] hover:bg-[#00263F] hover:text-white"
                 >
-                  <a href="#beta" onClick={() => handleBetaCtaClick("hero")}>Join the Beta</a>
+                  <a href="#book-demo" onClick={() => handleLeadCtaClick("hero")}>Book a Demo</a>
                 </Button>
               </div>
+              <p className="mt-4 text-sm text-[#42474E]">
+                No invite required for the self-serve trial. If you already have a pilot code or invitation, use the access path below.
+              </p>
               <div className="mt-8 grid gap-3 text-sm text-[#42474E] sm:grid-cols-2">
                 {[
                   "Driver inspection workflows",
@@ -971,22 +974,22 @@ export default function LandingSaaS() {
           <div className="mx-auto grid max-w-[1200px] gap-8 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.18em] text-[#FFB693]">
-                Now onboarding selected Ontario and Canadian fleets
+                Choose the path that fits your fleet
               </p>
               <h2 className="mt-3 font-['Manrope'] text-3xl font-black tracking-[-0.03em] text-white sm:text-4xl">
-                Join the Ontario Fleet Beta.
+                Start self-serve now, or talk with us first.
               </h2>
               <p className="mt-4 max-w-2xl text-base leading-8 text-blue-100">
-                TruckFixr Fleet AI is currently onboarding early-access fleets that want a smarter way to manage inspections, diagnostics,
-                repair history, and maintenance decisions.
+                Owner/operators can create an account and begin the first-truck setup right away. Fleets that want guided rollout,
+                pilot access, or a deeper walkthrough can still book a demo with the TruckFixr team.
               </p>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row lg:justify-end">
               <Button asChild size="lg" className="rounded-full bg-[#E32636] px-8 font-['Manrope'] font-bold text-white hover:bg-[#BC1E2C]">
-                <a href="#book-demo" onClick={() => handleLeadCtaClick("beta")}>Book a Demo</a>
+                <a href="/signup">Start Free Trial</a>
               </Button>
               <Button asChild size="lg" variant="outline" className="rounded-full border-2 border-white/25 bg-transparent px-8 font-['Manrope'] font-bold text-white hover:bg-white hover:text-[#00263F]">
-                <a href="#book-demo" onClick={() => handleBetaCtaClick("beta")}>Join the Beta</a>
+                <a href="#book-demo" onClick={() => handleLeadCtaClick("beta")}>Book a Demo</a>
               </Button>
             </div>
           </div>
@@ -1001,7 +1004,7 @@ export default function LandingSaaS() {
               </p>
             </div>
             <Button asChild className="rounded-full bg-[#00263F] px-6 font-['Manrope'] font-bold text-white hover:bg-[#0B3C5D]">
-              <a href="/access">Sign In / Get Access</a>
+              <a href="/access">Use invite or pilot code</a>
             </Button>
           </div>
         </section>
@@ -1069,10 +1072,10 @@ export default function LandingSaaS() {
               </div>
               <div className="flex flex-col gap-3 sm:flex-row lg:justify-end">
                 <Button asChild size="lg" className="rounded-full bg-[#E32636] px-8 font-['Manrope'] font-bold text-white hover:bg-[#BC1E2C]">
-                  <a href="#book-demo" onClick={() => handleLeadCtaClick("final_cta")}>Book a Demo</a>
+                  <a href="/signup">Start Free Trial</a>
                 </Button>
                 <Button asChild size="lg" variant="outline" className="rounded-full border-2 border-white/25 bg-transparent px-8 font-['Manrope'] font-bold text-white hover:bg-white hover:text-[#00263F]">
-                  <a href="#beta" onClick={() => handleBetaCtaClick("final_cta")}>Join the Beta</a>
+                  <a href="#book-demo" onClick={() => handleLeadCtaClick("final_cta")}>Book a Demo</a>
                 </Button>
               </div>
             </div>

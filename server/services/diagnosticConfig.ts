@@ -2,7 +2,7 @@ import { ENV } from "../_core/env";
 
 const DEFAULT_CONFIDENCE_THRESHOLD = 80;
 const DEFAULT_NEW_CAUSE_MIN_CONFIDENCE = 62;
-const DEFAULT_TIMEOUT_MS = 35_000;
+const DEFAULT_TIMEOUT_MS = 18_000;
 const DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-v4-flash";
 const DEFAULT_OPENROUTER_FALLBACK_MODEL = "google/gemini-2.5-flash";
 const DEFAULT_SIMPLE_OPENROUTER_MODEL = "deepseek/deepseek-v4-flash";

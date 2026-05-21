@@ -17,7 +17,7 @@ import {
 
 const MAX_CLARIFICATION_QUESTIONS = 3;
 const CONFIDENCE_CLARIFICATION_THRESHOLD = 80;
-const PRIMARY_PROVIDER_MAX_ATTEMPTS = 2;
+const PRIMARY_PROVIDER_MAX_ATTEMPTS = 1;
 
 export const safetyComplexitySchema = z.enum([
   "normal",
@@ -848,7 +848,7 @@ async function invokeRoutingClassification(input: {
     ],
     responseFormat: { type: "json_object" },
     maxTokens: Math.min(config.diagnosisMaxTokens, 650),
-    timeoutMs: config.timeoutMs,
+    timeoutMs: Math.min(config.timeoutMs, 9_000),
     temperature: 0,
   });
 }
@@ -863,6 +863,10 @@ async function invokeDiagnosisCandidate(input: {
   clarificationHistory: DiagnosisClarificationTurn[];
 }) {
   const config = getDiagnosticRuntimeConfig();
+  const timeoutMs =
+    input.classification === "normal"
+      ? Math.min(config.timeoutMs, 12_000)
+      : Math.min(config.timeoutMs, 15_000);
   return invokeWithOrchestration({
     feature: "mvp_diagnosis",
     preferredProvider: input.candidate.provider,
@@ -883,7 +887,7 @@ async function invokeDiagnosisCandidate(input: {
     ],
     responseFormat: { type: "json_object" },
     maxTokens: config.diagnosisMaxTokens,
-    timeoutMs: config.timeoutMs,
+    timeoutMs,
     temperature: input.classification === "normal" ? 0.08 : 0.03,
   });
 }
@@ -918,7 +922,7 @@ async function repairDiagnosisJson(input: {
     ],
     responseFormat: { type: "json_object" },
     maxTokens: Math.min(config.diagnosisMaxTokens, 900),
-    timeoutMs: config.timeoutMs,
+    timeoutMs: Math.min(config.timeoutMs, 8_000),
     temperature: 0,
   });
 }
@@ -949,7 +953,7 @@ async function repairRoutingJson(input: {
     ],
     responseFormat: { type: "json_object" },
     maxTokens: 650,
-    timeoutMs: config.timeoutMs,
+    timeoutMs: Math.min(config.timeoutMs, 8_000),
     temperature: 0,
   });
 }

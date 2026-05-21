@@ -3,6 +3,7 @@ import {bundle} from "@remotion/bundler";
 import {getCompositions, renderMedia} from "@remotion/renderer";
 import {join, resolve} from "node:path";
 import {pathToFileURL} from "node:url";
+import {ensureAudioAssets} from "./generate-audio";
 import {generateAllCaptionFiles} from "./generate-captions";
 import {getCompositionId} from "../src/script";
 import {ensureDir, outputRoot, parseArg, projectRoot, resolveStaticAudio, syncStaticAssets, writeJson} from "./utils";
@@ -42,6 +43,7 @@ function resolveAudioProfile(
 }
 
 async function main() {
+  await ensureAudioAssets();
   await syncStaticAssets();
   await generateAllCaptionFiles();
 

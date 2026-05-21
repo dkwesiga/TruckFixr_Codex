@@ -244,4 +244,79 @@ describe("diagnostics router full loop", () => {
     expect(secondPass.confidence_score).toBeGreaterThan(firstPass.confidence_score);
     expect(runDiagnosisWorkflowMock).toHaveBeenCalledTimes(2);
   });
+
+  it("asks for asset clarification before diagnosing truck-only symptoms on a dry van trailer", async () => {
+    const caller = appRouter.createCaller(createDriverContext());
+
+    const response = await caller.diagnostics.analyze({
+      fleetId: 1,
+      vehicleId: "trailer-12",
+      vehicleContext: {
+        id: "trailer-12",
+        vin: "TRAILER000000001",
+        make: "Great Dane",
+        model: "Dry Van",
+        year: 2020,
+        assetType: "dry_van_trailer",
+        assetCategory: "trailer",
+        vehicleType: "dry_van",
+        isPoweredVehicle: false,
+        isTrailer: true,
+        mileage: 0,
+        status: "active",
+        complianceStatus: "green",
+        configuration: {},
+      },
+      symptoms: ["Engine overheating and transmission slipping"],
+      faultCodes: [],
+      driverNotes: "Driver may have picked the wrong unit.",
+      photoUrls: [],
+      clarificationHistory: [],
+    });
+
+    expect(response.next_action).toBe("ask_question");
+    expect(response.clarifying_question).toContain("This sounds like a truck issue");
+    expect(response.clarifying_question).toContain("dry van trailer");
+    expect(response.model_used).toBe("asset-scope-rule");
+    expect(runDiagnosisWorkflowMock).not.toHaveBeenCalled();
+  });
+
+  it("allows reefer-unit symptoms on a reefer trailer while constraining the AI scope", async () => {
+    const caller = appRouter.createCaller(createDriverContext());
+
+    await caller.diagnostics.analyze({
+      fleetId: 1,
+      vehicleId: "reefer-9",
+      vehicleContext: {
+        id: "reefer-9",
+        vin: "REEFER0000000009",
+        make: "Utility",
+        model: "Reefer Trailer",
+        year: 2021,
+        assetType: "reefer_trailer",
+        assetCategory: "trailer",
+        vehicleType: "reefer",
+        isPoweredVehicle: false,
+        isTrailer: true,
+        mileage: 0,
+        status: "active",
+        complianceStatus: "green",
+        configuration: { reeferUnit: true },
+      },
+      symptoms: ["Reefer engine will not start and the box temp is rising"],
+      faultCodes: [],
+      driverNotes: "Thermo King unit showing alarm.",
+      photoUrls: [],
+      clarificationHistory: [],
+    });
+
+    expect(runDiagnosisWorkflowMock).toHaveBeenCalledTimes(1);
+    const workflowInput = runDiagnosisWorkflowMock.mock.calls[0]?.[0];
+    expect(workflowInput.context.user_report.symptoms).toContain(
+      "Asset diagnosis scope: reefer_trailer"
+    );
+    expect(workflowInput.context.user_report.symptoms).toContain(
+      "refrigeration-unit systems only"
+    );
+  });
 });

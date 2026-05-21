@@ -149,7 +149,12 @@ export async function getCompanyMembership(input: { userId: number; fleetId?: nu
   const [membership] = await db
     .select()
     .from(companyMemberships)
-    .where(eq(companyMemberships.userId, input.userId))
+    .where(
+      and(
+        eq(companyMemberships.userId, input.userId),
+        eq(companyMemberships.status, "active")
+      )
+    )
     .orderBy(desc(companyMemberships.updatedAt))
     .limit(1);
 

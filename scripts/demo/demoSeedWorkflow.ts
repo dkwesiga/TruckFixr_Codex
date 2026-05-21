@@ -203,21 +203,21 @@ function getPlanLimits(company: DemoCompanySeed) {
   switch (company.planName) {
     case "small_fleet":
       return {
-        poweredVehicleLimit: 10,
-        includedTrailerLimit: 8,
-        totalActiveTrailerLimit: 8,
+        poweredVehicleLimit: 5,
+        includedTrailerLimit: 5,
+        totalActiveTrailerLimit: 5,
         aiSessionMonthlyLimit: 250,
       };
     case "fleet_growth":
       return {
-        poweredVehicleLimit: 20,
-        includedTrailerLimit: 12,
-        totalActiveTrailerLimit: 12,
+        poweredVehicleLimit: 10,
+        includedTrailerLimit: 10,
+        totalActiveTrailerLimit: 10,
         aiSessionMonthlyLimit: 500,
       };
     case "fleet_pro":
       return {
-        poweredVehicleLimit: 35,
+        poweredVehicleLimit: 20,
         includedTrailerLimit: 20,
         totalActiveTrailerLimit: 20,
         aiSessionMonthlyLimit: 1000,
