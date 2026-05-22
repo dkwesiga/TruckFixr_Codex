@@ -340,6 +340,8 @@ function buildDvirPayload(input: {
 
   return {
     inspectionId: input.inspection.id,
+    inspectionSessionId:
+      input.inspection.inspectionSessionId ?? results?.inspectionSessionId ?? null,
     reportType: "Driver Vehicle Inspection Report",
     formStyle: "DVIR familiar layout",
     company: {
@@ -1163,9 +1165,13 @@ export const inspectionsRouter = router({
           vehicleId: String(input.vehicleId),
           fleetId: input.fleetId,
           driverId: ctx.user.id,
+          inspectionSessionId: input.inspectionSessionId ?? null,
           status: "submitted",
           complianceStatus: prepared.complianceStatus,
-          results: prepared.baseInspectionResults,
+          results: {
+            ...prepared.baseInspectionResults,
+            inspectionSessionId: input.inspectionSessionId ?? null,
+          },
           submittedAt: prepared.submittedAt,
           updatedAt: prepared.submittedAt,
         }).returning({ id: inspections.id });
@@ -1193,7 +1199,10 @@ export const inspectionsRouter = router({
         await db
           .update(inspections)
           .set({
-            results: reportDelivery.storedInspectionResults,
+            results: {
+              ...reportDelivery.storedInspectionResults,
+              inspectionSessionId: input.inspectionSessionId ?? null,
+            },
             updatedAt: new Date(),
           })
           .where(eq(inspections.id, inspectionResult.id));
@@ -1407,6 +1416,7 @@ export const inspectionsRouter = router({
           fleetId: inspections.fleetId,
           vehicleId: inspections.vehicleId,
           driverId: inspections.driverId,
+          inspectionSessionId: inspections.inspectionSessionId,
           submittedAt: inspections.submittedAt,
           updatedAt: inspections.updatedAt,
           overallVehicleResult: inspections.overallVehicleResult,

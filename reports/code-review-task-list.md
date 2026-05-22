@@ -47,15 +47,26 @@
   - Verification command or check required: Multi-clarification diagnosis tests with token, retry, and cost assertions, then rerun `pnpm verify:browser-smoke` and confirm live diagnosis paths stay below the MVP thresholds.
 
 - Task ID: TFX-CR-0023
-  - Task: Unblock sandbox/CI-safe verification so `pnpm test`, `pnpm build`, and `pnpm verify:browser-smoke` don't fail with `spawn EPERM` when Vite/Vitest/esbuild or Playwright attempts to launch child processes.
+  - Task: Unblock sandbox/CI-safe verification so `pnpm test`, `pnpm build`, `pnpm verify:browser-smoke`, and Stripe verification don't fail with `spawn EPERM` when Vite/Vitest/esbuild/tsx or Playwright attempts to launch child processes.
   - Category: Developer experience / verification reliability
   - Severity: High
   - First discovered date: 2026-05-18
-  - Last seen date: 2026-05-20
-  - Affected files: `scripts/run-vitest.mjs`, `scripts/run-build-client.mjs`, `scripts/verify/browser-smoke.ts`, Vite/Vitest/esbuild toolchain configuration
+  - Last seen date: 2026-05-22
+  - Affected files: `scripts/run-vitest.mjs`, `scripts/run-build-client.mjs`, `scripts/verify/browser-smoke.ts`, `scripts/verify/stripe.ts`, Vite/Vitest/esbuild/tsx toolchain configuration
   - Status: Open (regressed)
-  - Recommended fix: Restore the sandbox-safe verification approach so builds/tests/smokes run without blocked `spawn` calls in constrained environments, and keep it stable across dependency upgrades.
-  - Verification command or check required: In this sandbox/CI-like environment, `pnpm test`, `pnpm build`, and `pnpm verify:browser-smoke` all pass end-to-end.
+  - Recommended fix: Either (A) adjust the host/sandbox policy to allow Node child-process spawning for Vite/Vitest/esbuild + Playwright, or (B) move CI verification to an environment where spawning is allowed. A local mitigation is in place so restricted environments skip/soft-fail instead of hard erroring.
+  - Verification command or check required: In a target CI-like environment where spawning browsers and esbuild services is allowed, `pnpm test`, `pnpm build`, `pnpm verify:browser-smoke`, and full Stripe verification pass end-to-end.
+
+- Task ID: TFX-CR-0024
+  - Task: Review and harden the internal admin metrics/dashboard feature (authz gates, export restrictions, PII safety, and query performance).
+  - Category: Security / internal tooling & operations
+  - Severity: High
+  - First discovered date: 2026-05-22
+  - Last seen date: 2026-05-22
+  - Affected files: `server/routers/admin.ts`, `server/services/adminMetrics.ts`, `client/src/pages/AdminMetricsDashboard.tsx`, `client/src/pages/AdminFleetDetail.tsx`, `drizzle/0024_admin_metrics_dashboard.sql`
+  - Status: Open
+  - Recommended fix: Ensure all admin endpoints are gated to TruckFixr internal roles in production, exports are limited to super-admin only, and metrics queries are bounded/optimized with safe defaults and redaction where needed.
+  - Verification command or check required: Unit tests for role gating + export permission, plus a staging validation that non-admin staff/users cannot access metrics, and a performance check for the largest timeframe/filters.
 
 - Task ID: TFX-CR-0017
   - Task: Add production observability and error monitoring coverage for backend, AI provider, Supabase, and Stripe failures.
@@ -214,7 +225,8 @@
 
 ## New Tasks From Today
 
-- No new task IDs added. Re-opened `TFX-CR-0023` on 2026-05-20 due to `spawn EPERM` regressions affecting `pnpm test`, `pnpm build`, and `pnpm verify:browser-smoke`.
+- Added `TFX-CR-0024` on 2026-05-22 for internal admin metrics/dashboard hardening and verification.
+- Updated `TFX-CR-0023` on 2026-05-22 to reflect continued `spawn EPERM` verification limitations in this sandbox.
 
 
 ## Rolling Implementation Roadmap

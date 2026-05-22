@@ -156,6 +156,19 @@ function formatDefectDescription(value: string | null | undefined) {
   }
 }
 
+const managerReviewOptions = [
+  { value: "reviewed", label: "Reviewed" },
+  { value: "scheduled", label: "Scheduled" },
+  { value: "deferred", label: "Deferred" },
+  { value: "resolved", label: "Resolved" },
+  { value: "escalated", label: "Escalated" },
+] as const;
+
+function formatManagerReviewStatus(value: string | null | undefined) {
+  const match = managerReviewOptions.find(option => option.value === value);
+  return match?.label ?? "Submitted";
+}
+
 function mapVehicleRow(vehicle: any, drivers: any[] = []): DashboardRow {
   const priority =
     vehicle.complianceStatus === "red"
@@ -312,6 +325,12 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
 
   const approveAccessRequestMutation = trpc.vehicleAccess.approveAccessRequest.useMutation();
   const denyAccessRequestMutation = trpc.vehicleAccess.denyAccessRequest.useMutation();
+  const updateDefectReviewMutation = trpc.defects.updateStatus.useMutation({
+    onSuccess: async () => {
+      toast.success("Manager review status updated.");
+      await verifiedHealthQuery.refetch();
+    },
+  });
 
   const createVehicleMutation = trpc.vehicles.create.useMutation({
     onSuccess: async createdVehicle => {
@@ -1037,6 +1056,36 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
                       AI recommendation:{" "}
                       {defect.aiRecommendation ?? "Manager review pending"}
                     </p>
+                    <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                          Manager status
+                        </p>
+                        <span className="text-sm font-semibold text-slate-900">
+                          {formatManagerReviewStatus(defect.managerReviewStatus)}
+                        </span>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {managerReviewOptions.map(option => (
+                          <Button
+                            key={option.value}
+                            type="button"
+                            variant={defect.managerReviewStatus === option.value ? "default" : "outline"}
+                            size="sm"
+                            className="rounded-xl"
+                            disabled={updateDefectReviewMutation.isPending}
+                            onClick={() =>
+                              updateDefectReviewMutation.mutate({
+                                defectId: defect.id,
+                                managerReviewStatus: option.value,
+                              })
+                            }
+                          >
+                            {option.label}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Button
                         variant="outline"

@@ -10,6 +10,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import { defects, tadisAlerts, defectActions, vehicles, maintenanceLogs } from "../../drizzle/schema";
 import { canManageVehicleAccess, canViewVehicle } from "../services/vehicleAccess";
+import { sendEmail } from "../services/email";
 
 async function verifyFleetAccess(fleetId: number, userId: number, userRole: string): Promise<boolean> {
   return canManageVehicleAccess({
@@ -21,7 +22,162 @@ async function verifyFleetAccess(fleetId: number, userId: number, userRole: stri
   });
 }
 
+const managerReviewStatusSchema = z.enum([
+  "reviewed",
+  "scheduled",
+  "deferred",
+  "resolved",
+  "escalated",
+]);
+
+function mapManagerReviewStatusToDefectStatus(
+  managerReviewStatus?: z.infer<typeof managerReviewStatusSchema>
+) {
+  switch (managerReviewStatus) {
+    case "reviewed":
+      return "acknowledged";
+    case "scheduled":
+      return "assigned";
+    case "deferred":
+      return "monitoring";
+    case "resolved":
+      return "resolved";
+    case "escalated":
+      return "repair_required";
+    default:
+      return undefined;
+  }
+}
+
 export const defectsRouter = router({
+  reportIssue: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().int().positive(),
+        vehicleId: z.union([z.number(), z.string().trim().min(1)]),
+        title: z.string().trim().min(1, "Issue title is required").max(255),
+        description: z.string().trim().optional(),
+        category: z.string().trim().optional(),
+        severity: z.enum(["low", "medium", "high", "critical"]).default("medium"),
+        photoUrls: z.array(z.string().min(1)).default([]),
+        localDraftId: z.string().trim().optional(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Database not available",
+        });
+      }
+
+      const hasAccess = await canViewVehicle({
+        user: ctx.user,
+        vehicleId: input.vehicleId,
+        fleetId: input.fleetId,
+      });
+      if (!hasAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You do not have access to report issues for this asset",
+        });
+      }
+
+      const complianceStatus =
+        input.severity === "critical" || input.severity === "high"
+          ? "red"
+          : input.severity === "medium"
+            ? "yellow"
+            : "green";
+      const now = new Date();
+
+      const [defect] = await db
+        .insert(defects)
+        .values({
+          fleetId: input.fleetId,
+          vehicleId: String(input.vehicleId),
+          driverId: ctx.user.id,
+          title: input.title,
+          description: input.description ?? null,
+          category: input.category ?? "driver_reported_issue",
+          severity: input.severity as any,
+          complianceStatus,
+          status: input.severity === "critical" ? "repair_required" : "open",
+          managerReviewStatus: "submitted",
+          managerReviewStatusUpdatedAt: now,
+          photoUrls: input.photoUrls,
+          updatedAt: now,
+        })
+        .returning();
+
+      await db
+        .update(vehicles)
+        .set({
+          complianceStatus,
+          status: complianceStatus === "red" ? "maintenance" : "active",
+          updatedAt: now,
+        })
+        .where(sql`CAST(${vehicles.id} AS text) = ${String(input.vehicleId)}`);
+
+      await db.insert(tadisAlerts).values({
+        fleetId: input.fleetId,
+        defectId: defect.id,
+        urgency: input.severity === "critical" || input.severity === "high" ? "Critical" : "Attention",
+        recommendedAction: input.severity === "critical" ? "Stop Now" : "Inspect Soon",
+        likelyCause: input.title,
+        reasoning: JSON.stringify({
+          source: "driver_mode_issue_report",
+          description: input.description ?? "",
+          severity: input.severity,
+          localDraftId: input.localDraftId ?? null,
+        }),
+      });
+
+      await db.execute(sql`
+        INSERT INTO "inAppAlerts" (
+          "fleetId", "vehicleId", "defectId", "alertType", "severity", "title", "message", "createdAt", "updatedAt"
+        )
+        VALUES (
+          ${input.fleetId},
+          ${String(input.vehicleId)},
+          ${defect.id},
+          ${input.severity === "critical" ? "critical_defect_reported" : "driver_issue_submitted"},
+          ${input.severity === "critical" ? "critical" : "warning"},
+          ${input.severity === "critical" ? "Critical driver issue reported" : "Driver issue reported"},
+          ${`${ctx.user.name || "A driver"} reported ${input.title}.`},
+          ${now},
+          ${now}
+        )
+      `);
+
+      if (input.severity === "critical" && ctx.user.managerEmail) {
+        sendEmail({
+          to: [ctx.user.managerEmail],
+          subject: `TruckFixr critical driver issue - ${input.title}`,
+          text: `${ctx.user.name || "A driver"} reported a critical issue.\n\nAsset: ${input.vehicleId}\nIssue: ${input.title}\nNotes: ${input.description ?? "None"}\n\nReview this in TruckFixr before dispatch.`,
+          html: `<p><strong>${ctx.user.name || "A driver"} reported a critical issue.</strong></p><p>Asset: ${input.vehicleId}</p><p>Issue: ${input.title}</p><p>Notes: ${input.description ?? "None"}</p><p>Review this in TruckFixr before dispatch.</p>`,
+        }).catch((error) => {
+          console.warn("[Defects] Unable to send critical driver issue email:", error);
+        });
+      }
+
+      console.log("[Analytics] Driver issue submitted:", {
+        defectId: defect.id,
+        vehicleId: input.vehicleId,
+        fleetId: input.fleetId,
+        severity: input.severity,
+        userId: ctx.user.id,
+      });
+
+      return {
+        success: true,
+        defectId: defect.id,
+        status: defect.status,
+        complianceStatus,
+      };
+    }),
+
   create: protectedProcedure
     .input(
       z.object({
@@ -217,7 +373,18 @@ export const defectsRouter = router({
     .input(
       z.object({
         defectId: z.number(),
-        status: z.enum(["open", "acknowledged", "assigned", "resolved"]),
+        status: z
+          .enum([
+            "open",
+            "acknowledged",
+            "assigned",
+            "monitoring",
+            "repair_required",
+            "resolved",
+            "dismissed",
+          ])
+          .optional(),
+        managerReviewStatus: managerReviewStatusSchema.optional(),
         notes: z.string().optional(),
         assignedTo: z.number().optional(),
       })
@@ -259,24 +426,52 @@ export const defectsRouter = router({
         });
       }
 
+      const now = new Date();
+      const nextStatus =
+        input.status ?? mapManagerReviewStatusToDefectStatus(input.managerReviewStatus) ?? existing.status;
+      const nextManagerReviewStatus =
+        input.managerReviewStatus ?? existing.managerReviewStatus ?? "submitted";
+
       await db
         .update(defects)
-        .set({ status: input.status, updatedAt: new Date() })
+        .set({
+          status: nextStatus as any,
+          managerReviewStatus: nextManagerReviewStatus,
+          managerReviewStatusUpdatedAt: input.managerReviewStatus
+            ? now
+            : existing.managerReviewStatusUpdatedAt,
+          updatedAt: now,
+        })
         .where(eq(defects.id, input.defectId));
 
-      if (input.notes || input.assignedTo) {
+      if (input.notes || input.assignedTo || input.managerReviewStatus) {
         await db
           .insert(defectActions)
           .values({
             defectId: input.defectId,
             managerId: ctx.user.id,
-            actionType: input.assignedTo ? "assign" : (input.notes ? "comment" as const : "acknowledge" as const),
-            notes: input.notes ?? null,
+            actionType: input.assignedTo
+              ? "assign"
+              : nextStatus === "resolved"
+                ? "resolve"
+                : input.managerReviewStatus === "reviewed"
+                  ? "acknowledge"
+                  : "comment",
+            notes:
+              input.notes ??
+              (input.managerReviewStatus
+                ? `Manager review status changed to ${input.managerReviewStatus}.`
+                : null),
             assignedTo: input.assignedTo ?? null,
           });
       }
 
-      console.log('[Analytics] Defect status updated:', { defectId: input.defectId, status: input.status, userId: ctx.user.id });
+      console.log('[Analytics] Defect status updated:', {
+        defectId: input.defectId,
+        status: nextStatus,
+        managerReviewStatus: nextManagerReviewStatus,
+        userId: ctx.user.id,
+      });
 
       return { success: true };
     }),

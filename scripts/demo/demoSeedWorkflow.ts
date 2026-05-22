@@ -495,6 +495,9 @@ async function upsertFleetRow(db: DemoDb, company: DemoCompanySeed, ownerId: num
     paidPilotStartedAt: null,
     paidPilotEndsAt: null,
     salesStatus: "demo",
+    accountType: "demo" as const,
+    isDemoAccount: true,
+    driverModeEnabled: true,
     updatedAt: now(),
   };
 

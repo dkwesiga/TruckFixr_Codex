@@ -267,6 +267,7 @@ export default function EmailAuth() {
           const authenticatedUser = result.user as
             | {
                 role?: string | null;
+                internalAdminRole?: string | null;
               }
             | undefined;
 
@@ -275,7 +276,9 @@ export default function EmailAuth() {
           }
 
           const redirectPath =
-            authenticatedUser.role === 'manager' || authenticatedUser.role === 'owner'
+            authenticatedUser.internalAdminRole
+              ? '/admin/metrics'
+              : authenticatedUser.role === 'manager' || authenticatedUser.role === 'owner'
               ? '/manager'
               : '/driver';
           setLocation(redirectPath);

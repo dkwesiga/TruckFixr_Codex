@@ -103,6 +103,19 @@ function DriverInspectionContent() {
     hasVehicleSelection && Number.isFinite(Number(rawVehicleId))
       ? Number(rawVehicleId)
       : rawVehicleId ?? "";
+  const pairedTrailerId = searchParams.get("trailer");
+  const pairedTruckId = searchParams.get("truck");
+  const comboStage = searchParams.get("combo");
+  const inspectionSessionId = useMemo(() => {
+    const existingSessionId = searchParams.get("session");
+    if (existingSessionId?.trim()) return existingSessionId;
+    if (pairedTrailerId || pairedTruckId || comboStage) {
+      return `driver-session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    return null;
+  }, [comboStage, pairedTrailerId, pairedTruckId, searchParams]);
+  const nextCombinedVehicleId = comboStage === "truck" ? pairedTrailerId : null;
+  const isCombinedInspectionSession = Boolean(inspectionSessionId && (pairedTrailerId || pairedTruckId || comboStage));
   const fleetId = useMemo(() => {
     const urlFleet = searchParams.get("fleet");
     if (urlFleet && Number(urlFleet) > 0) return Number(urlFleet);
@@ -280,7 +293,7 @@ function DriverInspectionContent() {
       const response = responses[item.id];
 
       if (!response?.status) {
-        nextPendingItems.push(`Mark "${item.label}" as pass or fail.`);
+        nextPendingItems.push(`Mark "${item.label}" as pass, defect, or N/A.`);
         return;
       }
 
@@ -290,6 +303,10 @@ function DriverInspectionContent() {
 
       if (response.status === "fail" && !response.comment?.trim()) {
         nextPendingItems.push(`Add a comment for "${item.label}".`);
+      }
+
+      if (response.status === "fail" && response.photoUrls.length === 0) {
+        nextPendingItems.push(`Add at least one photo for "${item.label}".`);
       }
     });
 
@@ -338,8 +355,8 @@ function DriverInspectionContent() {
     return currentCategory.items.every((item) => {
       const response = responses[item.id];
       if (!response?.status) return false;
-      if (response.status === "pass") return true;
-      return Boolean(response.classification && response.comment?.trim());
+      if (response.status === "pass" || response.status === "na") return true;
+      return Boolean(response.classification && response.comment?.trim() && response.photoUrls.length > 0);
     });
   }, [
     currentCategory,
@@ -500,7 +517,7 @@ function DriverInspectionContent() {
         throw new Error(`Missing inspection result for ${item.label}`);
       }
 
-      if (response.status === "pass") {
+      if (response.status === "pass" || response.status === "na") {
         return { itemId: item.id, status: "pass" as const };
       }
 
@@ -516,6 +533,7 @@ function DriverInspectionContent() {
     return {
       vehicleId,
       fleetId,
+      ...(inspectionSessionId ? { inspectionSessionId } : {}),
       inspectionSheetType: selectedInspectionSheetType,
       ...(requiresOdometer ? { odometer: Number(odometer) } : {}),
       location: location.trim(),
@@ -530,6 +548,16 @@ function DriverInspectionContent() {
 
   const finishFlow = () => {
     window.setTimeout(() => {
+      if (nextCombinedVehicleId && inspectionSessionId) {
+        window.location.href =
+          `/inspection?vehicle=${encodeURIComponent(String(nextCombinedVehicleId))}` +
+          `&truck=${encodeURIComponent(String(vehicleId))}` +
+          `&fleet=${encodeURIComponent(String(resolvedFleetId))}` +
+          `&session=${encodeURIComponent(inspectionSessionId)}` +
+          "&combo=trailer";
+        return;
+      }
+
       window.location.href = "/driver";
     }, 1400);
   };
@@ -618,12 +646,17 @@ function DriverInspectionContent() {
 
     trackInspectionSubmitted(result.inspectionId, result.defectsCreated, {
       vehicle_id: vehicleId,
+      inspection_session_id: inspectionSessionId ?? undefined,
+      combined_stage: comboStage ?? undefined,
       major_defect_count: result.majorDefectCount,
       minor_defect_count: result.minorDefectCount,
       can_operate: result.canOperate,
     });
 
     clearInspectionDraft(storage, vehicleId);
+    const completionDestination = nextCombinedVehicleId
+      ? "Opening trailer inspection next."
+      : "Returning to dashboard.";
 
     if (mode === "download" && result.reportPdfBase64) {
       downloadBase64Pdf(
@@ -646,12 +679,12 @@ function DriverInspectionContent() {
       result.reportGenerated
         ? result.canOperate
           ? mode === "download"
-            ? `Daily inspection submitted for ${driverName}. ${result.reportFileName} downloaded successfully. Returning to dashboard.`
-            : `Daily inspection submitted for ${driverName}. ${result.reportFileName} was generated. Returning to dashboard.`
+            ? `Daily inspection submitted for ${driverName}. ${result.reportFileName} downloaded successfully. ${completionDestination}`
+            : `Daily inspection submitted for ${driverName}. ${result.reportFileName} was generated. ${completionDestination}`
           : mode === "download"
-            ? `Daily inspection submitted for ${driverName}. Major defect reported, ${result.reportFileName} downloaded successfully, and the vehicle should not operate until corrected. Returning to dashboard.`
-            : `Daily inspection submitted for ${driverName}. Major defect reported, ${result.reportFileName} was generated, and the vehicle should not operate until corrected. Returning to dashboard.`
-        : `Daily inspection submitted for ${driverName}. The record was saved even though PDF generation was unavailable. Returning to dashboard.`,
+            ? `Daily inspection submitted for ${driverName}. Major defect reported, ${result.reportFileName} downloaded successfully, and the vehicle should not operate until corrected. ${completionDestination}`
+            : `Daily inspection submitted for ${driverName}. Major defect reported, ${result.reportFileName} was generated, and the vehicle should not operate until corrected. ${completionDestination}`
+        : `Daily inspection submitted for ${driverName}. The record was saved even though PDF generation was unavailable. ${completionDestination}`,
       {
         description: result.reportGenerated
           ? deliverySummary
@@ -852,12 +885,20 @@ function DriverInspectionContent() {
         <div className="mx-auto max-w-4xl px-4 py-4 sm:px-6 sm:py-5">
           <div className="flex flex-col gap-3 sm:gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <p className="section-label">Daily inspection</p>
+              <p className="section-label">
+                {isCombinedInspectionSession
+                  ? comboStage === "trailer"
+                    ? "Combined session - Trailer inspection"
+                    : "Combined session - Truck inspection"
+                  : "Daily inspection"}
+              </p>
               <h1 className="mt-2 text-xl font-semibold leading-tight text-slate-950 sm:text-2xl">
                 {vehicleLabel} - {vehicle.licensePlate}
               </h1>
               <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">
-                Required every {INSPECTION_VALIDITY_HOURS} hours per vehicle.
+                {isCombinedInspectionSession
+                  ? "TruckFixr will save this asset as its own inspection record while linking the truck and trailer under one session."
+                  : `Required every ${INSPECTION_VALIDITY_HOURS} hours per vehicle.`}
               </p>
               <p className="mt-1 text-sm text-slate-500">
                 {vehicle.year ?? "Year n/a"} {vehicle.make} {vehicle.model}
@@ -977,7 +1018,7 @@ function DriverInspectionContent() {
             </CardHeader>
             <CardContent className="space-y-5 px-4 pb-5 sm:space-y-6 sm:px-6 sm:pb-6">
               <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-slate-700">
-                A failed item requires a minor, major, or not-sure classification and a comment before you can continue. Photo evidence is strongly recommended for major or uncertain defects.
+                A defect requires a note and at least one photo before you can continue. Critical defects are sent to managers for review.
               </div>
               {requiresInspectionSheetSelection ? (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
@@ -1035,7 +1076,7 @@ function DriverInspectionContent() {
           <Card className="rounded-[24px] sm:rounded-3xl">
             <CardHeader className="space-y-2 px-4 py-5 sm:px-6">
               <CardTitle>{currentCategory.label}</CardTitle>
-              <CardDescription>Every item must be marked pass or fail. Failed items need a classification and comment before you can move on.</CardDescription>
+              <CardDescription>Every item must be marked Pass, Defect, or N/A. Defects need a note and photo before you can move on.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 px-4 pb-5 sm:px-6 sm:pb-6">
               {currentCategory.items.map((item) => {
@@ -1049,12 +1090,15 @@ function DriverInspectionContent() {
                         <p className="font-semibold text-slate-950">{item.label}</p>
                         <p className="mt-1 text-sm text-slate-600">{item.guidance}</p>
                       </div>
-                      <div className="grid grid-cols-2 gap-2 sm:flex">
+                      <div className="grid grid-cols-3 gap-2 sm:flex">
                         <Button type="button" variant={response.status === "pass" ? "default" : "outline"} className="h-10 rounded-full px-4 text-sm sm:min-w-[88px]" onClick={() => updateItemResponse(item.id, { status: "pass", classification: undefined, comment: "", photoUrls: [] })}>
                           Pass
                         </Button>
                         <Button type="button" variant={isFail ? "destructive" : "outline"} className="h-10 rounded-full px-4 text-sm sm:min-w-[88px]" onClick={() => updateItemResponse(item.id, { status: "fail" })}>
-                          Fail
+                          Defect
+                        </Button>
+                        <Button type="button" variant={response.status === "na" ? "secondary" : "outline"} className="h-10 rounded-full px-4 text-sm sm:min-w-[88px]" onClick={() => updateItemResponse(item.id, { status: "na", classification: undefined, comment: "", photoUrls: [] })}>
+                          N/A
                         </Button>
                       </div>
                     </div>
@@ -1072,12 +1116,12 @@ function DriverInspectionContent() {
                             >
                               <option value="">Select...</option>
                               <option value="minor">Minor defect</option>
-                              <option value="major">Major defect</option>
+                              <option value="major">Critical defect</option>
                               <option value="not_sure">Not sure - manager review</option>
                             </select>
                           </div>
                           <div>
-                            <Label>Photo evidence (optional)</Label>
+                            <Label>Photo evidence (required)</Label>
                             <div className="mt-2 space-y-2">
                               <Button
                                 type="button"
@@ -1156,7 +1200,7 @@ function DriverInspectionContent() {
                           {response.photoUrls.length === 0 ? (
                             <div className="flex items-center gap-2 text-sm text-slate-500">
                               <Camera className="h-4 w-4" />
-                              Add a photo if it helps show the issue.
+                              Add a required defect photo before continuing.
                             </div>
                           ) : null}
                         </div>
@@ -1188,7 +1232,7 @@ function DriverInspectionContent() {
                   </p>
                 </div>
                 <div className="rounded-2xl bg-red-50 p-4">
-                  <p className="text-xs uppercase tracking-[0.18em] text-red-700">Major defects</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-red-700">Critical defects</p>
                   <p className="mt-2 text-2xl font-semibold text-slate-950">
                     {failedItems.filter(({ response }) => response?.classification === "major").length}
                   </p>
@@ -1205,7 +1249,7 @@ function DriverInspectionContent() {
                           <p className="mt-1 text-sm text-slate-600">{response?.comment}</p>
                         </div>
                         <span className={`rounded-full px-3 py-1 text-xs font-semibold ${response?.classification === "major" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>
-                          {response?.classification === "major" ? "Major" : response?.classification === "not_sure" ? "Not sure" : "Minor"}
+                          {response?.classification === "major" ? "Critical" : response?.classification === "not_sure" ? "Not sure" : "Minor"}
                         </span>
                       </div>
                     </div>
@@ -1304,7 +1348,7 @@ function DriverInspectionContent() {
               {failedItems.some(({ response }) => response?.classification === "major") ? (
                 <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
                   <TriangleAlert className="mt-0.5 h-4 w-4 flex-shrink-0" />
-                  Major defects were reported. The vehicle should not be operated until the defect is corrected.
+                  Critical defects were reported. The vehicle should not be operated until the defect is reviewed.
                 </div>
               ) : null}
             </CardContent>

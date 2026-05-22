@@ -124,6 +124,7 @@ async function ensureAuthSchema(pool: Pool) {
         "loginMethod" varchar(64),
         "emailVerified" boolean NOT NULL DEFAULT false,
         "role" user_role NOT NULL DEFAULT 'driver',
+        "internalAdminRole" varchar(32),
         "managerEmail" varchar(320),
         "managerUserId" integer,
         "subscriptionTier" subscription_tier NOT NULL DEFAULT 'free',
@@ -296,6 +297,11 @@ async function ensureAuthSchema(pool: Pool) {
     await pool.query(`
       ALTER TABLE "users"
       ADD COLUMN IF NOT EXISTS "managerEmail" varchar(320);
+    `);
+
+    await pool.query(`
+      ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "internalAdminRole" varchar(32);
     `);
 
     await pool.query(`
@@ -507,7 +513,18 @@ async function ensureAuthSchema(pool: Pool) {
         "subscriptionStatus" billing_status NOT NULL DEFAULT 'active',
         "planId" integer DEFAULT 1,
         "premiumTadis" boolean DEFAULT false,
+        "driverModeEnabled" boolean NOT NULL DEFAULT false,
         "trialEndsAt" timestamp,
+        "accountType" varchar(32) NOT NULL DEFAULT 'production',
+        "isDemoAccount" boolean NOT NULL DEFAULT false,
+        "lastActiveAt" timestamp,
+        "setupCompletedAt" timestamp,
+        "onboardingStatus" varchar(64) NOT NULL DEFAULT 'not_started',
+        "adminFollowUpStatus" varchar(64) NOT NULL DEFAULT 'healthy',
+        "riskStatus" varchar(64) NOT NULL DEFAULT 'healthy',
+        "riskReason" text,
+        "nextFollowUpAt" timestamp,
+        "adminOwnerId" integer,
         "createdAt" timestamp NOT NULL DEFAULT now(),
         "updatedAt" timestamp NOT NULL DEFAULT now()
       );
@@ -610,6 +627,20 @@ async function ensureAuthSchema(pool: Pool) {
 
     await pool.query(`
       ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "driverModeEnabled" boolean NOT NULL DEFAULT false;
+    `);
+
+    await pool.query(`
+      UPDATE "fleets"
+      SET "driverModeEnabled" = true
+      WHERE "accountType" = 'demo'
+        OR "isDemoAccount" = true
+        OR "salesStatus" = 'demo'
+        OR lower(coalesce("companyEmail", '')) LIKE '%@truckfixr-demo.example.com';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
       ADD COLUMN IF NOT EXISTS "subscriptionStartedAt" timestamp;
     `);
 
@@ -651,6 +682,68 @@ async function ensureAuthSchema(pool: Pool) {
     await pool.query(`
       ALTER TABLE "fleets"
       ADD COLUMN IF NOT EXISTS "salesStatus" varchar(64) DEFAULT 'none';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "accountType" varchar(32) NOT NULL DEFAULT 'production';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "isDemoAccount" boolean NOT NULL DEFAULT false;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "lastActiveAt" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "setupCompletedAt" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "onboardingStatus" varchar(64) NOT NULL DEFAULT 'not_started';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "adminFollowUpStatus" varchar(64) NOT NULL DEFAULT 'healthy';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "riskStatus" varchar(64) NOT NULL DEFAULT 'healthy';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "riskReason" text;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "nextFollowUpAt" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "adminOwnerId" integer;
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "adminFleetNotes" (
+        "id" serial PRIMARY KEY,
+        "fleetId" integer NOT NULL,
+        "createdByUserId" integer NOT NULL,
+        "note" text NOT NULL,
+        "noteType" varchar(64) NOT NULL DEFAULT 'general',
+        "createdAt" timestamp NOT NULL DEFAULT now(),
+        "updatedAt" timestamp NOT NULL DEFAULT now()
+      );
     `);
 
     await pool.query(`
@@ -1418,6 +1511,7 @@ async function ensureAuthSchema(pool: Pool) {
         "fleetId" integer NOT NULL,
         "vehicleId" integer NOT NULL,
         "driverId" integer NOT NULL,
+        "inspectionSessionId" varchar(128),
         "templateId" integer,
         "status" inspection_status DEFAULT 'in_progress',
         "complianceStatus" compliance_status NOT NULL DEFAULT 'green',
@@ -1441,6 +1535,11 @@ async function ensureAuthSchema(pool: Pool) {
     await pool.query(`
       ALTER TABLE "inspections"
       ADD COLUMN IF NOT EXISTS "driverId" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "inspections"
+      ADD COLUMN IF NOT EXISTS "inspectionSessionId" varchar(128);
     `);
 
     await pool.query(`
@@ -1685,6 +1784,8 @@ async function ensureAuthSchema(pool: Pool) {
         "severity" defect_severity DEFAULT 'medium',
         "complianceStatus" compliance_status NOT NULL DEFAULT 'green',
         "status" defect_status DEFAULT 'open',
+        "managerReviewStatus" varchar(32) NOT NULL DEFAULT 'submitted',
+        "managerReviewStatusUpdatedAt" timestamp,
         "photoUrls" jsonb,
         "createdAt" timestamp NOT NULL DEFAULT now(),
         "updatedAt" timestamp NOT NULL DEFAULT now()
@@ -1694,6 +1795,16 @@ async function ensureAuthSchema(pool: Pool) {
     await pool.query(`
       ALTER TABLE "defects"
       ADD COLUMN IF NOT EXISTS "complianceStatus" compliance_status NOT NULL DEFAULT 'green';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "defects"
+      ADD COLUMN IF NOT EXISTS "managerReviewStatus" varchar(32) NOT NULL DEFAULT 'submitted';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "defects"
+      ADD COLUMN IF NOT EXISTS "managerReviewStatusUpdatedAt" timestamp;
     `);
 
     await pool.query(`
@@ -1963,7 +2074,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     };
     const updateSet: Record<string, unknown> = {};
 
-    const textFields = ["name", "email", "loginMethod", "managerEmail"] as const;
+    const textFields = ["name", "email", "passwordHash", "loginMethod", "managerEmail", "internalAdminRole"] as const;
     type TextField = (typeof textFields)[number];
 
     const assignNullable = (field: TextField) => {
@@ -1979,6 +2090,10 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     if (user.lastSignedIn !== undefined) {
       values.lastSignedIn = user.lastSignedIn;
       updateSet.lastSignedIn = user.lastSignedIn;
+    }
+    if (user.lastAuthAt !== undefined) {
+      values.lastAuthAt = user.lastAuthAt;
+      updateSet.lastAuthAt = user.lastAuthAt;
     }
     if (user.role !== undefined) {
       values.role = user.role;

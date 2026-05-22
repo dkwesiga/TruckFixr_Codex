@@ -44,6 +44,27 @@ function sendGenericLoginFailure(res: Response, email: string) {
   res.status(401).json({ error: GENERIC_LOGIN_ERROR });
 }
 
+async function authenticateDevelopmentLocalUser(email: string, password: string) {
+  if (ENV.isProduction) return null;
+
+  const user = await verifyLocalCredentials(email, password);
+  if (!user) return null;
+
+  await db.upsertUser({
+    openId: user.openId,
+    email: user.email,
+    name: user.name,
+    passwordHash: user.passwordHash,
+    loginMethod: user.loginMethod ?? "email",
+    role: user.role,
+    emailVerified: user.emailVerified ?? true,
+    lastSignedIn: new Date(),
+    lastAuthAt: new Date(),
+  });
+
+  return user;
+}
+
 export function registerEmailAuthRoutes(app: Express) {
   const adoptInvitedDriverAccount = async (input: {
     email: string;
@@ -187,6 +208,7 @@ export function registerEmailAuthRoutes(app: Express) {
             email: user.email,
             name: user.name,
             role: user.role,
+            internalAdminRole: user.internalAdminRole,
           },
         });
         return;
@@ -199,6 +221,31 @@ export function registerEmailAuthRoutes(app: Express) {
 
       const { users } = await import("../../drizzle/schema");
       const { eq } = await import("drizzle-orm");
+
+      const devLocalUser = await authenticateDevelopmentLocalUser(normalizedEmail, password);
+      if (devLocalUser) {
+        const sessionDurationMs = getSessionDurationMs(devLocalUser.role);
+        const sessionToken = await sdk.createSessionToken(devLocalUser.openId, {
+          name: devLocalUser.name || "",
+          expiresInMs: sessionDurationMs,
+        });
+
+        const cookieOptions = getSessionCookieOptions(req);
+        res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: sessionDurationMs });
+        clearFailedLogin(normalizedEmail);
+
+        res.json({
+          success: true,
+          user: {
+            id: devLocalUser.id,
+            email: devLocalUser.email,
+            name: devLocalUser.name,
+            role: devLocalUser.role,
+            internalAdminRole: devLocalUser.internalAdminRole,
+          },
+        });
+        return;
+      }
 
       const userRecord = await userDb
         .select()
@@ -285,6 +332,7 @@ export function registerEmailAuthRoutes(app: Express) {
           email: sessionUser.email,
           name: sessionUser.name,
           role: sessionUser.role,
+          internalAdminRole: sessionUser.internalAdminRole,
         },
       });
     } catch (error) {

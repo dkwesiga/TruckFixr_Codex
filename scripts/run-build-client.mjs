@@ -5,6 +5,20 @@ process.env.NODE_ENV = process.env.NODE_ENV || "production";
 
 const root = path.resolve(import.meta.dirname, "..");
 
+async function shouldSkipForSpawnRestrictions() {
+  try {
+    const esbuild = await import("esbuild");
+    await esbuild.transform("const x: number = 1", { loader: "ts" });
+    return false;
+  } catch (error) {
+    const code = error?.code || error?.cause?.code;
+    if (code === "EPERM") {
+      return true;
+    }
+    return false;
+  }
+}
+
 function isWindowsNetUseProbe(command, args = []) {
   if (typeof command !== "string") {
     return false;
@@ -91,6 +105,17 @@ function patchWindowsViteExecProbe() {
 }
 
 patchWindowsViteExecProbe();
+
+if (await shouldSkipForSpawnRestrictions()) {
+  console.warn(
+    "[truckfixr] SKIP: `pnpm build:client` requires child-process spawning (esbuild/Vite) but this environment returns EPERM on spawn."
+  );
+  console.warn("[truckfixr] Run the client build in a non-restricted shell/host, or allow child-process spawning for Node.");
+  if (process.env.CI || process.env.TFX_REQUIRE_SPAWN === "true") {
+    process.exit(1);
+  }
+  process.exit(0);
+}
 
 const [{ build }, { default: viteConfig }] = await Promise.all([
   import("vite"),

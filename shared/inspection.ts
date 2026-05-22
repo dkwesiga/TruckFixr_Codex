@@ -343,6 +343,7 @@ const inspectionVehicleIdSchema = z
 export const dailyInspectionSubmissionSchema = z.object({
   vehicleId: inspectionVehicleIdSchema,
   fleetId: z.number().int().positive(),
+  inspectionSessionId: z.string().trim().min(8).max(128).optional(),
   inspectionSheetType: inspectionSheetTypeSchema.optional(),
   odometer: z.number().int().nonnegative().optional(),
   location: z.string().trim().min(1, "Inspection location is required"),

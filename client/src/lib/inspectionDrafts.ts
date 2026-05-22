@@ -6,7 +6,7 @@ import {
 } from "../../../shared/inspection";
 
 export type InspectionDraftItemResponse = {
-  status?: "pass" | "fail";
+  status?: "pass" | "fail" | "na";
   classification?: "minor" | "major" | "not_sure";
   comment?: string;
   photoUrls: string[];
@@ -101,7 +101,7 @@ const draftSchema: z.ZodType<InspectionDraft> = z.object({
         responses: z.record(
           z.string(),
           z.object({
-            status: z.enum(["pass", "fail"]).optional(),
+            status: z.enum(["pass", "fail", "na"]).optional(),
             classification: z.enum(["minor", "major", "not_sure"]).optional(),
             comment: z.string().optional(),
             photoUrls: z.array(z.string()),

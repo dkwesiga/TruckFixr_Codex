@@ -20,7 +20,10 @@ const EmailAuth = lazy(() => import("./pages/EmailAuth"));
 const UserProfile = lazy(() => import("./pages/UserProfile"));
 const AdminBillingDashboard = lazy(() => import("./pages/AdminBillingDashboard"));
 const FaultCodeReviewDashboard = lazy(() => import("./pages/FaultCodeReviewDashboard"));
+const AdminMetricsDashboard = lazy(() => import("./pages/AdminMetricsDashboard"));
+const AdminFleetDetail = lazy(() => import("./pages/AdminFleetDetail"));
 const InspectionReportDvir = lazy(() => import("./pages/InspectionReportDvir"));
+const DriverInspectionNSC = lazy(() => import("./pages/DriverInspectionNSC"));
 const AccessGateway = lazy(() => import("./pages/AccessGateway"));
 const AccessStartTrial = lazy(() => import("./pages/AccessStartTrial"));
 const AccessPilotCode = lazy(() => import("./pages/AccessPilotCode"));
@@ -54,11 +57,16 @@ function Router() {
         <Route path={"/manager"} component={ManagerDashboard} />
         <Route path={"/driver"} component={DriverDashboardSaaS} />
         <Route path={"/diagnosis"} component={DriverDiagnosis} />
-        <Route path={"/inspection"} component={VerifiedInspection} />
+        <Route path={"/inspection"} component={DriverInspectionNSC} />
+        <Route path={"/inspection/verified"} component={VerifiedInspection} />
         <Route path={"/inspection-report/:id"} component={InspectionReportDvir} />
         <Route path={"/defect/:id"} component={DefectDetail} />
         <Route path={"/truck/:id"} component={TruckDetail} />
         <Route path={"/pricing"} component={Pricing} />
+        <Route path={"/admin"} component={AdminMetricsDashboard} />
+        <Route path={"/admin/metrics"} component={AdminMetricsDashboard} />
+        <Route path={"/admin/fleets"} component={AdminMetricsDashboard} />
+        <Route path={"/admin/fleets/:fleetId"} component={AdminFleetDetail} />
         <Route path={"/admin/billing"} component={AdminBillingDashboard} />
         <Route path={"/admin/fault-codes"} component={FaultCodeReviewDashboard} />
         <Route path={"/404"} component={NotFound} />

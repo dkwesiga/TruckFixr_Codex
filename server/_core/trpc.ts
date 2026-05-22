@@ -41,6 +41,7 @@ type StaffLikeUser =
   | {
       email?: string | null;
       role?: string | null;
+      internalAdminRole?: string | null;
     }
   | null
   | undefined;
@@ -48,6 +49,11 @@ type StaffLikeUser =
 export function isStaffAdminUser(user: StaffLikeUser) {
   const userEmail = user?.email?.trim().toLowerCase();
   const staffEmails = configuredStaffEmails();
+  const internalRole = user?.internalAdminRole;
+
+  if (internalRole === "super_admin" || internalRole === "admin" || internalRole === "read_only_viewer") {
+    return true;
+  }
 
   if (userEmail && staffEmails.has(userEmail)) {
     return true;
