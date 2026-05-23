@@ -27,40 +27,6 @@ import { toast } from "sonner";
 
 type DriverVehicle = DriverVehicleRecord;
 
-type InspectionReport = {
-  title: string;
-  completedAt: string;
-  summary: string;
-  findings: string[];
-};
-
-type RecentActivityItem = {
-  id: number;
-  type: "inspection" | "defect";
-  title: string;
-  detail: string;
-  report?: InspectionReport;
-};
-
-const recentActivity: RecentActivityItem[] = [
-  {
-    id: 1,
-    type: "inspection",
-    title: "Inspection Completed",
-    detail: "Today at 8:30 AM - No issues reported",
-    report: {
-      title: "Pre-trip inspection report",
-      completedAt: "Today at 8:30 AM",
-      summary: "12 checklist items completed with no defects flagged.",
-      findings: [
-        "Exterior, lights, tires, brakes, and engine checks all passed.",
-        "No active warning lights reported by the driver.",
-        "Truck was cleared for dispatch.",
-      ],
-    },
-  },
-  { id: 2, type: "defect", title: "Defect Reported", detail: "Yesterday at 2:15 PM - Tire wear detected" },
-];
 
 function badgeClasses(value: string) {
   switch (value) {
@@ -122,7 +88,6 @@ function DriverDashboardContent() {
   const [activeVehicleId, setActiveVehicleId] = useState<number | string>(
     () => storedVehicle?.id ?? 0
   );
-  const [selectedReport, setSelectedReport] = useState<InspectionReport | null>(null);
   const [isIssueDialogOpen, setIsIssueDialogOpen] = useState(false);
   const [issueForm, setIssueForm] = useState({
     title: "",
@@ -181,7 +146,7 @@ function DriverDashboardContent() {
           latestInspectionReport.overallVehicleResult ?? "submitted"
         ).replaceAll("_", " ")}`,
       }
-    : recentActivity.find((item) => item.type === "inspection");
+    : null;
   const pendingDrafts = useMemo(
     () =>
       vehicles
@@ -850,20 +815,6 @@ function DriverDashboardContent() {
             </CardContent>
           </Card>
         </section>
-
-        <Dialog open={Boolean(selectedReport)} onOpenChange={(open) => { if (!open) setSelectedReport(null); }}>
-          <DialogContent className="rounded-[24px] border-slate-200 sm:max-w-lg">
-            <DialogHeader>
-              <DialogTitle>{selectedReport?.title ?? "Inspection Report"}</DialogTitle>
-              <DialogDescription>{selectedReport?.completedAt}</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><p className="text-sm font-medium text-slate-900">{selectedReport?.summary}</p></div>
-              <div className="space-y-2">{selectedReport?.findings.map((finding) => <div key={finding} className="rounded-2xl bg-slate-100 p-3 text-sm text-slate-700">{finding}</div>)}</div>
-            </div>
-            <DialogFooter><Button onClick={() => setSelectedReport(null)} className="rounded-xl">Close</Button></DialogFooter>
-          </DialogContent>
-        </Dialog>
 
         <Dialog open={isIssueDialogOpen} onOpenChange={setIsIssueDialogOpen}>
           <DialogContent className="rounded-[24px] border-slate-200 sm:max-w-lg">
