@@ -8,7 +8,14 @@ import App from "./App";
 import { getLoginUrl } from "./const";
 import { getApiUrl } from "./lib/api";
 import { initializeAnalytics } from "./lib/analytics";
+import { attemptChunkReload } from "./lib/chunkRecovery";
 import "./index.css";
+
+window.addEventListener("vite:preloadError", (event) => {
+  if (attemptChunkReload(event.payload)) {
+    event.preventDefault();
+  }
+});
 
 function renderBootError(message: string) {
   const root = document.getElementById("root");

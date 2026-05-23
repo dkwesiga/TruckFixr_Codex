@@ -9,9 +9,79 @@ services:
     autoDeploy: true
     buildCommand: npm install -g pnpm@10.15.1 && CI=true pnpm install --frozen-lockfile --force --reporter=append-only && pnpm build:client
     staticPublishPath: dist/public
+    headers:
+      - path: /index.html
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /manifest.json
+        name: Cache-Control
+        value: no-cache, must-revalidate
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
     routes:
       - type: rewrite
-        source: /*
+        source: /
+        destination: /index.html
+      - type: rewrite
+        source: /access
+        destination: /index.html
+      - type: rewrite
+        source: /access/*
+        destination: /index.html
+      - type: rewrite
+        source: /pilot
+        destination: /index.html
+      - type: rewrite
+        source: /signup
+        destination: /index.html
+      - type: rewrite
+        source: /auth/*
+        destination: /index.html
+      - type: rewrite
+        source: /profile
+        destination: /index.html
+      - type: rewrite
+        source: /app
+        destination: /index.html
+      - type: rewrite
+        source: /onboarding
+        destination: /index.html
+      - type: rewrite
+        source: /manager
+        destination: /index.html
+      - type: rewrite
+        source: /driver
+        destination: /index.html
+      - type: rewrite
+        source: /diagnosis
+        destination: /index.html
+      - type: rewrite
+        source: /inspection
+        destination: /index.html
+      - type: rewrite
+        source: /inspection/*
+        destination: /index.html
+      - type: rewrite
+        source: /inspection-report/*
+        destination: /index.html
+      - type: rewrite
+        source: /defect/*
+        destination: /index.html
+      - type: rewrite
+        source: /truck/*
+        destination: /index.html
+      - type: rewrite
+        source: /pricing
+        destination: /index.html
+      - type: rewrite
+        source: /admin
+        destination: /index.html
+      - type: rewrite
+        source: /admin/*
+        destination: /index.html
+      - type: rewrite
+        source: /404
         destination: /index.html
     envVars:
       - key: NODE_VERSION

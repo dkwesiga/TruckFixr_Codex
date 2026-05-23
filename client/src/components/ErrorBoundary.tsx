@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
+import { attemptChunkReload } from "@/lib/chunkRecovery";
 import { AlertTriangle, RotateCcw } from "lucide-react";
-import { Component, ReactNode } from "react";
+import { Component, ReactNode, type ErrorInfo } from "react";
 
 interface Props {
   children: ReactNode;
@@ -19,6 +20,14 @@ class ErrorBoundary extends Component<Props, State> {
 
   static getDerivedStateFromError(error: Error): State {
     return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    if (attemptChunkReload(error)) {
+      return;
+    }
+
+    console.error("[ErrorBoundary] Unhandled React error", error, errorInfo);
   }
 
   render() {
