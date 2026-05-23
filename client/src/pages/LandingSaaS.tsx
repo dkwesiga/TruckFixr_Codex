@@ -686,7 +686,7 @@ export default function LandingSaaS() {
           <div className="mx-auto max-w-[1200px]">
             <SectionHeading
               title="Downtime does not start when the truck stops. It starts when warning signs get missed."
-              description="Small fleets lose time and money when maintenance decisions are scattered across paper inspections, text messages, driver memory, fault codes, and previous repair invoices."
+              description="Small and medium fleets lose time and money when maintenance decisions are scattered across paper inspections, text messages, driver memory, fault codes, and previous repair invoices."
               center
             />
             <div className="mt-12 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
@@ -883,6 +883,33 @@ export default function LandingSaaS() {
         </section>
       </main>
 
+      {/* ── Already have access? ── */}
+      <section className="border-t border-[var(--fleet-outline)] bg-[#F6F8FC]">
+        <div className="mx-auto flex max-w-[1200px] flex-col items-center gap-4 px-4 py-10 text-center sm:px-6">
+          <h3 className="font-['Manrope'] text-lg font-bold text-[#00263F]">Already have access?</h3>
+          <div className="flex flex-wrap items-center justify-center gap-4">
+            <a
+              href="/auth/email"
+              className="inline-flex items-center gap-2 rounded-lg border border-[#0B3C5D] px-5 py-2.5 text-sm font-semibold text-[#0B3C5D] transition hover:bg-[#0B3C5D] hover:text-white"
+            >
+              Sign In
+            </a>
+            <a
+              href="/access/pilot-code"
+              className="inline-flex items-center gap-2 rounded-lg border border-[#0B3C5D] px-5 py-2.5 text-sm font-semibold text-[#0B3C5D] transition hover:bg-[#0B3C5D] hover:text-white"
+            >
+              Enter Pilot Code
+            </a>
+            <a
+              href="/access/driver-invite"
+              className="inline-flex items-center gap-2 rounded-lg border border-[#0B3C5D] px-5 py-2.5 text-sm font-semibold text-[#0B3C5D] transition hover:bg-[#0B3C5D] hover:text-white"
+            >
+              I got a driver invite
+            </a>
+          </div>
+        </div>
+      </section>
+
       {/* ── Footer ── */}
       <footer className="border-t border-[var(--fleet-outline)] bg-white">
         <div className="mx-auto flex max-w-[1200px] flex-col gap-5 px-4 py-8 text-sm text-[#42474E] sm:px-6 lg:flex-row lg:items-center lg:justify-between">
@@ -894,7 +921,6 @@ export default function LandingSaaS() {
             <a href="#how-it-works" className="hover:text-[#F37021]">How It Works</a>
             <a href="#book-demo" className="hover:text-[#F37021]">Book a Demo</a>
             <a href="#faq" className="hover:text-[#F37021]">FAQ</a>
-            <a href="/access" className="hover:text-[#F37021]">Have a pilot code?</a>
           </div>
           <p>
             2026 TruckFixr &middot;{" "}
