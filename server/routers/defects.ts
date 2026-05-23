@@ -49,6 +49,23 @@ function mapManagerReviewStatusToDefectStatus(
   }
 }
 
+function mapDefectStatusToManagerReviewStatus(status?: string | null) {
+  switch (status) {
+    case "acknowledged":
+      return "reviewed";
+    case "assigned":
+      return "scheduled";
+    case "monitoring":
+      return "deferred";
+    case "resolved":
+      return "resolved";
+    case "repair_required":
+      return "escalated";
+    default:
+      return undefined;
+  }
+}
+
 export const defectsRouter = router({
   reportIssue: protectedProcedure
     .input(
@@ -91,13 +108,44 @@ export const defectsRouter = router({
             ? "yellow"
             : "green";
       const now = new Date();
+      const normalizedVehicleId = String(input.vehicleId);
+      const normalizedDraftId = input.localDraftId?.trim() || null;
+
+      if (normalizedDraftId) {
+        const [existingDefect] = await db
+          .select({
+            id: defects.id,
+            status: defects.status,
+            complianceStatus: defects.complianceStatus,
+          })
+          .from(defects)
+          .where(
+            and(
+              eq(defects.fleetId, input.fleetId),
+              eq(defects.driverId, ctx.user.id),
+              eq(defects.vehicleId, normalizedVehicleId),
+              eq(defects.clientDraftId, normalizedDraftId)
+            )
+          )
+          .limit(1);
+
+        if (existingDefect) {
+          return {
+            success: true,
+            defectId: existingDefect.id,
+            status: existingDefect.status,
+            complianceStatus: existingDefect.complianceStatus,
+          };
+        }
+      }
 
       const [defect] = await db
         .insert(defects)
         .values({
           fleetId: input.fleetId,
-          vehicleId: String(input.vehicleId),
+          vehicleId: normalizedVehicleId,
           driverId: ctx.user.id,
+          clientDraftId: normalizedDraftId,
           title: input.title,
           description: input.description ?? null,
           category: input.category ?? "driver_reported_issue",
@@ -118,7 +166,7 @@ export const defectsRouter = router({
           status: complianceStatus === "red" ? "maintenance" : "active",
           updatedAt: now,
         })
-        .where(sql`CAST(${vehicles.id} AS text) = ${String(input.vehicleId)}`);
+        .where(sql`CAST(${vehicles.id} AS text) = ${normalizedVehicleId}`);
 
       await db.insert(tadisAlerts).values({
         fleetId: input.fleetId,
@@ -140,7 +188,7 @@ export const defectsRouter = router({
         )
         VALUES (
           ${input.fleetId},
-          ${String(input.vehicleId)},
+          ${normalizedVehicleId},
           ${defect.id},
           ${input.severity === "critical" ? "critical_defect_reported" : "driver_issue_submitted"},
           ${input.severity === "critical" ? "critical" : "warning"},
@@ -430,14 +478,19 @@ export const defectsRouter = router({
       const nextStatus =
         input.status ?? mapManagerReviewStatusToDefectStatus(input.managerReviewStatus) ?? existing.status;
       const nextManagerReviewStatus =
-        input.managerReviewStatus ?? existing.managerReviewStatus ?? "submitted";
+        input.managerReviewStatus ??
+        mapDefectStatusToManagerReviewStatus(input.status) ??
+        existing.managerReviewStatus ??
+        "submitted";
+      const shouldRefreshManagerReviewTimestamp =
+        nextManagerReviewStatus !== (existing.managerReviewStatus ?? "submitted");
 
       await db
         .update(defects)
         .set({
           status: nextStatus as any,
           managerReviewStatus: nextManagerReviewStatus,
-          managerReviewStatusUpdatedAt: input.managerReviewStatus
+          managerReviewStatusUpdatedAt: shouldRefreshManagerReviewTimestamp
             ? now
             : existing.managerReviewStatusUpdatedAt,
           updatedAt: now,
@@ -523,7 +576,12 @@ export const defectsRouter = router({
 
       await db
         .update(defects)
-        .set({ status: "resolved", updatedAt: new Date() })
+        .set({
+          status: "resolved",
+          managerReviewStatus: "resolved",
+          managerReviewStatusUpdatedAt: new Date(),
+          updatedAt: new Date(),
+        })
         .where(eq(defects.id, input.defectId));
 
       await db

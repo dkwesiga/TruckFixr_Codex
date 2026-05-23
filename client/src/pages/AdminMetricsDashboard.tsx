@@ -256,7 +256,7 @@ export default function AdminMetricsDashboard() {
 
   return (
     <AdminLayout>
-      <div className="mx-auto max-w-[1600px] space-y-6">
+      <div id="metrics" className="mx-auto max-w-[1600px] space-y-6">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div>
             <p className="text-sm font-semibold uppercase tracking-[0.16em] text-blue-700">Internal Admin</p>
@@ -540,26 +540,28 @@ export default function AdminMetricsDashboard() {
           </ChartCard>
         </section>
 
-        <FleetTable
-          title="At-Risk Fleets"
-          description="Prioritized by inactivity, billing, compliance, diagnostic follow-up, and onboarding signals."
-          rows={tables?.atRiskFleets ?? []}
-          empty="No at-risk fleets found for this filter."
-        />
-        <div className="grid gap-6 xl:grid-cols-2">
+        <section id="fleets" className="space-y-6">
           <FleetTable
-            title="Top Active Fleets"
-            description="Fleets with the most users, inspections, and diagnostic activity."
-            rows={tables?.topActiveFleets ?? []}
-            empty="No fleet activity found for this date range."
+            title="At-Risk Fleets"
+            description="Prioritized by inactivity, billing, compliance, diagnostic follow-up, and onboarding signals."
+            rows={tables?.atRiskFleets ?? []}
+            empty="No at-risk fleets found for this filter."
           />
-          <FleetTable
-            title="Inactive Fleets"
-            description="Fleets with no recent meaningful operational activity."
-            rows={tables?.inactiveFleets ?? []}
-            empty="No inactive fleets found."
-          />
-        </div>
+          <div className="grid gap-6 xl:grid-cols-2">
+            <FleetTable
+              title="Top Active Fleets"
+              description="Fleets with the most users, inspections, and diagnostic activity."
+              rows={tables?.topActiveFleets ?? []}
+              empty="No fleet activity found for this date range."
+            />
+            <FleetTable
+              title="Inactive Fleets"
+              description="Fleets with no recent meaningful operational activity."
+              rows={tables?.inactiveFleets ?? []}
+              empty="No inactive fleets found."
+            />
+          </div>
+        </section>
 
         <Card id="investor" className="border-slate-200 shadow-sm">
           <CardHeader>

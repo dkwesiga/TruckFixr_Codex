@@ -327,12 +327,14 @@ function DriverDashboardContent() {
   }, [activeFleetId, pilotAccess, trackPilotEventMutation]);
 
   const startInspection = (vehicle: DriverVehicle) => {
+    const inspectionSessionId = createInspectionSessionId(user?.id);
     const numericVehicleId = Number(vehicle.id);
     if (Number.isFinite(numericVehicleId)) {
       trackInspectionStarted(Date.now(), numericVehicleId, {
         source: "driver_dashboard",
         vehicle_label: vehicle.label,
         flow: "daily_inspection",
+        inspection_session_id: inspectionSessionId,
       });
     }
     setActiveVehicleId(vehicle.id);
@@ -349,7 +351,11 @@ function DriverDashboardContent() {
       mileage: vehicle.mileage,
       status: vehicle.status,
     });
-    window.location.href = `/inspection?vehicle=${encodeURIComponent(String(vehicle.id))}&fleet=${encodeURIComponent(String(resolvedFleetId))}&mode=daily`;
+    window.location.href =
+      `/inspection?vehicle=${encodeURIComponent(String(vehicle.id))}` +
+      `&fleet=${encodeURIComponent(String(resolvedFleetId))}` +
+      `&session=${encodeURIComponent(inspectionSessionId)}` +
+      "&mode=daily";
   };
 
   const startCombinedInspection = () => {
@@ -462,7 +468,28 @@ function DriverDashboardContent() {
       return;
     }
 
-    const result = await reportIssueMutation.mutateAsync(submission);
+    let result;
+
+    try {
+      result = await reportIssueMutation.mutateAsync(submission);
+    } catch (error) {
+      if (!navigator.onLine) {
+        enqueueIssueReport(storage, submission);
+        setQueuedIssueCount(getQueuedIssueReports(storage).length);
+        trackEvent("issue_saved_locally", {
+          vehicle_id: activeVehicle.id,
+          severity: issueForm.severity,
+          source: "submit_retry_after_disconnect",
+        });
+        toast.success("Connection dropped. TruckFixr saved the issue offline and will sync it automatically.");
+        setIsIssueDialogOpen(false);
+        return;
+      }
+
+      toast.error(error instanceof Error ? error.message : "Issue submission failed");
+      return;
+    }
+
     trackEvent("issue_submitted", {
       source: "driver_mode",
       vehicle_id: activeVehicle.id,

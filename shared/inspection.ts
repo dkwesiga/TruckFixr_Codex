@@ -53,6 +53,7 @@ export type InspectionSheetType = z.infer<typeof inspectionSheetTypeSchema>;
 
 export const defectClassificationSchema = z.enum(["minor", "major", "not_sure"]);
 export const signatureModeSchema = z.enum(["typed", "drawn"]);
+export const combinedInspectionStageSchema = z.enum(["truck", "trailer"]);
 
 export const vehicleInspectionConfigSchema = z.object({
   airBrakes: z.boolean().default(true),
@@ -344,6 +345,8 @@ export const dailyInspectionSubmissionSchema = z.object({
   vehicleId: inspectionVehicleIdSchema,
   fleetId: z.number().int().positive(),
   inspectionSessionId: z.string().trim().min(8).max(128).optional(),
+  linkedVehicleId: inspectionVehicleIdSchema.optional(),
+  combinedStage: combinedInspectionStageSchema.optional(),
   inspectionSheetType: inspectionSheetTypeSchema.optional(),
   odometer: z.number().int().nonnegative().optional(),
   location: z.string().trim().min(1, "Inspection location is required"),

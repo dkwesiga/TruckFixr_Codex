@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
 import {
   BarChart3,
@@ -30,12 +30,33 @@ import { trpc } from "@/lib/trpc";
 
 const navItems = [
   { href: "/admin/metrics", label: "Metrics", icon: BarChart3 },
-  { href: "/admin/fleets", label: "Fleets", icon: Building2 },
+  { href: "/admin/metrics#fleets", label: "Fleets", icon: Building2 },
   { href: "/admin/metrics#billing", label: "Billing", icon: CreditCard },
   { href: "/admin/metrics#compliance", label: "Compliance", icon: ClipboardCheck },
   { href: "/admin/metrics#diagnostics", label: "Diagnostics", icon: SearchCode },
   { href: "/admin/metrics#investor", label: "Investor Snapshot", icon: FileDown },
 ];
+
+function getHash() {
+  if (typeof window === "undefined") return "";
+  return window.location.hash || "";
+}
+
+function scrollToHashTarget(hash: string, attempt = 0) {
+  if (typeof window === "undefined") return;
+
+  const targetId = hash.replace(/^#/, "");
+  if (!targetId) return;
+
+  const target = document.getElementById(targetId);
+  if (target) {
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+
+  if (attempt >= 12) return;
+  window.setTimeout(() => scrollToHashTarget(hash, attempt + 1), 80);
+}
 
 function AdminGate({ children }: { children: ReactNode }) {
   const adminQuery = trpc.admin.me.useQuery(undefined, { retry: false });
@@ -75,6 +96,7 @@ export function AdminLayout({ children }: { children: ReactNode }) {
   const [location, navigate] = useLocation();
   const { user, logout } = useAuthContext();
   const adminQuery = trpc.admin.me.useQuery(undefined, { retry: false });
+  const [currentHash, setCurrentHash] = useState(() => getHash());
   const initials =
     user?.name
       ?.split(/\s+/)
@@ -82,6 +104,72 @@ export function AdminLayout({ children }: { children: ReactNode }) {
       .slice(0, 2)
       .map((part) => part[0]?.toUpperCase())
       .join("") || "A";
+
+  useEffect(() => {
+    const syncHash = () => setCurrentHash(getHash());
+
+    syncHash();
+    window.addEventListener("hashchange", syncHash);
+    window.addEventListener("popstate", syncHash);
+
+    return () => {
+      window.removeEventListener("hashchange", syncHash);
+      window.removeEventListener("popstate", syncHash);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (location !== "/admin" && location !== "/admin/metrics" && location !== "/admin/fleets") {
+      return;
+    }
+
+    if (currentHash) {
+      scrollToHashTarget(currentHash);
+    } else if (location === "/admin/fleets") {
+      scrollToHashTarget("#fleets");
+    }
+  }, [currentHash, location]);
+
+  const handleNavClick = (href: string) => {
+    const [path, hashFragment] = href.split("#");
+    const targetPath = path || "/admin/metrics";
+    const hash = hashFragment ? `#${hashFragment}` : "";
+
+    if (!hash) {
+      setCurrentHash("");
+      if (typeof window !== "undefined") {
+        window.history.replaceState(null, "", targetPath);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+      navigate(targetPath);
+      return;
+    }
+
+    setCurrentHash(hash);
+
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", `${targetPath}${hash}`);
+    }
+
+    if (location !== targetPath) {
+      navigate(targetPath);
+    }
+
+    scrollToHashTarget(hash);
+  };
+
+  const isNavItemActive = (href: string) => {
+    const [path, hashFragment] = href.split("#");
+    const targetPath = path || "/admin/metrics";
+    const isMetricsPath =
+      location === "/admin" || location === "/admin/metrics" || location === "/admin/fleets";
+
+    if (hashFragment) {
+      return isMetricsPath && currentHash === `#${hashFragment}`;
+    }
+
+    return location === targetPath || (targetPath === "/admin/metrics" && isMetricsPath && !currentHash);
+  };
 
   return (
     <RoleBasedRoute>
@@ -98,12 +186,12 @@ export function AdminLayout({ children }: { children: ReactNode }) {
             <nav className="mt-8 space-y-1">
               {navItems.map((item) => {
                 const Icon = item.icon;
-                const active = location === item.href || (item.href.startsWith("/admin/metrics") && location === "/admin");
+                const active = isNavItemActive(item.href);
                 return (
                   <button
                     key={item.href}
                     type="button"
-                    onClick={() => navigate(item.href)}
+                    onClick={() => handleNavClick(item.href)}
                     className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium transition ${
                       active ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
                     }`}
@@ -178,6 +266,27 @@ export function AdminLayout({ children }: { children: ReactNode }) {
                   </DropdownMenu>
                 </div>
               </div>
+              <nav className="-mx-1 mt-3 flex gap-2 overflow-x-auto px-1 pb-1 lg:hidden">
+                {navItems.map((item) => {
+                  const Icon = item.icon;
+                  const active = isNavItemActive(item.href);
+                  return (
+                    <button
+                      key={item.href}
+                      type="button"
+                      onClick={() => handleNavClick(item.href)}
+                      className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-sm font-medium transition ${
+                        active
+                          ? "border-slate-900 bg-slate-900 text-white"
+                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+                      }`}
+                    >
+                      <Icon className="h-4 w-4" />
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </nav>
             </header>
             <main className="px-4 py-6 sm:px-6 lg:px-8">{children}</main>
           </div>

@@ -163,6 +163,7 @@ export const defects = pgTable("defects", {
   vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
   inspectionId: integer("inspectionId"),
   driverId: integer("driverId").notNull(),
+  clientDraftId: varchar("clientDraftId", { length: 128 }),
   title: varchar("title", { length: 255 }).notNull(),
   description: text("description"),
   category: varchar("category", { length: 100 }),

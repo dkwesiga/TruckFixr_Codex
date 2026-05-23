@@ -81,7 +81,15 @@ export function enqueueIssueReport(
     submission,
   };
 
-  setQueuedIssueReports(storage, [...getQueuedIssueReports(storage), queued]);
+  const current = getQueuedIssueReports(storage);
+  const nextQueue = submission.localDraftId
+    ? [
+        ...current.filter((entry) => entry.id !== queued.id),
+        queued,
+      ]
+    : [...current, queued];
+
+  setQueuedIssueReports(storage, nextQueue);
   return queued;
 }
 

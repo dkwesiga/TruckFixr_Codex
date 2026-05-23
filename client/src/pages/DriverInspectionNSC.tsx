@@ -106,15 +106,14 @@ function DriverInspectionContent() {
   const pairedTrailerId = searchParams.get("trailer");
   const pairedTruckId = searchParams.get("truck");
   const comboStage = searchParams.get("combo");
+  const combinedStage: "truck" | "trailer" | undefined =
+    comboStage === "truck" || comboStage === "trailer" ? comboStage : undefined;
   const inspectionSessionId = useMemo(() => {
     const existingSessionId = searchParams.get("session");
     if (existingSessionId?.trim()) return existingSessionId;
-    if (pairedTrailerId || pairedTruckId || comboStage) {
-      return `driver-session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    }
-    return null;
+    return `driver-session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   }, [comboStage, pairedTrailerId, pairedTruckId, searchParams]);
-  const nextCombinedVehicleId = comboStage === "truck" ? pairedTrailerId : null;
+  const nextCombinedVehicleId = combinedStage === "truck" ? pairedTrailerId : null;
   const isCombinedInspectionSession = Boolean(inspectionSessionId && (pairedTrailerId || pairedTruckId || comboStage));
   const fleetId = useMemo(() => {
     const urlFleet = searchParams.get("fleet");
@@ -423,6 +422,7 @@ function DriverInspectionContent() {
       fleetId,
       savedAt: new Date().toISOString(),
       data: {
+        inspectionSessionId,
         stepIndex,
         odometer,
         location,
@@ -439,6 +439,7 @@ function DriverInspectionContent() {
     drawnSignature,
     driverSignature,
     fleetId,
+    inspectionSessionId,
     inspectionSheetType,
     location,
     odometer,
@@ -533,7 +534,9 @@ function DriverInspectionContent() {
     return {
       vehicleId,
       fleetId,
-      ...(inspectionSessionId ? { inspectionSessionId } : {}),
+      inspectionSessionId,
+      ...((pairedTrailerId || pairedTruckId) ? { linkedVehicleId: pairedTrailerId ?? pairedTruckId ?? undefined } : {}),
+      ...(combinedStage ? { combinedStage } : {}),
       inspectionSheetType: selectedInspectionSheetType,
       ...(requiresOdometer ? { odometer: Number(odometer) } : {}),
       location: location.trim(),
@@ -646,8 +649,8 @@ function DriverInspectionContent() {
 
     trackInspectionSubmitted(result.inspectionId, result.defectsCreated, {
       vehicle_id: vehicleId,
-      inspection_session_id: inspectionSessionId ?? undefined,
-      combined_stage: comboStage ?? undefined,
+      inspection_session_id: inspectionSessionId,
+      combined_stage: combinedStage,
       major_defect_count: result.majorDefectCount,
       minor_defect_count: result.minorDefectCount,
       can_operate: result.canOperate,

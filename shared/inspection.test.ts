@@ -29,4 +29,24 @@ describe("inspection rules", () => {
       })
     ).toThrow();
   });
+
+  it("accepts combined inspection linkage metadata on daily submissions", () => {
+    const parsed = dailyInspectionSubmissionSchema.parse({
+      vehicleId: 42,
+      fleetId: 1,
+      inspectionSessionId: "driver-session-test-42",
+      linkedVehicleId: "TR-9",
+      combinedStage: "truck",
+      odometer: 245320,
+      location: "Toronto yard",
+      attested: true,
+      driverPrintedName: "Driver Example",
+      driverSignature: "Driver Example",
+      driverSignatureMode: "typed",
+      results: [{ itemId: "brakes-service-response", status: "pass" }],
+    });
+
+    expect(parsed.linkedVehicleId).toBe("TR-9");
+    expect(parsed.combinedStage).toBe("truck");
+  });
 });

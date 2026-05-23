@@ -58,6 +58,7 @@ export type InspectionDraft = {
   fleetId: number;
   savedAt: string;
   data: {
+    inspectionSessionId?: string | null;
     stepIndex: number;
     odometer: string;
     location: string;
@@ -90,22 +91,23 @@ const draftSchema: z.ZodType<InspectionDraft> = z.object({
   fleetId: z.number(),
   savedAt: z.string(),
   data: z.object({
+    inspectionSessionId: z.string().nullable().optional(),
     stepIndex: z.number(),
     odometer: z.string(),
     location: z.string(),
     attested: z.boolean(),
-        signatureMode: z.enum(["typed", "drawn"]),
-        driverSignature: z.string(),
-        drawnSignature: z.string(),
-        inspectionSheetType: inspectionSheetTypeSchema.nullable().optional(),
-        responses: z.record(
-          z.string(),
-          z.object({
-            status: z.enum(["pass", "fail", "na"]).optional(),
-            classification: z.enum(["minor", "major", "not_sure"]).optional(),
-            comment: z.string().optional(),
-            photoUrls: z.array(z.string()),
-          })
+    signatureMode: z.enum(["typed", "drawn"]),
+    driverSignature: z.string(),
+    drawnSignature: z.string(),
+    inspectionSheetType: inspectionSheetTypeSchema.nullable().optional(),
+    responses: z.record(
+      z.string(),
+      z.object({
+        status: z.enum(["pass", "fail", "na"]).optional(),
+        classification: z.enum(["minor", "major", "not_sure"]).optional(),
+        comment: z.string().optional(),
+        photoUrls: z.array(z.string()),
+      })
     ),
   }),
 });
@@ -252,7 +254,11 @@ export function enqueueInspectionSubmission(
   if (!storage) return null;
 
   const nextItem: QueuedInspectionSubmission = {
-    id: `${submission.vehicleId}-${Date.now()}`,
+    id:
+      submission.inspectionSessionId?.trim()
+        ? `${submission.vehicleId}:${submission.inspectionSessionId.trim()}`
+        :
+      `${submission.vehicleId}-${Date.now()}`,
     vehicleId: submission.vehicleId,
     fleetId: submission.fleetId,
     queuedAt: new Date().toISOString(),
@@ -260,8 +266,37 @@ export function enqueueInspectionSubmission(
   };
 
   const current = getQueuedInspectionSubmissions(storage);
-  setQueuedInspectionSubmissions(storage, [...current, nextItem]);
+  const nextQueue = nextItem.submission.inspectionSessionId
+    ? [
+        ...current.filter(
+          (entry) =>
+            !(
+              String(entry.vehicleId) === String(nextItem.vehicleId) &&
+              entry.submission.inspectionSessionId === nextItem.submission.inspectionSessionId
+            )
+        ),
+        nextItem,
+      ]
+    : [...current, nextItem];
+  setQueuedInspectionSubmissions(storage, nextQueue);
   return nextItem;
+}
+
+function clearInspectionDraftIfMatchesQueueEntry(
+  storage: LocalStorageLike | null,
+  entry: QueuedInspectionSubmission
+) {
+  const activeDraft = loadInspectionDraft(storage, entry.vehicleId);
+  if (!activeDraft) return;
+
+  const queuedSessionId = entry.submission.inspectionSessionId?.trim();
+  const draftSessionId = activeDraft.data.inspectionSessionId?.trim();
+
+  if (draftSessionId && queuedSessionId !== draftSessionId) {
+    return;
+  }
+
+  clearInspectionDraft(storage, entry.vehicleId);
 }
 
 export async function flushQueuedInspectionSubmissions(
@@ -282,7 +317,7 @@ export async function flushQueuedInspectionSubmissions(
     try {
       await submitter(entry.submission);
       flushedCount += 1;
-      clearInspectionDraft(storage, entry.vehicleId);
+      clearInspectionDraftIfMatchesQueueEntry(storage, entry);
     } catch {
       remaining.push(entry);
     }

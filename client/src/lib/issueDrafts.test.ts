@@ -71,4 +71,31 @@ describe("issue report queue", () => {
     expect(getQueuedIssueReports(storage)[0]?.title).toBeUndefined();
     expect(getQueuedIssueReports(storage)[0]?.submission.title).toBe("Marker light out");
   });
+
+  it("replaces queued issue reports when the same local draft is saved again", () => {
+    const storage = createMemoryStorage();
+
+    enqueueIssueReport(storage, {
+      vehicleId: 42,
+      fleetId: 1,
+      title: "Marker light out",
+      severity: "medium",
+      photoUrls: [],
+      localDraftId: "issue-42-same",
+    });
+
+    enqueueIssueReport(storage, {
+      vehicleId: 42,
+      fleetId: 1,
+      title: "Marker light still out",
+      severity: "high",
+      photoUrls: ["data:image/jpeg;base64,abc"],
+      localDraftId: "issue-42-same",
+    });
+
+    expect(getQueuedIssueReports(storage)).toHaveLength(1);
+    expect(getQueuedIssueReports(storage)[0]?.submission.title).toBe(
+      "Marker light still out"
+    );
+  });
 });

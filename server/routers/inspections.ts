@@ -621,6 +621,70 @@ function summarizeInspection(record: { submittedAt: Date | null; results: unknow
   };
 }
 
+function getDailyOverallVehicleResult(input: {
+  majorDefectCount: number;
+  minorDefectCount: number;
+}) {
+  if (input.majorDefectCount > 0) return "not_safe_to_operate";
+  if (input.minorDefectCount > 0) return "defect_reported";
+  return "no_defect";
+}
+
+function buildDailyInspectionCreateResponse(input: {
+  inspection: {
+    id: number;
+    results: unknown;
+    complianceStatus: ComplianceStatus;
+    submittedAt: Date | null;
+    updatedAt: Date;
+  };
+}) {
+  const parsed = (parseInspectionResults(input.inspection.results) ?? {}) as Record<string, any>;
+  const summary = parsed.summary ?? {};
+  const report = parsed.report ?? {};
+  const submittedAt = input.inspection.submittedAt ?? input.inspection.updatedAt;
+  const majorDefectCount = Number(summary.majorDefectCount ?? 0);
+  const minorDefectCount = Number(summary.minorDefectCount ?? 0);
+  const validUntil =
+    parsed.validUntil && !Number.isNaN(new Date(parsed.validUntil).getTime())
+      ? new Date(parsed.validUntil)
+      : getInspectionDueAt(submittedAt);
+  const recipients = Array.isArray(report.recipients) ? report.recipients : [];
+  const emailDelivery = report.emailDelivery ?? {};
+  const reportFileName =
+    typeof report.fileName === "string" && report.fileName.trim().length > 0
+      ? report.fileName
+      : `canada-daily-inspection-${input.inspection.id}.pdf`;
+
+  return {
+    success: true,
+    inspectionId: input.inspection.id,
+    defectsCreated: majorDefectCount + minorDefectCount,
+    majorDefectCount,
+    minorDefectCount,
+    complianceStatus: input.inspection.complianceStatus,
+    validUntil,
+    canOperate: summary.canOperate ?? input.inspection.complianceStatus !== "red",
+    reportFileName,
+    reportRecipients: {
+      recipients,
+      managerUserId: null,
+      managerEmail: null,
+      managerName: null,
+    },
+    emailDelivered: Boolean(emailDelivery.delivered),
+    emailDeliveryReason:
+      typeof emailDelivery.reason === "string" ? emailDelivery.reason : null,
+    reportGenerated: Boolean(report.pdfBase64),
+    reportWarning:
+      typeof report.warning === "string" ? report.warning : undefined,
+    reportPdfBase64:
+      typeof report.pdfBase64 === "string" ? report.pdfBase64 : null,
+    reportMimeType:
+      typeof report.mimeType === "string" ? report.mimeType : "application/pdf",
+  };
+}
+
 export const inspectionsRouter = router({
   getDailyChecklist: protectedProcedure
     .input(z.object({ vehicleId: z.union([z.number(), z.string()]) }))
@@ -958,6 +1022,8 @@ export const inspectionsRouter = router({
             severity: item.severity as any,
             complianceStatus,
             status: item.severity === "critical" ? "repair_required" : "open",
+            managerReviewStatus: "submitted",
+            managerReviewStatusUpdatedAt: submittedAt,
             photoUrls: item.photoUrls,
             updatedAt: submittedAt,
           })
@@ -1126,6 +1192,36 @@ export const inspectionsRouter = router({
       if (!db) throw new Error("Database not available");
 
       try {
+        const normalizedInspectionSessionId = input.inspectionSessionId?.trim() || null;
+        const normalizedVehicleId = String(input.vehicleId);
+
+        if (normalizedInspectionSessionId) {
+          const [existingInspection] = await db
+            .select({
+              id: inspections.id,
+              results: inspections.results,
+              complianceStatus: inspections.complianceStatus,
+              submittedAt: inspections.submittedAt,
+              updatedAt: inspections.updatedAt,
+            })
+            .from(inspections)
+            .where(
+              and(
+                eq(inspections.fleetId, input.fleetId),
+                eq(inspections.driverId, ctx.user.id),
+                eq(inspections.vehicleId, normalizedVehicleId),
+                eq(inspections.inspectionSessionId, normalizedInspectionSessionId)
+              )
+            )
+            .limit(1);
+
+          if (existingInspection) {
+            return buildDailyInspectionCreateResponse({
+              inspection: existingInspection,
+            });
+          }
+        }
+
         const { vehicle, configuration, inspectionSheetType: vehicleInspectionSheetType } =
           await getVehicleProfile(input.vehicleId);
         const inspectionSheetType = vehicleInspectionSheetType ?? input.inspectionSheetType;
@@ -1160,17 +1256,25 @@ export const inspectionsRouter = router({
           configuration,
           inspectionSheetType,
         });
+        const overallVehicleResult = getDailyOverallVehicleResult({
+          majorDefectCount: prepared.majorDefectCount,
+          minorDefectCount: prepared.minorDefectCount,
+        });
 
         const [inspectionResult] = await db.insert(inspections).values({
-          vehicleId: String(input.vehicleId),
+          vehicleId: normalizedVehicleId,
           fleetId: input.fleetId,
           driverId: ctx.user.id,
-          inspectionSessionId: input.inspectionSessionId ?? null,
+          inspectionSessionId: normalizedInspectionSessionId,
+          inspectionDate: startOfToday(),
           status: "submitted",
           complianceStatus: prepared.complianceStatus,
+          overallVehicleResult,
           results: {
             ...prepared.baseInspectionResults,
-            inspectionSessionId: input.inspectionSessionId ?? null,
+            inspectionSessionId: normalizedInspectionSessionId,
+            linkedVehicleId: input.linkedVehicleId ? String(input.linkedVehicleId) : null,
+            combinedStage: input.combinedStage ?? null,
           },
           submittedAt: prepared.submittedAt,
           updatedAt: prepared.submittedAt,
@@ -1201,7 +1305,9 @@ export const inspectionsRouter = router({
           .set({
             results: {
               ...reportDelivery.storedInspectionResults,
-              inspectionSessionId: input.inspectionSessionId ?? null,
+              inspectionSessionId: normalizedInspectionSessionId,
+              linkedVehicleId: input.linkedVehicleId ? String(input.linkedVehicleId) : null,
+              combinedStage: input.combinedStage ?? null,
             },
             updatedAt: new Date(),
           })
@@ -1209,18 +1315,21 @@ export const inspectionsRouter = router({
 
         for (const item of prepared.normalizedChecklist) {
           if (item.status !== "fail") continue;
+          const defectSeverity = mapClassificationToSeverity(item.classification);
 
           await db.insert(defects).values({
-            vehicleId: String(input.vehicleId),
+            vehicleId: normalizedVehicleId,
             fleetId: input.fleetId,
             driverId: ctx.user.id,
             inspectionId: inspectionResult.id,
             title: item.label,
             description: item.comment,
             category: item.category,
-            severity: mapClassificationToSeverity(item.classification),
+            severity: defectSeverity,
             complianceStatus: prepared.complianceStatus,
-            status: "open",
+            status: defectSeverity === "critical" ? "repair_required" : "open",
+            managerReviewStatus: "submitted",
+            managerReviewStatusUpdatedAt: prepared.submittedAt,
             photoUrls: item.photoUrls,
             updatedAt: prepared.submittedAt,
           });

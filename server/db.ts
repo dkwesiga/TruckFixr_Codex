@@ -1578,6 +1578,12 @@ async function ensureAuthSchema(pool: Pool) {
     `);
 
     await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "inspections_driver_session_vehicle_unique"
+      ON "inspections" ("fleetId", "driverId", "vehicleId", "inspectionSessionId")
+      WHERE "inspectionSessionId" IS NOT NULL;
+    `);
+
+    await pool.query(`
       CREATE SEQUENCE IF NOT EXISTS "inspections_id_seq";
     `);
 
@@ -1778,6 +1784,7 @@ async function ensureAuthSchema(pool: Pool) {
         "vehicleId" integer NOT NULL,
         "inspectionId" integer,
         "driverId" integer NOT NULL,
+        "clientDraftId" varchar(128),
         "title" varchar(255) NOT NULL,
         "description" text,
         "category" varchar(100),
@@ -1805,6 +1812,17 @@ async function ensureAuthSchema(pool: Pool) {
     await pool.query(`
       ALTER TABLE "defects"
       ADD COLUMN IF NOT EXISTS "managerReviewStatusUpdatedAt" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "defects"
+      ADD COLUMN IF NOT EXISTS "clientDraftId" varchar(128);
+    `);
+
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "defects_client_draft_unique"
+      ON "defects" ("fleetId", "driverId", "vehicleId", "clientDraftId")
+      WHERE "clientDraftId" IS NOT NULL;
     `);
 
     await pool.query(`
