@@ -15,6 +15,7 @@ import { accessRouter } from "./routers/access";
 import { faultCodeReferencesRouter } from "./routers/faultCodeReferences";
 import { supportRecoveryRouter } from "./routers/supportRecovery";
 import { adminRouter } from "./routers/admin";
+import { quickStartRouter } from "./routers/quickStart";
 
 export const appRouter = router({
   system: systemRouter,
@@ -33,6 +34,7 @@ export const appRouter = router({
   faultCodeReferences: faultCodeReferencesRouter,
   supportRecovery: supportRecoveryRouter,
   admin: adminRouter,
+  quickStart: quickStartRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -29,6 +29,7 @@ const AccessStartTrial = lazy(() => import("./pages/AccessStartTrial"));
 const AccessPilotCode = lazy(() => import("./pages/AccessPilotCode"));
 const AccessDriverInvite = lazy(() => import("./pages/AccessDriverInvite"));
 const PilotRedirect = lazy(() => import("./pages/PilotRedirect"));
+const QuickStartGuides = lazy(() => import("./pages/QuickStartGuides"));
 
 function RouteFallback() {
   return (
@@ -54,6 +55,18 @@ function Router() {
         <Route path={"/profile"} component={UserProfile} />
         <Route path={"/app"} component={Home} />
         <Route path={"/onboarding"} component={Onboarding} />
+        <Route path={"/onboarding/guides"} component={QuickStartGuides} />
+        <Route path={"/onboarding/my-guide"} component={QuickStartGuides} />
+        <Route path={"/onboarding/driver"} component={QuickStartGuides} />
+        <Route path={"/onboarding/owner-operator"} component={QuickStartGuides} />
+        <Route path={"/onboarding/fleet-manager"} component={QuickStartGuides} />
+        <Route path={"/onboarding/fleet-owner"} component={QuickStartGuides} />
+        <Route path={"/quick-start-guides"} component={QuickStartGuides} />
+        <Route path={"/quick-start-guides/my-guide"} component={QuickStartGuides} />
+        <Route path={"/quick-start-guides/driver"} component={QuickStartGuides} />
+        <Route path={"/quick-start-guides/owner-operator"} component={QuickStartGuides} />
+        <Route path={"/quick-start-guides/fleet-manager"} component={QuickStartGuides} />
+        <Route path={"/quick-start-guides/fleet-owner"} component={QuickStartGuides} />
         <Route path={"/manager"} component={ManagerDashboard} />
         <Route path={"/driver"} component={DriverDashboardSaaS} />
         <Route path={"/diagnosis"} component={DriverDiagnosis} />
