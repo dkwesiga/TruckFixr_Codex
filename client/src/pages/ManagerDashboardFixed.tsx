@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import AppLogo from "@/components/AppLogo";
 import MorningFleetSummary from "@/components/MorningFleetSummary";
+import QuickStartBanner from "@/components/quickStart/QuickStartBanner";
 import VehicleCaptureFlow, {
   type VehicleCaptureDraft,
 } from "@/components/VehicleCaptureFlow";
@@ -50,6 +51,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import {
   AlertTriangle,
+  BookOpenCheck,
   Camera,
   CarFront,
   ChevronRight,
@@ -618,6 +620,20 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
             >
               Add vehicle
             </DropdownMenuItem>
+            <DropdownMenuItem
+              className="cursor-pointer rounded-xl"
+              onClick={() => navigate("/quick-start-guides/my-guide")}
+            >
+              <BookOpenCheck className="mr-2 h-4 w-4" />
+              My Quick Start Guide
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="cursor-pointer rounded-xl"
+              onClick={() => navigate("/quick-start-guides")}
+            >
+              <BookOpenCheck className="mr-2 h-4 w-4" />
+              Quick Start Guides
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={logout}
@@ -710,6 +726,8 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
       </header>
 
       <main className="mx-auto max-w-7xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
+        <QuickStartBanner role={user?.role} />
+
         <div className="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-r-xl shadow-sm">
           <div className="flex items-center gap-3">
             <AlertTriangle className="h-5 w-5 text-amber-600" />

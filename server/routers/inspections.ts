@@ -4,12 +4,15 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import {
   aiTriageRecords,
+  combinedInspectionSessions,
   defects,
   fleets,
   inAppAlerts,
   inspectionChecklistResponses,
   inspectionFlags,
   inspectionPhotos,
+  inspectionReviewActions,
+  inspectionReviewQueueItems,
   inspections,
   maintenanceLogs,
   randomProofRequests,
@@ -46,6 +49,22 @@ import {
   mapClassificationToSeverity,
   prepareInspectionSubmission,
 } from "../services/inspectionWorkflow";
+import {
+  deriveCombinedCompletionState,
+  deriveCombinedHeadlineStatus,
+  deriveInspectionReviewSeverity,
+  deriveManagerReviewRequired,
+  deriveOperationalStateForDecision,
+  deriveOperationalStateForSeverity,
+  derivePrimaryQueueDetails,
+  deriveProvisionalDriverGuidance,
+  deriveReportOutcome,
+  deriveUrgentDefectQueueDetails,
+  type QueueHeadlineStatus,
+  type ReportOutcome,
+  type ReviewSeverity,
+  type VehicleOperationalState,
+} from "../services/inspectionReviewWorkflow";
 import {
   buildMissedInspectionReminderAlerts,
   type MissedInspectionReminderCandidate,
@@ -440,6 +459,345 @@ async function updateVehicleComplianceStatus(
   }
 }
 
+async function updateVehicleOperationalState(input: {
+  vehicleId: number | string;
+  operationalState: VehicleOperationalState;
+  inspectionId?: number | null;
+  defectId?: number | null;
+  decisionByUserId?: number | null;
+  instruction?: string | null;
+  complianceStatus?: ComplianceStatus;
+  lastCleanInspectionId?: number | null;
+  lastCleanInspectionAt?: Date | null;
+}) {
+  const db = await getDb();
+  if (!db) return null;
+
+  try {
+    const nextStatus =
+      input.operationalState === "active" || input.operationalState === "returned_to_service"
+        ? "active"
+        : "maintenance";
+
+    const [updatedVehicle] = await db
+      .update(vehicles)
+      .set({
+        operationalState: input.operationalState,
+        operationalDecisionInspectionId: input.inspectionId ?? null,
+        operationalDecisionDefectId: input.defectId ?? null,
+        operationalDecisionByUserId: input.decisionByUserId ?? null,
+        operationalDecisionAt: new Date(),
+        operationalInstruction: input.instruction ?? null,
+        ...(input.complianceStatus ? { complianceStatus: input.complianceStatus } : {}),
+        ...(input.lastCleanInspectionId !== undefined
+          ? { lastCleanInspectionId: input.lastCleanInspectionId }
+          : {}),
+        ...(input.lastCleanInspectionAt !== undefined
+          ? { lastCleanInspectionAt: input.lastCleanInspectionAt }
+          : {}),
+        status: nextStatus,
+        updatedAt: new Date(),
+      })
+      .where(sql`CAST(${vehicles.id} AS text) = ${String(input.vehicleId)}`)
+      .returning();
+
+    return updatedVehicle ?? null;
+  } catch (error) {
+    console.warn("[Inspections] Skipping vehicle operational update:", error);
+    return null;
+  }
+}
+
+async function supersedePriorBlockingInspection(input: {
+  fleetId: number;
+  vehicleId: string;
+  inspectionId: number;
+  submittedAt: Date;
+}) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const [priorInspection] = await db
+    .select({
+      id: inspections.id,
+    })
+    .from(inspections)
+    .where(
+      and(
+        eq(inspections.fleetId, input.fleetId),
+        eq(inspections.vehicleId, input.vehicleId),
+        eq(inspections.reportOutcome, "major_action_required"),
+        isNull(inspections.supersededByInspectionId),
+        sql`${inspections.id} <> ${input.inspectionId}`
+      )
+    )
+    .orderBy(desc(inspections.submittedAt))
+    .limit(1);
+
+  if (!priorInspection) return null;
+
+  await db
+    .update(inspections)
+    .set({
+      reportOutcome: "superseded",
+      supersededByInspectionId: input.inspectionId,
+      supersededAt: input.submittedAt,
+      updatedAt: input.submittedAt,
+    })
+    .where(eq(inspections.id, priorInspection.id));
+
+  await db
+    .update(inspectionReviewQueueItems)
+    .set({
+      status: "reviewed",
+      headlineStatus: "reviewed",
+      reviewedAt: input.submittedAt,
+      updatedAt: input.submittedAt,
+    })
+    .where(eq(inspectionReviewQueueItems.inspectionId, priorInspection.id));
+
+  return priorInspection.id;
+}
+
+async function syncCombinedInspectionSession(input: {
+  fleetId: number;
+  inspectionSessionId: string | null;
+  combinedStage: "truck" | "trailer" | null;
+  linkedVehicleId: string | null;
+  vehicleId: string;
+  inspectionId: number;
+  reportOutcome: "clean" | "minor_review" | "major_action_required" | "reviewed" | "superseded";
+  highestSeverity: ReviewSeverity;
+  provisionalGuidance: string | null;
+}) {
+  if (!input.inspectionSessionId || !input.combinedStage) return null;
+
+  const db = await getDb();
+  if (!db) return null;
+
+  const [existingSession] = await db
+    .select()
+    .from(combinedInspectionSessions)
+    .where(eq(combinedInspectionSessions.inspectionSessionId, input.inspectionSessionId))
+    .limit(1);
+
+  const nextTruckVehicleId =
+    input.combinedStage === "truck" ? input.vehicleId : existingSession?.truckVehicleId ?? input.linkedVehicleId;
+  const nextTrailerVehicleId =
+    input.combinedStage === "trailer"
+      ? input.vehicleId
+      : existingSession?.trailerVehicleId ?? input.linkedVehicleId;
+  const nextTruckInspectionId =
+    input.combinedStage === "truck" ? input.inspectionId : existingSession?.truckInspectionId ?? null;
+  const nextTrailerInspectionId =
+    input.combinedStage === "trailer" ? input.inspectionId : existingSession?.trailerInspectionId ?? null;
+
+  const relatedInspectionIds = [nextTruckInspectionId, nextTrailerInspectionId].filter(
+    (value): value is number => typeof value === "number"
+  );
+  const relatedInspections =
+    relatedInspectionIds.length > 0
+      ? await db
+          .select({
+            id: inspections.id,
+            reportOutcome: inspections.reportOutcome,
+          })
+          .from(inspections)
+          .where(inArray(inspections.id, relatedInspectionIds))
+      : [];
+
+  const outcomesByInspectionId = new Map<number, ReportOutcome | null>(
+    relatedInspections.map((inspection) => [inspection.id, inspection.reportOutcome as ReportOutcome | null])
+  );
+  outcomesByInspectionId.set(input.inspectionId, input.reportOutcome);
+
+  const truckOutcome = nextTruckInspectionId
+    ? outcomesByInspectionId.get(nextTruckInspectionId) ?? null
+    : null;
+  const trailerOutcome = nextTrailerInspectionId
+    ? outcomesByInspectionId.get(nextTrailerInspectionId) ?? null
+    : null;
+
+  const headlineStatus = deriveCombinedHeadlineStatus({
+    truckOutcome,
+    trailerOutcome,
+  });
+  const completionState = deriveCombinedCompletionState({
+    truckInspectionId: nextTruckInspectionId,
+    trailerInspectionId: nextTrailerInspectionId,
+    truckOutcome,
+    trailerOutcome,
+  });
+
+  let groupedQueueItemId = existingSession?.groupedQueueItemId ?? null;
+
+  if (headlineStatus !== "reviewed") {
+    const queueStatus = headlineStatus === "urgent" ? "new" : "new";
+    const priority = headlineStatus === "urgent" ? "high" : "normal";
+    if (groupedQueueItemId) {
+      await db
+        .update(inspectionReviewQueueItems)
+        .set({
+          inspectionId: input.inspectionId,
+          queueType: "grouped_combined_session",
+          status: queueStatus,
+          headlineStatus,
+          priority,
+          highestSeverity: input.highestSeverity,
+          provisionalGuidanceSnapshot: input.provisionalGuidance,
+          updatedAt: new Date(),
+        })
+        .where(eq(inspectionReviewQueueItems.id, groupedQueueItemId));
+    } else {
+      const [groupedQueueItem] = await db
+        .insert(inspectionReviewQueueItems)
+        .values({
+          fleetId: input.fleetId,
+          inspectionId: input.inspectionId,
+          inspectionSessionId: input.inspectionSessionId,
+          queueType: "grouped_combined_session",
+          status: queueStatus,
+          headlineStatus,
+          priority,
+          highestSeverity: input.highestSeverity,
+          managerDecisionRequired: false,
+          requiresDriverInstruction: false,
+          provisionalGuidanceSnapshot: input.provisionalGuidance,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .returning({ id: inspectionReviewQueueItems.id });
+      groupedQueueItemId = groupedQueueItem?.id ?? null;
+    }
+  } else if (groupedQueueItemId) {
+    await db
+      .update(inspectionReviewQueueItems)
+      .set({
+        status: "reviewed",
+        headlineStatus: "reviewed",
+        reviewedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(inspectionReviewQueueItems.id, groupedQueueItemId));
+  }
+
+  const sessionPayload = {
+    fleetId: input.fleetId,
+    inspectionSessionId: input.inspectionSessionId,
+    truckVehicleId: nextTruckVehicleId,
+    trailerVehicleId: nextTrailerVehicleId,
+    truckInspectionId: nextTruckInspectionId,
+    trailerInspectionId: nextTrailerInspectionId,
+    groupedQueueItemId,
+    headlineStatus,
+    completionState,
+    updatedAt: new Date(),
+  };
+
+  if (existingSession) {
+    await db
+      .update(combinedInspectionSessions)
+      .set(sessionPayload)
+      .where(eq(combinedInspectionSessions.id, existingSession.id));
+  } else {
+    await db.insert(combinedInspectionSessions).values(sessionPayload);
+  }
+
+  return {
+    groupedQueueItemId,
+    headlineStatus,
+    completionState,
+  };
+}
+
+async function createInspectionReviewQueueArtifacts(input: {
+  fleetId: number;
+  inspectionId: number;
+  vehicleId: string;
+  inspectionSessionId: string | null;
+  highestSeverity: ReviewSeverity;
+  provisionalGuidance: string;
+  defectRows: Array<{
+    id: number;
+    severity: string | null;
+    isBlockingOperationally: boolean;
+  }>;
+}) {
+  const db = await getDb();
+  if (!db) return { primaryQueueItemId: null, urgentQueueItemIds: [] as number[] };
+
+  let primaryQueueItemId: number | null = null;
+  const urgentQueueItemIds: number[] = [];
+  const primaryQueue = derivePrimaryQueueDetails(input.highestSeverity);
+
+  if (primaryQueue) {
+    const [queueItem] = await db
+      .insert(inspectionReviewQueueItems)
+      .values({
+        fleetId: input.fleetId,
+        inspectionId: input.inspectionId,
+        vehicleId: input.vehicleId,
+        inspectionSessionId: input.inspectionSessionId,
+        queueType: primaryQueue.queueType,
+        status: "new",
+        headlineStatus: primaryQueue.headlineStatus,
+        priority: primaryQueue.priority,
+        highestSeverity: input.highestSeverity,
+        managerDecisionRequired: primaryQueue.managerDecisionRequired,
+        requiresDriverInstruction: primaryQueue.requiresDriverInstruction,
+        provisionalGuidanceSnapshot: input.provisionalGuidance,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning({ id: inspectionReviewQueueItems.id });
+    primaryQueueItemId = queueItem?.id ?? null;
+  }
+
+  for (const defect of input.defectRows) {
+    const defectSeverity =
+      defect.severity === "critical"
+        ? "unsafe"
+        : defect.severity === "high"
+          ? "major"
+          : defect.isBlockingOperationally
+            ? "major"
+            : "minor";
+    const urgentQueue = deriveUrgentDefectQueueDetails(defectSeverity as ReviewSeverity);
+    if (!urgentQueue) continue;
+
+    const [queueItem] = await db
+      .insert(inspectionReviewQueueItems)
+      .values({
+        fleetId: input.fleetId,
+        inspectionId: input.inspectionId,
+        defectId: defect.id,
+        vehicleId: input.vehicleId,
+        inspectionSessionId: input.inspectionSessionId,
+        parentQueueItemId: primaryQueueItemId,
+        queueType: urgentQueue.queueType,
+        status: "new",
+        headlineStatus: urgentQueue.headlineStatus,
+        priority: urgentQueue.priority,
+        highestSeverity: defectSeverity,
+        managerDecisionRequired: urgentQueue.managerDecisionRequired,
+        requiresDriverInstruction: urgentQueue.requiresDriverInstruction,
+        provisionalGuidanceSnapshot: input.provisionalGuidance,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning({ id: inspectionReviewQueueItems.id });
+
+    if (queueItem?.id) {
+      urgentQueueItemIds.push(queueItem.id);
+    }
+  }
+
+  return {
+    primaryQueueItemId,
+    urgentQueueItemIds,
+  };
+}
+
 async function resolveInspectionRecipients(input: {
   fleetId: number;
   vehicleId: number | string;
@@ -575,13 +933,60 @@ async function getVehicleProfile(vehicleId: number | string) {
       }
     } catch (error) {
       console.warn("[Inspections] Falling back to local vehicle profile:", error);
-    }
   }
+}
 
   throw new TRPCError({
     code: "NOT_FOUND",
     message: "Inspection requires a valid company vehicle. Select an assigned vehicle before starting.",
   });
+}
+
+const managerReviewActionTypeSchema = z.enum([
+  "minor_reviewed",
+  "escalated_to_major",
+  "decision_return_to_service",
+  "decision_move_for_repair_only",
+  "decision_do_not_operate",
+]);
+
+function mapReviewActionToDecision(
+  actionType: z.infer<typeof managerReviewActionTypeSchema>
+): "return_to_service" | "move_for_repair_only" | "do_not_operate" | null {
+  switch (actionType) {
+    case "decision_return_to_service":
+      return "return_to_service";
+    case "decision_move_for_repair_only":
+      return "move_for_repair_only";
+    case "decision_do_not_operate":
+      return "do_not_operate";
+    default:
+      return null;
+  }
+}
+
+function mapDecisionToDefectReviewStatus(
+  decision: "return_to_service" | "move_for_repair_only" | "do_not_operate" | null
+) {
+  switch (decision) {
+    case "return_to_service":
+      return {
+        managerReviewStatus: "reviewed",
+        status: "acknowledged",
+      } as const;
+    case "move_for_repair_only":
+      return {
+        managerReviewStatus: "scheduled",
+        status: "assigned",
+      } as const;
+    case "do_not_operate":
+      return {
+        managerReviewStatus: "escalated",
+        status: "repair_required",
+      } as const;
+    default:
+      return null;
+  }
 }
 
 function summarizeInspection(record: { submittedAt: Date | null; results: unknown }) {
@@ -1194,6 +1599,8 @@ export const inspectionsRouter = router({
       try {
         const normalizedInspectionSessionId = input.inspectionSessionId?.trim() || null;
         const normalizedVehicleId = String(input.vehicleId);
+        const normalizedLinkedVehicleId = input.linkedVehicleId ? String(input.linkedVehicleId) : null;
+        const normalizedCombinedStage = input.combinedStage ?? null;
 
         if (normalizedInspectionSessionId) {
           const [existingInspection] = await db
@@ -1260,21 +1667,34 @@ export const inspectionsRouter = router({
           majorDefectCount: prepared.majorDefectCount,
           minorDefectCount: prepared.minorDefectCount,
         });
+        const highestDefectSeverity = deriveInspectionReviewSeverity({
+          majorDefectCount: prepared.majorDefectCount,
+          minorDefectCount: prepared.minorDefectCount,
+        });
+        const reportOutcome = deriveReportOutcome(highestDefectSeverity);
+        const managerReviewRequired = deriveManagerReviewRequired(highestDefectSeverity);
+        const provisionalDriverGuidance = deriveProvisionalDriverGuidance(highestDefectSeverity);
 
         const [inspectionResult] = await db.insert(inspections).values({
           vehicleId: normalizedVehicleId,
           fleetId: input.fleetId,
           driverId: ctx.user.id,
           inspectionSessionId: normalizedInspectionSessionId,
+          linkedVehicleId: normalizedLinkedVehicleId,
+          combinedStage: normalizedCombinedStage,
           inspectionDate: startOfToday(),
           status: "submitted",
           complianceStatus: prepared.complianceStatus,
           overallVehicleResult,
+          reportOutcome,
+          highestDefectSeverity,
+          managerReviewRequired,
+          provisionalDriverGuidance,
           results: {
             ...prepared.baseInspectionResults,
             inspectionSessionId: normalizedInspectionSessionId,
-            linkedVehicleId: input.linkedVehicleId ? String(input.linkedVehicleId) : null,
-            combinedStage: input.combinedStage ?? null,
+            linkedVehicleId: normalizedLinkedVehicleId,
+            combinedStage: normalizedCombinedStage,
           },
           submittedAt: prepared.submittedAt,
           updatedAt: prepared.submittedAt,
@@ -1306,40 +1726,109 @@ export const inspectionsRouter = router({
             results: {
               ...reportDelivery.storedInspectionResults,
               inspectionSessionId: normalizedInspectionSessionId,
-              linkedVehicleId: input.linkedVehicleId ? String(input.linkedVehicleId) : null,
-              combinedStage: input.combinedStage ?? null,
+              linkedVehicleId: normalizedLinkedVehicleId,
+              combinedStage: normalizedCombinedStage,
             },
             updatedAt: new Date(),
           })
           .where(eq(inspections.id, inspectionResult.id));
 
+        const createdDefects: Array<{
+          id: number;
+          severity: string | null;
+          isBlockingOperationally: boolean;
+        }> = [];
         for (const item of prepared.normalizedChecklist) {
           if (item.status !== "fail") continue;
           const defectSeverity = mapClassificationToSeverity(item.classification);
+          const isBlockingOperationally = defectSeverity === "critical";
 
-          await db.insert(defects).values({
-            vehicleId: normalizedVehicleId,
-            fleetId: input.fleetId,
-            driverId: ctx.user.id,
-            inspectionId: inspectionResult.id,
-            title: item.label,
-            description: item.comment,
-            category: item.category,
-            severity: defectSeverity,
-            complianceStatus: prepared.complianceStatus,
-            status: defectSeverity === "critical" ? "repair_required" : "open",
-            managerReviewStatus: "submitted",
-            managerReviewStatusUpdatedAt: prepared.submittedAt,
-            photoUrls: item.photoUrls,
-            updatedAt: prepared.submittedAt,
-          });
+          const [createdDefect] = await db
+            .insert(defects)
+            .values({
+              vehicleId: normalizedVehicleId,
+              fleetId: input.fleetId,
+              driverId: ctx.user.id,
+              inspectionId: inspectionResult.id,
+              title: item.label,
+              description: item.comment,
+              category: item.category,
+              severity: defectSeverity,
+              complianceStatus: prepared.complianceStatus,
+              status: defectSeverity === "critical" ? "repair_required" : "open",
+              managerReviewStatus: "submitted",
+              managerReviewStatusUpdatedAt: prepared.submittedAt,
+              isBlockingOperationally,
+              photoUrls: item.photoUrls,
+              updatedAt: prepared.submittedAt,
+            })
+            .returning({
+              id: defects.id,
+              severity: defects.severity,
+              isBlockingOperationally: defects.isBlockingOperationally,
+            });
+
+          if (createdDefect) {
+            createdDefects.push(createdDefect);
+          }
         }
+
+        const queueArtifacts = await createInspectionReviewQueueArtifacts({
+          fleetId: input.fleetId,
+          inspectionId: inspectionResult.id,
+          vehicleId: normalizedVehicleId,
+          inspectionSessionId: normalizedInspectionSessionId,
+          highestSeverity: highestDefectSeverity,
+          provisionalGuidance: provisionalDriverGuidance,
+          defectRows: createdDefects,
+        });
 
         await updateVehicleComplianceStatus(
           input.vehicleId,
           prepared.complianceStatus,
           odometerReading
         );
+
+        if (reportOutcome === "clean") {
+          await supersedePriorBlockingInspection({
+            fleetId: input.fleetId,
+            vehicleId: normalizedVehicleId,
+            inspectionId: inspectionResult.id,
+            submittedAt: prepared.submittedAt,
+          });
+          await updateVehicleOperationalState({
+            vehicleId: normalizedVehicleId,
+            operationalState: "active",
+            inspectionId: inspectionResult.id,
+            complianceStatus: prepared.complianceStatus,
+            instruction: null,
+            lastCleanInspectionId: inspectionResult.id,
+            lastCleanInspectionAt: prepared.submittedAt,
+          });
+        } else if (highestDefectSeverity === "major" || highestDefectSeverity === "unsafe") {
+          const blockingDefect = createdDefects.find((defect) => defect.isBlockingOperationally);
+          await updateVehicleOperationalState({
+            vehicleId: normalizedVehicleId,
+            operationalState: deriveOperationalStateForSeverity(highestDefectSeverity),
+            inspectionId: inspectionResult.id,
+            defectId: blockingDefect?.id ?? null,
+            complianceStatus: prepared.complianceStatus,
+            instruction: provisionalDriverGuidance,
+          });
+        }
+
+        await syncCombinedInspectionSession({
+          fleetId: input.fleetId,
+          inspectionSessionId: normalizedInspectionSessionId,
+          combinedStage: normalizedCombinedStage,
+          linkedVehicleId: normalizedLinkedVehicleId,
+          vehicleId: normalizedVehicleId,
+          inspectionId: inspectionResult.id,
+          reportOutcome,
+          highestSeverity: highestDefectSeverity,
+          provisionalGuidance: provisionalDriverGuidance,
+        });
+
         await recordPilotMilestone({
           userId: ctx.user.id,
           fleetId: input.fleetId,
@@ -1408,6 +1897,11 @@ export const inspectionsRouter = router({
           reportWarning: reportDelivery.reportWarning,
           reportPdfBase64: reportDelivery.storedInspectionResults.report.pdfBase64 ?? null,
           reportMimeType: reportDelivery.storedInspectionResults.report.mimeType,
+          reportOutcome,
+          highestDefectSeverity,
+          managerReviewRequired,
+          provisionalDriverGuidance,
+          reviewQueueCreated: queueArtifacts.primaryQueueItemId != null,
         };
       } catch (error) {
         console.error("Failed to create inspection:", error);
@@ -1659,6 +2153,335 @@ export const inspectionsRouter = router({
         )
         .orderBy(desc(inAppAlerts.createdAt))
         .limit(input.limit);
+    }),
+
+  getReviewQueue: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().int().positive(),
+        includeReviewed: z.boolean().default(false),
+        limit: z.number().int().positive().max(50).default(25),
+      })
+    )
+    .query(async ({ input, ctx }) => {
+      if (ctx.user.role !== "owner" && ctx.user.role !== "manager") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Only managers can view inspection review work",
+        });
+      }
+
+      const hasAccess = await verifyFleetAccess(input.fleetId, ctx.user.id, ctx.user.role);
+      if (!hasAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You do not have access to this fleet",
+        });
+      }
+
+      const db = await getDb();
+      if (!db) return [];
+
+      const conditions = [eq(inspectionReviewQueueItems.fleetId, input.fleetId)];
+      if (!input.includeReviewed) {
+        conditions.push(sql`${inspectionReviewQueueItems.status} <> ${"reviewed"}` as any);
+      }
+
+      return db
+        .select({
+          id: inspectionReviewQueueItems.id,
+          inspectionId: inspectionReviewQueueItems.inspectionId,
+          defectId: inspectionReviewQueueItems.defectId,
+          vehicleId: inspectionReviewQueueItems.vehicleId,
+          inspectionSessionId: inspectionReviewQueueItems.inspectionSessionId,
+          parentQueueItemId: inspectionReviewQueueItems.parentQueueItemId,
+          queueType: inspectionReviewQueueItems.queueType,
+          status: inspectionReviewQueueItems.status,
+          headlineStatus: inspectionReviewQueueItems.headlineStatus,
+          priority: inspectionReviewQueueItems.priority,
+          highestSeverity: inspectionReviewQueueItems.highestSeverity,
+          managerDecisionRequired: inspectionReviewQueueItems.managerDecisionRequired,
+          requiresDriverInstruction: inspectionReviewQueueItems.requiresDriverInstruction,
+          latestManagerDecision: inspectionReviewQueueItems.latestManagerDecision,
+          latestDriverInstruction: inspectionReviewQueueItems.latestDriverInstruction,
+          reviewedAt: inspectionReviewQueueItems.reviewedAt,
+          createdAt: inspectionReviewQueueItems.createdAt,
+          reportOutcome: inspections.reportOutcome,
+          submittedAt: inspections.submittedAt,
+          overallVehicleResult: inspections.overallVehicleResult,
+        })
+        .from(inspectionReviewQueueItems)
+        .leftJoin(inspections, eq(inspectionReviewQueueItems.inspectionId, inspections.id))
+        .where(and(...conditions))
+        .orderBy(desc(inspectionReviewQueueItems.createdAt))
+        .limit(input.limit);
+    }),
+
+  applyManagerReviewAction: protectedProcedure
+    .input(
+      z.object({
+        queueItemId: z.number().int().positive(),
+        actionType: managerReviewActionTypeSchema,
+        driverInstructionNote: z.string().trim().optional(),
+        internalNote: z.string().trim().optional(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      if (ctx.user.role !== "owner" && ctx.user.role !== "manager") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Only managers can review inspection work",
+        });
+      }
+
+      const db = await getDb();
+      if (!db) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Database not available",
+        });
+      }
+
+      const [queueItem] = await db
+        .select({
+          id: inspectionReviewQueueItems.id,
+          fleetId: inspectionReviewQueueItems.fleetId,
+          inspectionId: inspectionReviewQueueItems.inspectionId,
+          defectId: inspectionReviewQueueItems.defectId,
+          vehicleId: inspectionReviewQueueItems.vehicleId,
+          inspectionSessionId: inspectionReviewQueueItems.inspectionSessionId,
+          queueType: inspectionReviewQueueItems.queueType,
+          status: inspectionReviewQueueItems.status,
+          highestSeverity: inspectionReviewQueueItems.highestSeverity,
+          reviewStartedAt: inspectionReviewQueueItems.reviewStartedAt,
+          reportOutcome: inspections.reportOutcome,
+          linkedVehicleId: inspections.linkedVehicleId,
+          combinedStage: inspections.combinedStage,
+          complianceStatus: inspections.complianceStatus,
+        })
+        .from(inspectionReviewQueueItems)
+        .leftJoin(inspections, eq(inspectionReviewQueueItems.inspectionId, inspections.id))
+        .where(eq(inspectionReviewQueueItems.id, input.queueItemId))
+        .limit(1);
+
+      if (!queueItem) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Review queue item not found",
+        });
+      }
+
+      const hasAccess = await verifyFleetAccess(queueItem.fleetId, ctx.user.id, ctx.user.role);
+      if (!hasAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You do not have access to this fleet",
+        });
+      }
+
+      const now = new Date();
+      const decision = mapReviewActionToDecision(input.actionType);
+      const driverInstructionNote = input.driverInstructionNote?.trim() || null;
+      const internalNote = input.internalNote?.trim() || null;
+      const vehicleId = queueItem.vehicleId;
+
+      if (decision && !driverInstructionNote) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "A driver-facing instruction is required for this decision",
+        });
+      }
+
+      if (!queueItem.inspectionId || !vehicleId) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "This review item is missing its linked inspection or asset",
+        });
+      }
+
+      await db.insert(inspectionReviewActions).values({
+        queueItemId: queueItem.id,
+        inspectionId: queueItem.inspectionId,
+        defectId: queueItem.defectId,
+        vehicleId,
+        managerUserId: ctx.user.id,
+        actionType: input.actionType,
+        driverInstructionNote,
+        internalNote,
+        createdAt: now,
+      });
+
+      if (input.actionType === "escalated_to_major") {
+        await db
+          .update(inspectionReviewQueueItems)
+          .set({
+            queueType: "inspection_major_action",
+            status: "new",
+            headlineStatus: "urgent",
+            priority: "high",
+            highestSeverity:
+              queueItem.highestSeverity === "unsafe" ? queueItem.highestSeverity : "major",
+            managerDecisionRequired: true,
+            requiresDriverInstruction: true,
+            latestInternalNote: internalNote,
+            reviewStartedAt: queueItem.reviewStartedAt ?? now,
+            updatedAt: now,
+          })
+          .where(eq(inspectionReviewQueueItems.id, queueItem.id));
+
+        await db
+          .update(inspections)
+          .set({
+            reportOutcome: "major_action_required",
+            highestDefectSeverity:
+              queueItem.highestSeverity === "unsafe" ? queueItem.highestSeverity : "major",
+            managerReviewRequired: true,
+            updatedAt: now,
+          })
+          .where(eq(inspections.id, queueItem.inspectionId));
+
+        if (queueItem.defectId) {
+          await db
+            .update(defects)
+            .set({
+              status: "repair_required",
+              managerReviewStatus: "escalated",
+              managerReviewStatusUpdatedAt: now,
+              escalatedFromMinor: true,
+              isBlockingOperationally: true,
+              latestManagerActionByUserId: ctx.user.id,
+              latestManagerActionAt: now,
+              updatedAt: now,
+            })
+            .where(eq(defects.id, queueItem.defectId));
+        } else {
+          await db
+            .update(defects)
+            .set({
+              status: "repair_required",
+              managerReviewStatus: "escalated",
+              managerReviewStatusUpdatedAt: now,
+              escalatedFromMinor: true,
+              isBlockingOperationally: true,
+              latestManagerActionByUserId: ctx.user.id,
+              latestManagerActionAt: now,
+              updatedAt: now,
+            })
+            .where(eq(defects.inspectionId, queueItem.inspectionId));
+        }
+
+        await updateVehicleOperationalState({
+          vehicleId,
+          operationalState: "blocked_pending_manager_review",
+          inspectionId: queueItem.inspectionId,
+          defectId: queueItem.defectId ?? null,
+          decisionByUserId: ctx.user.id,
+          instruction:
+            driverInstructionNote ??
+            "Do not operate this asset until a manager completes the defect review.",
+          complianceStatus: queueItem.complianceStatus ?? undefined,
+        });
+      } else {
+        const queueStatusUpdate = {
+          status: "reviewed",
+          headlineStatus: "reviewed" as QueueHeadlineStatus,
+          latestManagerDecision: decision,
+          latestDriverInstruction: driverInstructionNote,
+          latestInternalNote: internalNote,
+          reviewStartedAt: queueItem.reviewStartedAt ?? now,
+          decisionMadeAt: decision ? now : null,
+          reviewedAt: now,
+          reviewedByUserId: ctx.user.id,
+          updatedAt: now,
+        };
+
+        await db
+          .update(inspectionReviewQueueItems)
+          .set(queueStatusUpdate)
+          .where(eq(inspectionReviewQueueItems.id, queueItem.id));
+
+        await db
+          .update(inspectionReviewQueueItems)
+          .set(queueStatusUpdate)
+          .where(eq(inspectionReviewQueueItems.parentQueueItemId, queueItem.id));
+
+        await db
+          .update(inspections)
+          .set({
+            reportOutcome: "reviewed",
+            latestManagerDecision: decision,
+            latestManagerInstruction: driverInstructionNote,
+            latestManagerReviewedByUserId: ctx.user.id,
+            latestManagerReviewedAt: now,
+            updatedAt: now,
+          })
+          .where(eq(inspections.id, queueItem.inspectionId));
+
+        const defectReviewStatus = mapDecisionToDefectReviewStatus(decision);
+        const defectUpdate = {
+          ...(defectReviewStatus ? defectReviewStatus : {}),
+          latestManagerDecision: decision,
+          latestDriverInstruction: driverInstructionNote,
+          latestManagerActionByUserId: ctx.user.id,
+          latestManagerActionAt: now,
+          managerReviewStatusUpdatedAt: now,
+          updatedAt: now,
+        };
+
+        if (queueItem.defectId) {
+          await db.update(defects).set(defectUpdate).where(eq(defects.id, queueItem.defectId));
+        } else {
+          await db
+            .update(defects)
+            .set(defectUpdate)
+            .where(eq(defects.inspectionId, queueItem.inspectionId));
+        }
+
+        if (decision) {
+          await updateVehicleOperationalState({
+            vehicleId,
+            operationalState: deriveOperationalStateForDecision(decision),
+            inspectionId: queueItem.inspectionId,
+            defectId: queueItem.defectId ?? null,
+            decisionByUserId: ctx.user.id,
+            instruction: driverInstructionNote,
+            complianceStatus: queueItem.complianceStatus ?? undefined,
+            ...(decision === "return_to_service"
+              ? {
+                  lastCleanInspectionId: queueItem.inspectionId,
+                  lastCleanInspectionAt: now,
+                }
+              : {}),
+          });
+        }
+      }
+
+      await syncCombinedInspectionSession({
+        fleetId: queueItem.fleetId,
+        inspectionSessionId: queueItem.inspectionSessionId,
+        combinedStage:
+          queueItem.combinedStage === "truck" || queueItem.combinedStage === "trailer"
+            ? queueItem.combinedStage
+            : null,
+        linkedVehicleId: queueItem.linkedVehicleId ?? null,
+        vehicleId,
+        inspectionId: queueItem.inspectionId,
+        reportOutcome: input.actionType === "escalated_to_major" ? "major_action_required" : "reviewed",
+        highestSeverity:
+          input.actionType === "escalated_to_major"
+            ? queueItem.highestSeverity === "unsafe"
+              ? "unsafe"
+              : "major"
+            : "minor",
+        provisionalGuidance: driverInstructionNote,
+      });
+
+      return {
+        success: true,
+        queueItemId: queueItem.id,
+        actionType: input.actionType,
+        decision,
+      };
     }),
 
   getFleetDailyHealth: protectedProcedure

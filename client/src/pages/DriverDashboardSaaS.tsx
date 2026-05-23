@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
+import QuickStartBanner from "@/components/quickStart/QuickStartBanner";
 import VehicleAccessRequestDialog from "@/components/VehicleAccessRequestDialog";
 import { getBrowserStorage, getQueuedInspectionSubmissions, loadInspectionDraft } from "@/lib/inspectionDrafts";
 import { enqueueIssueReport, flushQueuedIssueReports, getQueuedIssueReports } from "@/lib/issueDrafts";
@@ -22,7 +23,7 @@ import {
 import { trpc } from "@/lib/trpc";
 import { type DriverVehicleRecord } from "@/lib/driverVehicles";
 import { formatDistanceKm } from "@/lib/vehicleDisplay";
-import { AlertCircle, Camera, CheckCircle2, Eye, FileText, Gauge, Info, LogOut, Menu, SearchCode, ShieldCheck, Stethoscope, Truck, TriangleAlert, Wrench } from "lucide-react";
+import { AlertCircle, BookOpenCheck, Camera, CheckCircle2, Eye, FileText, Gauge, Info, LogOut, Menu, SearchCode, ShieldCheck, Stethoscope, Truck, TriangleAlert, Wrench } from "lucide-react";
 import { toast } from "sonner";
 
 type DriverVehicle = DriverVehicleRecord;
@@ -521,6 +522,14 @@ function DriverDashboardContent() {
             <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/pricing")}>
               Subscription & Pricing
             </DropdownMenuItem>
+            <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/quick-start-guides/my-guide")}>
+              <BookOpenCheck className="mr-2 h-4 w-4" />
+              My Quick Start Guide
+            </DropdownMenuItem>
+            <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/quick-start-guides")}>
+              <BookOpenCheck className="mr-2 h-4 w-4" />
+              Quick Start Guides
+            </DropdownMenuItem>
             <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/")}>
               <Info className="mr-2 h-4 w-4" />
               About TruckFixr
@@ -558,6 +567,8 @@ function DriverDashboardContent() {
       </header>
 
       <main className="mx-auto max-w-7xl space-y-8 px-4 py-8 pt-16 sm:px-6 sm:pt-20 lg:px-8">
+        <QuickStartBanner role={user?.role} />
+
         {!hasVehicles ? (
           <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
             <Card className="saas-card overflow-hidden p-0">

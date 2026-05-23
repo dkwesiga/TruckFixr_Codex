@@ -8,9 +8,26 @@ import {
 } from "../services/tadisCore";
 import { eq, and, sql } from "drizzle-orm";
 import { getDb } from "../db";
-import { defects, tadisAlerts, defectActions, vehicles, maintenanceLogs } from "../../drizzle/schema";
+import {
+  defects,
+  tadisAlerts,
+  defectActions,
+  vehicles,
+  maintenanceLogs,
+  inspectionReviewQueueItems,
+} from "../../drizzle/schema";
 import { canManageVehicleAccess, canViewVehicle } from "../services/vehicleAccess";
 import { sendEmail } from "../services/email";
+import {
+  deriveIssueReviewSeverity,
+  deriveManagerReviewRequired,
+  deriveOperationalStateForDecision,
+  deriveOperationalStateForSeverity,
+  derivePrimaryQueueDetails,
+  deriveProvisionalDriverGuidance,
+  deriveReportOutcome,
+  deriveUrgentDefectQueueDetails,
+} from "../services/inspectionReviewWorkflow";
 
 async function verifyFleetAccess(fleetId: number, userId: number, userRole: string): Promise<boolean> {
   return canManageVehicleAccess({
@@ -66,6 +83,50 @@ function mapDefectStatusToManagerReviewStatus(status?: string | null) {
   }
 }
 
+async function updateVehicleOperationalState(input: {
+  vehicleId: number | string;
+  operationalState: "active" | "blocked_pending_manager_review" | "move_for_repair_only" | "returned_to_service";
+  defectId?: number | null;
+  decisionByUserId?: number | null;
+  instruction?: string | null;
+  complianceStatus?: "green" | "yellow" | "red";
+}) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const nextStatus =
+    input.operationalState === "active" || input.operationalState === "returned_to_service"
+      ? "active"
+      : "maintenance";
+
+  return db
+    .update(vehicles)
+    .set({
+      operationalState: input.operationalState,
+      operationalDecisionDefectId: input.defectId ?? null,
+      operationalDecisionByUserId: input.decisionByUserId ?? null,
+      operationalDecisionAt: new Date(),
+      operationalInstruction: input.instruction ?? null,
+      ...(input.complianceStatus ? { complianceStatus: input.complianceStatus } : {}),
+      status: nextStatus,
+      updatedAt: new Date(),
+    })
+    .where(sql`CAST(${vehicles.id} AS text) = ${String(input.vehicleId)}`);
+}
+
+function mapDefectWorkflowToDecision(status?: string | null) {
+  switch (status) {
+    case "resolved":
+      return "return_to_service" as const;
+    case "assigned":
+      return "move_for_repair_only" as const;
+    case "repair_required":
+      return "do_not_operate" as const;
+    default:
+      return null;
+  }
+}
+
 export const defectsRouter = router({
   reportIssue: protectedProcedure
     .input(
@@ -110,6 +171,12 @@ export const defectsRouter = router({
       const now = new Date();
       const normalizedVehicleId = String(input.vehicleId);
       const normalizedDraftId = input.localDraftId?.trim() || null;
+      const highestSeverity = deriveIssueReviewSeverity(input.severity);
+      const reportOutcome = deriveReportOutcome(highestSeverity);
+      const managerReviewRequired = deriveManagerReviewRequired(highestSeverity);
+      const provisionalDriverGuidance = deriveProvisionalDriverGuidance(highestSeverity);
+      const primaryQueue = derivePrimaryQueueDetails(highestSeverity);
+      const urgentQueue = deriveUrgentDefectQueueDetails(highestSeverity);
 
       if (normalizedDraftId) {
         const [existingDefect] = await db
@@ -154,6 +221,7 @@ export const defectsRouter = router({
           status: input.severity === "critical" ? "repair_required" : "open",
           managerReviewStatus: "submitted",
           managerReviewStatusUpdatedAt: now,
+          isBlockingOperationally: highestSeverity === "major" || highestSeverity === "unsafe",
           photoUrls: input.photoUrls,
           updatedAt: now,
         })
@@ -167,6 +235,56 @@ export const defectsRouter = router({
           updatedAt: now,
         })
         .where(sql`CAST(${vehicles.id} AS text) = ${normalizedVehicleId}`);
+
+      if (primaryQueue) {
+        const [primaryQueueItem] = await db
+          .insert(inspectionReviewQueueItems)
+          .values({
+            fleetId: input.fleetId,
+            defectId: defect.id,
+            vehicleId: normalizedVehicleId,
+            queueType: primaryQueue.queueType,
+            status: "new",
+            headlineStatus: primaryQueue.headlineStatus,
+            priority: primaryQueue.priority,
+            highestSeverity,
+            managerDecisionRequired: primaryQueue.managerDecisionRequired,
+            requiresDriverInstruction: primaryQueue.requiresDriverInstruction,
+            provisionalGuidanceSnapshot: provisionalDriverGuidance,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning({ id: inspectionReviewQueueItems.id });
+
+        if (urgentQueue) {
+          await db.insert(inspectionReviewQueueItems).values({
+            fleetId: input.fleetId,
+            defectId: defect.id,
+            vehicleId: normalizedVehicleId,
+            parentQueueItemId: primaryQueueItem?.id ?? null,
+            queueType: urgentQueue.queueType,
+            status: "new",
+            headlineStatus: urgentQueue.headlineStatus,
+            priority: urgentQueue.priority,
+            highestSeverity,
+            managerDecisionRequired: urgentQueue.managerDecisionRequired,
+            requiresDriverInstruction: urgentQueue.requiresDriverInstruction,
+            provisionalGuidanceSnapshot: provisionalDriverGuidance,
+            createdAt: now,
+            updatedAt: now,
+          });
+        }
+      }
+
+      if (managerReviewRequired) {
+        await updateVehicleOperationalState({
+          vehicleId: normalizedVehicleId,
+          operationalState: deriveOperationalStateForSeverity(highestSeverity),
+          defectId: defect.id,
+          instruction: provisionalDriverGuidance,
+          complianceStatus,
+        });
+      }
 
       await db.insert(tadisAlerts).values({
         fleetId: input.fleetId,
@@ -223,6 +341,9 @@ export const defectsRouter = router({
         defectId: defect.id,
         status: defect.status,
         complianceStatus,
+        reportOutcome,
+        managerReviewRequired,
+        provisionalDriverGuidance,
       };
     }),
 
@@ -484,6 +605,7 @@ export const defectsRouter = router({
         "submitted";
       const shouldRefreshManagerReviewTimestamp =
         nextManagerReviewStatus !== (existing.managerReviewStatus ?? "submitted");
+      const workflowDecision = mapDefectWorkflowToDecision(nextStatus);
 
       await db
         .update(defects)
@@ -493,9 +615,41 @@ export const defectsRouter = router({
           managerReviewStatusUpdatedAt: shouldRefreshManagerReviewTimestamp
             ? now
             : existing.managerReviewStatusUpdatedAt,
+          latestManagerDecision: workflowDecision,
+          latestManagerActionByUserId: ctx.user.id,
+          latestManagerActionAt: now,
           updatedAt: now,
         })
         .where(eq(defects.id, input.defectId));
+
+      await db
+        .update(inspectionReviewQueueItems)
+        .set({
+          status: nextStatus === "resolved" ? "reviewed" : "new",
+          headlineStatus:
+            nextStatus === "resolved"
+              ? "reviewed"
+              : nextStatus === "repair_required"
+                ? "urgent"
+                : "review_needed",
+          latestManagerDecision: workflowDecision,
+          latestInternalNote: input.notes ?? null,
+          reviewedAt: nextStatus === "resolved" ? now : null,
+          reviewedByUserId: nextStatus === "resolved" ? ctx.user.id : null,
+          updatedAt: now,
+        })
+        .where(eq(inspectionReviewQueueItems.defectId, input.defectId));
+
+      if (workflowDecision) {
+        await updateVehicleOperationalState({
+          vehicleId: existing.vehicleId,
+          operationalState: deriveOperationalStateForDecision(workflowDecision),
+          defectId: input.defectId,
+          decisionByUserId: ctx.user.id,
+          instruction: input.notes ?? existing.latestDriverInstruction ?? null,
+          complianceStatus: existing.complianceStatus,
+        });
+      }
 
       if (input.notes || input.assignedTo || input.managerReviewStatus) {
         await db
@@ -580,9 +734,35 @@ export const defectsRouter = router({
           status: "resolved",
           managerReviewStatus: "resolved",
           managerReviewStatusUpdatedAt: new Date(),
+          latestManagerDecision: "return_to_service",
+          latestDriverInstruction: input.resolutionNotes,
+          latestManagerActionByUserId: ctx.user.id,
+          latestManagerActionAt: new Date(),
           updatedAt: new Date(),
         })
         .where(eq(defects.id, input.defectId));
+
+      await db
+        .update(inspectionReviewQueueItems)
+        .set({
+          status: "reviewed",
+          headlineStatus: "reviewed",
+          latestManagerDecision: "return_to_service",
+          latestDriverInstruction: input.resolutionNotes,
+          reviewedAt: new Date(),
+          reviewedByUserId: ctx.user.id,
+          updatedAt: new Date(),
+        })
+        .where(eq(inspectionReviewQueueItems.defectId, input.defectId));
+
+      await updateVehicleOperationalState({
+        vehicleId: existing.vehicleId,
+        operationalState: "returned_to_service",
+        defectId: input.defectId,
+        decisionByUserId: ctx.user.id,
+        instruction: input.resolutionNotes,
+        complianceStatus: existing.complianceStatus,
+      });
 
       await db
         .insert(maintenanceLogs)
