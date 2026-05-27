@@ -37,6 +37,11 @@ async function ensureAuthSchema(pool: Pool) {
     `);
 
     await pool.query(`
+      ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "ownerOperatorMode" boolean NOT NULL DEFAULT false;
+    `);
+
+    await pool.query(`
       DO $$
       BEGIN
         CREATE TYPE subscription_tier AS ENUM ('free', 'pilot', 'pro', 'fleet');
@@ -2414,6 +2419,11 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     } else if (user.openId === ENV.ownerOpenId) {
       values.role = 'owner';
       updateSet.role = 'owner';
+    }
+
+    if (user.ownerOperatorMode !== undefined) {
+      values.ownerOperatorMode = user.ownerOperatorMode;
+      updateSet.ownerOperatorMode = user.ownerOperatorMode;
     }
 
     if (user.managerUserId !== undefined) {

@@ -49,8 +49,16 @@ export const authRouter = router({
       z.object({
         name: z.string().min(2, "Name must be at least 2 characters"),
         role: z.enum(["owner", "manager", "driver"]),
+        ownerOperatorMode: z.boolean().optional().default(false),
         managerEmail: z.string().trim().email("Enter a valid manager email").optional(),
       }).superRefine((value, context) => {
+        if (value.ownerOperatorMode && value.role !== "owner") {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["ownerOperatorMode"],
+            message: "Owner-operator mode is only available to owner profiles.",
+          });
+        }
         if (value.role === "driver" && !value.managerEmail?.trim()) {
           context.addIssue({
             code: z.ZodIssueCode.custom,
@@ -142,6 +150,7 @@ export const authRouter = router({
           loginMethod: ctx.user.loginMethod ?? undefined,
           name: input.name,
           role: input.role,
+          ownerOperatorMode: input.role === "owner" ? Boolean(input.ownerOperatorMode) : false,
           managerEmail: normalizedManagerEmail,
           managerUserId,
           lastSignedIn: ctx.user.lastSignedIn,

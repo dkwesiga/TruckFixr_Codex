@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import OwnerOperatorGate from "@/components/OwnerOperatorGate";
 import SignaturePad from "@/components/SignaturePad";
 import { Textarea } from "@/components/ui/textarea";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
@@ -23,6 +24,7 @@ import {
 } from "@/lib/inspectionDrafts";
 import { loadLastDriverVehicleContext, saveLastDriverVehicleContext } from "@/lib/driverVehicleContext";
 import { type DriverVehicleRecord } from "@/lib/driverVehicles";
+import { isOwnerOperatorEnabled } from "@/lib/ownerOperator";
 import { trpc } from "@/lib/trpc";
 import { trackInspectionSubmitted } from "@/lib/analytics";
 import { getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
@@ -124,8 +126,10 @@ function DriverInspectionContent() {
       : 0;
   }, [searchParams, storedVehicle, subscriptionQuery.data?.activeFleetId]);
   const driverName = user?.name?.trim() || user?.email?.trim() || "Driver";
-  const isOwnerOperator =
-    String(user?.role) === "owner_operator" || user?.role === "owner" || user?.role === "manager";
+  if (user?.role === "owner" && !isOwnerOperatorEnabled(user)) {
+    return <OwnerOperatorGate />;
+  }
+  const isOwnerOperator = user?.role === "manager" || isOwnerOperatorEnabled(user);
   const storage = useMemo(() => getBrowserStorage(), []);
   const restoredDraft = useMemo(() => loadInspectionDraft(storage, vehicleId), [storage, vehicleId]);
   const storedChecklistSnapshot = useMemo(

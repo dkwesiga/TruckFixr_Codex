@@ -714,6 +714,7 @@ export const users = pgTable("users", {
   loginMethod: varchar("loginMethod", { length: 64 }),
   emailVerified: boolean("emailVerified").default(false).notNull(),
   role: userRoleEnum("role").default("driver").notNull(),
+  ownerOperatorMode: boolean("ownerOperatorMode").default(false).notNull(),
   internalAdminRole: varchar("internalAdminRole", { length: 32 }),
   managerEmail: varchar("managerEmail", { length: 320 }),
   managerUserId: integer("managerUserId"),

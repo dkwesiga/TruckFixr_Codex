@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
+import OwnerOperatorGate from "@/components/OwnerOperatorGate";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -11,6 +12,7 @@ import { trpc } from "@/lib/trpc";
 import { useAuthContext } from "@/hooks/useAuthContext";
 import { loadLastDriverVehicleContext } from "@/lib/driverVehicleContext";
 import { getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
+import { isOwnerOperatorEnabled } from "@/lib/ownerOperator";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -132,7 +134,10 @@ function VerifiedInspectionContent() {
   const parsedFleetId = Number(params.get("fleet") ?? storedVehicle?.fleetId ?? 0);
   const fleetId = Number.isFinite(parsedFleetId) && parsedFleetId > 0 ? parsedFleetId : 0;
   const userRole = String(user?.role ?? "");
-  const isOwnerOperator = userRole === "owner_operator" || userRole === "owner" || userRole === "manager";
+  if (user?.role === "owner" && !isOwnerOperatorEnabled(user)) {
+    return <OwnerOperatorGate />;
+  }
+  const isOwnerOperator = userRole === "manager" || isOwnerOperatorEnabled(user);
   const [inspectionSession, setInspectionSession] = useState<any>(null);
   const [location, setLocation] = useState<LocationCapture | null>(null);
   const [responses, setResponses] = useState<Record<string, ChecklistResponse>>({});

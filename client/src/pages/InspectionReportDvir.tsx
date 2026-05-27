@@ -1,11 +1,13 @@
 import { useMemo } from "react";
 import { useLocation } from "wouter";
 import AppLogo from "@/components/AppLogo";
+import OwnerOperatorGate from "@/components/OwnerOperatorGate";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import { useAuthContext } from "@/hooks/useAuthContext";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { trpc } from "@/lib/trpc";
+import { isOwnerOperatorEnabled } from "@/lib/ownerOperator";
 import { ChevronLeft, Printer } from "lucide-react";
 
 type DvirRow = {
@@ -94,8 +96,11 @@ function InspectionReportDvirContent() {
   );
   const report = reportQuery.data as any;
   const role = String(user?.role ?? "");
+  if (user?.role === "owner" && !isOwnerOperatorEnabled(user)) {
+    return <OwnerOperatorGate />;
+  }
   const fallbackPath =
-    role === "driver" || role === "owner_operator"
+    role === "driver" || isOwnerOperatorEnabled(user)
       ? "/driver"
       : role === "manager" || role === "owner"
         ? "/manager"

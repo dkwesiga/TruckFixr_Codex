@@ -172,6 +172,57 @@ function decorateVehiclesWithRelationshipSummary<T extends Record<string, any>>(
   }));
 }
 
+const vehicleCreateReturnShape = {
+  id: vehicles.id,
+  fleetId: vehicles.fleetId,
+  assignedDriverId: vehicles.assignedDriverId,
+  unitNumber: vehicles.unitNumber,
+  vin: vehicles.vin,
+  licensePlate: vehicles.licensePlate,
+  make: vehicles.make,
+  engineMake: vehicles.engineMake,
+  model: vehicles.model,
+  year: vehicles.year,
+};
+
+const vehicleCreateModernReturnShape = {
+  ...vehicleCreateReturnShape,
+  assetRecordStatus: vehicles.assetRecordStatus,
+};
+
+function getVehicleCreateErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error ?? "Vehicle creation failed");
+}
+
+function isLegacyVehicleSchemaError(message: string) {
+  const normalized = message.toLowerCase();
+  if (!normalized.includes("vehicles")) return false;
+
+  return [
+    "assettype",
+    "assetcategory",
+    "vehicletype",
+    "ispoweredvehicle",
+    "istrailer",
+    "assetrecordstatus",
+    "createdbyuserid",
+    "linkedpoweredvehicleid",
+    "trailerlinkstatus",
+    "operationaldecision",
+    "lastcleaninspection",
+  ].some((fragment) => normalized.includes(fragment));
+}
+
+function isVehicleIdTypeMismatch(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("invalid input syntax for type integer") ||
+    (normalized.includes("\"id\"") &&
+      normalized.includes("integer") &&
+      (normalized.includes("character varying") || normalized.includes("text")))
+  );
+}
+
 export const vehiclesRouter = router({
   /**
    * Create a new vehicle (truck)
@@ -261,37 +312,74 @@ export const vehiclesRouter = router({
         }
       }
       let vehicle;
+      const generatedVehicleId = `veh_${randomUUID()}`;
+      const baseInsertValues = {
+        fleetId: resolvedFleetId,
+        assignedDriverId: null,
+        unitNumber: input.unitNumber?.trim() || null,
+        vin: input.vin,
+        licensePlate: input.licensePlate?.trim() || "UNKNOWN",
+        make: input.make,
+        engineMake: input.engineMake?.trim() || null,
+        model: input.model,
+        year: input.year,
+        configuration: input.configuration,
+        status: (assetRecordStatus === "active" ? "active" : "maintenance") as "active" | "maintenance",
+      };
       try {
         [vehicle] = await db
           .insert(vehicles)
           .values({
-            id: `veh_${randomUUID()}`,
-            fleetId: resolvedFleetId,
-            assignedDriverId: null,
+            id: generatedVehicleId,
+            ...baseInsertValues,
             assetType: classification.assetType,
             assetCategory: classification.assetCategory,
             vehicleType: classification.vehicleType,
             isPoweredVehicle: classification.isPoweredVehicle,
             isTrailer: classification.isTrailer,
-            unitNumber: input.unitNumber?.trim() || null,
-            vin: input.vin,
-            licensePlate: input.licensePlate?.trim() || "UNKNOWN",
-            make: input.make,
-            engineMake: input.engineMake?.trim() || null,
-            model: input.model,
-            year: input.year,
-            configuration: input.configuration,
-            status: assetRecordStatus === "active" ? "active" : "maintenance",
             assetRecordStatus,
             createdByUserId: ctx.user.id,
           })
-          .returning();
+          .returning(vehicleCreateModernReturnShape);
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Vehicle creation failed";
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: `Unable to save this vehicle record. ${message}`,
-        });
+        const message = getVehicleCreateErrorMessage(error);
+        const shouldRetryWithLegacyPayload =
+          isLegacyVehicleSchemaError(message) || isVehicleIdTypeMismatch(message);
+
+        if (!shouldRetryWithLegacyPayload) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Unable to save this vehicle record. ${message}`,
+          });
+        }
+
+        try {
+          console.warn("[Vehicles] Falling back to legacy-compatible vehicle insert.", {
+            fleetId: resolvedFleetId,
+            reason: message,
+          });
+
+          const legacyValues = {
+            ...baseInsertValues,
+            ...(isVehicleIdTypeMismatch(message) ? {} : { id: generatedVehicleId }),
+          };
+
+          [vehicle] = await db
+            .insert(vehicles)
+            .values(legacyValues as any)
+            .returning(vehicleCreateReturnShape);
+
+          vehicle = {
+            ...vehicle,
+            assetRecordStatus,
+          };
+        } catch (legacyError) {
+          const legacyMessage = getVehicleCreateErrorMessage(legacyError);
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Unable to save this vehicle record. ${legacyMessage}`,
+          });
+        }
       }
 
       if (input.assignedDriverId != null) {

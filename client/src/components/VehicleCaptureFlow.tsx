@@ -80,6 +80,7 @@ export default function VehicleCaptureFlow({
   const [ocrWarning, setOcrWarning] = useState("");
   const [vinInput, setVinInput] = useState("");
   const [decodeWarning, setDecodeWarning] = useState("");
+  const [saveAttempted, setSaveAttempted] = useState(false);
   const [vehicleForm, setVehicleForm] = useState<VehicleCaptureDraft>({
     label: "",
     vin: "",
@@ -287,6 +288,8 @@ export default function VehicleCaptureFlow({
   };
 
   const saveVehicle = async () => {
+    setSaveAttempted(true);
+
     if (!(typeof fleetId === "number" && fleetId > 0)) {
       toast.error("TruckFixr is still loading your fleet. Refresh and try again.");
       return;
@@ -298,7 +301,7 @@ export default function VehicleCaptureFlow({
       return;
     }
     if (!vehicleForm.vehicleType) {
-      toast.error("Select the vehicle type before saving.");
+      toast.error("Select a vehicle type before saving.");
       return;
     }
 
@@ -561,8 +564,11 @@ export default function VehicleCaptureFlow({
                       vin: normalizeVinInput(event.target.value),
                     }))
                   }
-                  className="mt-2"
+                  className={`mt-2 ${saveAttempted && normalizeVinInput(vehicleForm.vin).length !== 17 ? "border-red-400 ring-1 ring-red-400" : ""}`}
                 />
+                {saveAttempted && normalizeVinInput(vehicleForm.vin).length !== 17 ? (
+                  <p className="mt-1 text-xs text-red-600">VIN must be exactly 17 characters.</p>
+                ) : null}
               </div>
               <div>
                 <Label htmlFor="review-make">Make</Label>
@@ -581,7 +587,12 @@ export default function VehicleCaptureFlow({
                 <Input id="review-engine" value={vehicleForm.engineMake} onChange={(event) => setVehicleForm((current) => ({ ...current, engineMake: event.target.value }))} className="mt-2" />
               </div>
               <div>
-                <Label htmlFor="review-vehicle-type">Vehicle Type</Label>
+                <Label htmlFor="review-vehicle-type">
+                  Vehicle Type
+                  {saveAttempted && !vehicleForm.vehicleType ? (
+                    <span className="ml-1 text-red-600">*</span>
+                  ) : null}
+                </Label>
                 <Select
                   value={vehicleForm.vehicleType || undefined}
                   onValueChange={(value) =>
@@ -591,7 +602,10 @@ export default function VehicleCaptureFlow({
                     }))
                   }
                 >
-                  <SelectTrigger id="review-vehicle-type" className="mt-2 w-full">
+                  <SelectTrigger
+                    id="review-vehicle-type"
+                    className={`mt-2 w-full ${saveAttempted && !vehicleForm.vehicleType ? "border-red-400 ring-1 ring-red-400" : ""}`}
+                  >
                     <SelectValue placeholder="Select vehicle type" />
                   </SelectTrigger>
                   <SelectContent>
@@ -602,6 +616,9 @@ export default function VehicleCaptureFlow({
                     ))}
                   </SelectContent>
                 </Select>
+                {saveAttempted && !vehicleForm.vehicleType ? (
+                  <p className="mt-1 text-xs text-red-600">Select a vehicle type to continue.</p>
+                ) : null}
               </div>
               <div>
                 <Label htmlFor="review-label">Unit Number</Label>
@@ -621,7 +638,7 @@ export default function VehicleCaptureFlow({
               </div>
             ) : null}
             <div className="flex gap-3">
-              <Button type="button" variant="outline" onClick={() => setStep("manual")} disabled={step === "saving"}>
+              <Button type="button" variant="outline" onClick={() => { setSaveAttempted(false); setStep("manual"); }} disabled={step === "saving"}>
                 Edit VIN
               </Button>
               <Button type="button" onClick={() => void saveVehicle()} disabled={step === "saving" || createVehicleMutation.isPending}>

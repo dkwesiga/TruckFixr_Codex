@@ -403,29 +403,6 @@ function ManagerDashboardFixedContent() {
         return;
       }
 
-      const hydratedVehicle = {
-        ...createdVehicle,
-        linkedVehicleSummary:
-          typeof (createdVehicle as { linkedVehicleSummary?: unknown }).linkedVehicleSummary === "string"
-            ? (createdVehicle as { linkedVehicleSummary?: string | null }).linkedVehicleSummary ?? null
-            : null,
-      };
-
-      utils.vehicles.listByFleet.setData({ fleetId: resolvedFleetId }, current => {
-        const vehicles = current ?? [];
-        const existingIndex = vehicles.findIndex(
-          vehicle => vehicle.id === hydratedVehicle.id
-        );
-
-        if (existingIndex >= 0) {
-          const next = [...vehicles];
-          next[existingIndex] = hydratedVehicle;
-          return next;
-        }
-
-        return [hydratedVehicle, ...vehicles];
-      });
-
       await utils.vehicles.listByFleet.invalidate({ fleetId: resolvedFleetId });
       await vehiclesQuery.refetch();
     },

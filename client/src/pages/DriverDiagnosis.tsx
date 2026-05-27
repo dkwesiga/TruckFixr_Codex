@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
+import OwnerOperatorGate from "@/components/OwnerOperatorGate";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,6 +13,7 @@ import { type DriverVehicleRecord } from "@/lib/driverVehicles";
 import { useAuthContext } from "@/hooks/useAuthContext";
 import { trpc } from "@/lib/trpc";
 import { getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
+import { isOwnerOperatorEnabled } from "@/lib/ownerOperator";
 import { getDemoDiagnosisCase } from "../../../shared/demoAssets";
 import { toast } from "sonner";
 import { AlertTriangle, ChevronLeft, CheckCircle2, Sparkles, Stethoscope, Truck, Wrench } from "lucide-react";
@@ -193,7 +195,10 @@ function DriverDiagnosisContent() {
     vin: params.get("vin") ?? storedVehicle?.vin,
     vehicleId: vehicleId ?? undefined,
   });
-  const isOwnerOperator = user?.role === "owner" || user?.role === "manager";
+  if (user?.role === "owner" && !isOwnerOperatorEnabled(user)) {
+    return <OwnerOperatorGate />;
+  }
+  const isOwnerOperator = user?.role === "manager" || isOwnerOperatorEnabled(user);
 
   const [symptom, setSymptom] = useState(() => demoCase?.symptom ?? "");
   const [faultCode, setFaultCode] = useState(() => demoCase?.faultCodes.join(", ") ?? "");
