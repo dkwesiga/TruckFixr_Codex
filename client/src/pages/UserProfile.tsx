@@ -495,6 +495,7 @@ export default function UserProfile() {
                         onCheckedChange={(checked) =>
                           setFormData({ ...formData, ownerOperatorMode: checked })
                         }
+                        className="mt-1"
                       />
                     </div>
                     {formData.ownerOperatorMode ? (
