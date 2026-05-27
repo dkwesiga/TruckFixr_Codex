@@ -8,7 +8,7 @@ import App from "./App";
 import { getLoginUrl } from "./const";
 import { getApiUrl } from "./lib/api";
 import { initializeAnalytics } from "./lib/analytics";
-import { attemptChunkReload } from "./lib/chunkRecovery";
+import { attemptChunkReload, clearChunkReloadParam } from "./lib/chunkRecovery";
 import "./index.css";
 
 window.addEventListener("vite:preloadError", (event) => {
@@ -16,6 +16,20 @@ window.addEventListener("vite:preloadError", (event) => {
     event.preventDefault();
   }
 });
+
+window.addEventListener("error", (event) => {
+  if (attemptChunkReload(event.error ?? event.message ?? event)) {
+    event.preventDefault();
+  }
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  if (attemptChunkReload(event.reason)) {
+    event.preventDefault();
+  }
+});
+
+clearChunkReloadParam();
 
 function renderBootError(message: string) {
   const root = document.getElementById("root");

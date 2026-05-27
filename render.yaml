@@ -10,10 +10,22 @@ services:
     buildCommand: npm install -g pnpm@10.15.1 && CI=true pnpm install --frozen-lockfile --force --reporter=append-only && pnpm build:client
     staticPublishPath: dist/public
     headers:
+      - path: /
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
       - path: /index.html
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
       - path: /manifest.json
+        name: Cache-Control
+        value: no-cache, must-revalidate
+      - path: /sw.js
+        name: Cache-Control
+        value: no-cache, must-revalidate
+      - path: /service-worker.js
         name: Cache-Control
         value: no-cache, must-revalidate
       - path: /assets/*
