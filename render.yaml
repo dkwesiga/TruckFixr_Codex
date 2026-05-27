@@ -16,10 +16,67 @@ services:
       - path: /
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
-      - path: /*
+      - path: /index.html
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
-      - path: /index.html
+      - path: /access
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /access/*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /pilot
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /signup
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /auth/*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /profile
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /app
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /onboarding
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /manager
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /driver
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /diagnosis
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /inspection
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /inspection/*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /inspection-report/*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /defect/*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /truck/*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /pricing
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /admin
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /admin/*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /404
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
       - path: /manifest.json
