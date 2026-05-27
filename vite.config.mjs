@@ -242,6 +242,7 @@ const plugins = [
 ];
 
 export default defineConfig({
+  base: "/",
   plugins,
   esbuild: false,
   resolve: {
@@ -276,13 +277,45 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (!id.includes("node_modules")) return undefined;
+          if (id.includes("/wouter/")) return "vendor-router";
+          if (
+            id.includes("/sonner/") ||
+            id.includes("/cmdk/") ||
+            id.includes("/vaul/") ||
+            id.includes("/input-otp/") ||
+            id.includes("/embla-carousel")
+          ) {
+            return "vendor-ui";
+          }
+          if (
+            id.includes("/@floating-ui/") ||
+            id.includes("/react-remove-scroll") ||
+            id.includes("/react-style-singleton/") ||
+            id.includes("/use-callback-ref/") ||
+            id.includes("/use-sidecar/")
+          ) {
+            return "vendor-overlay";
+          }
+          if (
+            id.includes("/clsx/") ||
+            id.includes("/tailwind-merge/") ||
+            id.includes("/class-variance-authority/")
+          ) {
+            return "vendor-style";
+          }
+          if (id.includes("@aws-sdk")) return "vendor-aws";
           if (id.includes("@radix-ui")) return "vendor-radix";
+          if (id.includes("jose")) return "vendor-auth";
+          if (id.includes("date-fns") || id.includes("react-day-picker")) return "vendor-dates";
+          if (id.includes("react-hook-form") || id.includes("@hookform")) return "vendor-forms";
           if (id.includes("lucide-react")) return "vendor-icons";
           if (id.includes("framer-motion")) return "vendor-motion";
           if (id.includes("recharts")) return "vendor-charts";
           if (id.includes("@tanstack") || id.includes("@trpc") || id.includes("superjson")) {
             return "vendor-data";
           }
+          if (id.includes("zod")) return "vendor-validate";
+          if (id.includes("streamdown")) return "vendor-markdown";
           return "vendor-shared";
         },
       },

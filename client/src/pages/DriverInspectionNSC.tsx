@@ -186,6 +186,8 @@ function DriverInspectionContent() {
         id: vehicle.id,
         fleetId: vehicle.fleetId,
         label: vehicle.unitNumber?.trim() || vehicle.licensePlate?.trim() || vehicle.vin,
+        relationshipSummary:
+          typeof vehicle.linkedVehicleSummary === "string" ? vehicle.linkedVehicleSummary : null,
         vin: vehicle.vin,
         licensePlate: vehicle.licensePlate || "UNKNOWN",
         make: vehicle.make || "Truck",
@@ -730,6 +732,9 @@ function DriverInspectionContent() {
                           <div>
                             <p className="font-medium text-slate-900">{vehicle.label}</p>
                             <p className="text-sm text-slate-500">{vehicle.make} {vehicle.model} | {vehicle.vin}</p>
+                            {vehicle.relationshipSummary ? (
+                              <p className="mt-1 text-sm font-medium text-blue-700">{vehicle.relationshipSummary}</p>
+                            ) : null}
                           </div>
                         </div>
                         <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">

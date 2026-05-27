@@ -2350,6 +2350,21 @@ export async function getDb() {
   return _db;
 }
 
+export async function resetDb() {
+  const pool = _pool;
+  _pool = null;
+  _db = null;
+  _authSchemaReady = null;
+
+  if (pool) {
+    try {
+      await pool.end();
+    } catch (error) {
+      console.warn("[Database] Failed to end pool:", error);
+    }
+  }
+}
+
 export async function upsertUser(user: InsertUser): Promise<void> {
   if (!user.openId) {
     throw new Error("User openId is required for upsert");

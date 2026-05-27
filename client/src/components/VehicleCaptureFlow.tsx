@@ -583,7 +583,7 @@ export default function VehicleCaptureFlow({
               <div>
                 <Label htmlFor="review-vehicle-type">Vehicle Type</Label>
                 <Select
-                  value={vehicleForm.vehicleType}
+                  value={vehicleForm.vehicleType || undefined}
                   onValueChange={(value) =>
                     setVehicleForm((current) => ({
                       ...current,

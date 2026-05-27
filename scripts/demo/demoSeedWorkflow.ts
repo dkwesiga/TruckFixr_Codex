@@ -2209,6 +2209,66 @@ export async function validateDemoSeed() {
     details: `Expected 5 trailer assets with independent records, found ${trailerCount}.`,
   });
 
+  const expectedTrailerLinks = DEMO_COMPANIES.flatMap((company) =>
+    company.vehicles
+      .filter((vehicle) => vehicle.assetType === "trailer" && vehicle.linkedPoweredVehicleId)
+      .map((vehicle) => ({
+        vehicleId: vehicle.id,
+        linkedPoweredVehicleId: vehicle.linkedPoweredVehicleId!,
+      }))
+  );
+  const missingTrailerLinks = expectedTrailerLinks.filter((expectedLink) => {
+    const trailer = vehiclesByFleet.find((vehicle) => vehicle.id === expectedLink.vehicleId);
+    const poweredVehicle = vehiclesByFleet.find(
+      (vehicle) => vehicle.id === expectedLink.linkedPoweredVehicleId
+    );
+    return (
+      !trailer ||
+      trailer.linkedPoweredVehicleId !== expectedLink.linkedPoweredVehicleId ||
+      trailer.trailerLinkStatus !== "linked" ||
+      !poweredVehicle ||
+      poweredVehicle.fleetId !== trailer.fleetId
+    );
+  });
+  checks.push({
+    name: "trailer_links_persisted",
+    ok: missingTrailerLinks.length === 0,
+    details:
+      missingTrailerLinks.length === 0
+        ? `Validated ${expectedTrailerLinks.length} seeded trailer links across the demo fleets.`
+        : `Trailer link mismatch for: ${missingTrailerLinks
+            .map((link) => `${link.vehicleId}->${link.linkedPoweredVehicleId}`)
+            .join(", ")}.`,
+  });
+
+  const activeDriverIdsByVehicle = new Map<string, Set<number>>();
+  for (const assignment of assignmentsByFleet) {
+    if (assignment.status !== "active" || assignment.driverUserId == null) continue;
+    const currentDrivers = activeDriverIdsByVehicle.get(String(assignment.vehicleId)) ?? new Set<number>();
+    currentDrivers.add(assignment.driverUserId);
+    activeDriverIdsByVehicle.set(String(assignment.vehicleId), currentDrivers);
+  }
+
+  const inaccessibleLinkedPairs = expectedTrailerLinks.filter((expectedLink) => {
+    const trailerDriverIds = activeDriverIdsByVehicle.get(expectedLink.vehicleId) ?? new Set<number>();
+    const poweredVehicleDriverIds =
+      activeDriverIdsByVehicle.get(expectedLink.linkedPoweredVehicleId) ?? new Set<number>();
+
+    return !Array.from(trailerDriverIds).some((driverUserId) =>
+      poweredVehicleDriverIds.has(driverUserId)
+    );
+  });
+  checks.push({
+    name: "linked_pairs_share_driver_access",
+    ok: inaccessibleLinkedPairs.length === 0,
+    details:
+      inaccessibleLinkedPairs.length === 0
+        ? `Validated ${expectedTrailerLinks.length} linked demo truck and trailer pairs with overlapping driver access.`
+        : `Linked pairs missing shared driver access: ${inaccessibleLinkedPairs
+            .map((link) => `${link.vehicleId}<->${link.linkedPoweredVehicleId}`)
+            .join(", ")}.`,
+  });
+
   checks.push({
     name: "operational_records_exist",
     ok:

@@ -20,7 +20,7 @@
     "seed:fault-codes": "tsx scripts/seed-fault-code-references.ts",
     "seed:demo": "tsx scripts/seed-demo-data.ts",
     "seed:demo:rollback": "tsx scripts/seed-demo-data-rollback.ts",
-    "validate:demo-seed": "tsx scripts/validate-demo-seed.ts",
+    "validate:demo-seed": "node scripts/run-validate-demo-seed.mjs",
     "demo:seed": "tsx scripts/seed-demo-data.ts",
     "generate:pilot-codes": "tsx scripts/generate-pilot-codes.ts",
     "screenshots:local": "cross-env DEMO_CAPTURE_ENV=local tsx scripts/demo/capture-assets.ts --screenshots",

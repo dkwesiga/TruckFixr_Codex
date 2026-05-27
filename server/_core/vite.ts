@@ -233,10 +233,39 @@ export function serveStatic(app: Express) {
     );
   }
 
-  app.use(express.static(distPath));
+  app.use(
+    express.static(distPath, {
+      index: false,
+      setHeaders(res, filePath) {
+        const relativePath = path.relative(distPath, filePath).replace(/\\/g, "/");
+        const fileName = path.basename(relativePath);
+        const isHtmlDocument = fileName === "index.html" || fileName.endsWith(".html");
+        const isManifestOrWorker =
+          fileName === "manifest.json" ||
+          fileName === "sw.js" ||
+          fileName === "service-worker.js";
+        const isImmutableAsset =
+          relativePath.startsWith("assets/") &&
+          /-[A-Za-z0-9_-]{8,}\.(js|css)$/.test(fileName);
+
+        if (isHtmlDocument || isManifestOrWorker) {
+          res.setHeader("Cache-Control", "no-cache, must-revalidate");
+          return;
+        }
+
+        if (isImmutableAsset) {
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          return;
+        }
+
+        res.setHeader("Cache-Control", "public, max-age=3600");
+      },
+    })
+  );
 
   // fall through to index.html if the file doesn't exist
   app.use("*", (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache, must-revalidate");
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }

@@ -26,7 +26,9 @@ import { formatDistanceKm } from "@/lib/vehicleDisplay";
 import { AlertCircle, BookOpenCheck, Camera, CheckCircle2, Eye, FileText, Gauge, Info, LogOut, Menu, SearchCode, ShieldCheck, Stethoscope, Truck, TriangleAlert, Wrench } from "lucide-react";
 import { toast } from "sonner";
 
-type DriverVehicle = DriverVehicleRecord;
+type DriverVehicle = DriverVehicleRecord & {
+  linkedPoweredVehicleId?: string | number | null;
+};
 
 
 function badgeClasses(value: string) {
@@ -61,6 +63,68 @@ function isTrailerAsset(assetType?: string | null) {
 
 function isDemoDriverEmail(email?: string | null) {
   return String(email ?? "").trim().toLowerCase().endsWith("@truckfixr-demo.example.com");
+}
+
+function hasMatchingVehicleId(
+  left: string | number | null | undefined,
+  right: string | number | null | undefined
+) {
+  return left != null && right != null && String(left) === String(right);
+}
+
+function resolveLinkedInspectionPair(
+  vehicles: DriverVehicle[],
+  preferredVehicleId: string | number | null
+) {
+  const findTrailerForPoweredVehicle = (poweredVehicle: DriverVehicle | null) =>
+    poweredVehicle
+      ? vehicles.find(
+          (vehicle) =>
+            isTrailerAsset(vehicle.assetType) &&
+            hasMatchingVehicleId(vehicle.linkedPoweredVehicleId ?? null, poweredVehicle.id)
+        ) ?? null
+      : null;
+
+  const findPoweredVehicleForTrailer = (trailer: DriverVehicle | null) =>
+    trailer?.linkedPoweredVehicleId != null
+      ? vehicles.find(
+          (vehicle) =>
+            !isTrailerAsset(vehicle.assetType) &&
+            hasMatchingVehicleId(vehicle.id, trailer.linkedPoweredVehicleId)
+        ) ?? null
+      : null;
+
+  const preferredVehicle =
+    vehicles.find((vehicle) => hasMatchingVehicleId(vehicle.id, preferredVehicleId)) ?? null;
+
+  if (preferredVehicle) {
+    const preferredPoweredVehicle = isTrailerAsset(preferredVehicle.assetType)
+      ? findPoweredVehicleForTrailer(preferredVehicle)
+      : preferredVehicle;
+    const preferredTrailer = isTrailerAsset(preferredVehicle.assetType)
+      ? preferredVehicle
+      : findTrailerForPoweredVehicle(preferredVehicle);
+
+    if (preferredPoweredVehicle && preferredTrailer) {
+      return {
+        poweredVehicle: preferredPoweredVehicle,
+        trailer: preferredTrailer,
+      };
+    }
+  }
+
+  for (const vehicle of vehicles) {
+    if (isTrailerAsset(vehicle.assetType)) continue;
+    const trailer = findTrailerForPoweredVehicle(vehicle);
+    if (trailer) {
+      return {
+        poweredVehicle: vehicle,
+        trailer,
+      };
+    }
+  }
+
+  return null;
 }
 
 function createInspectionSessionId(driverId?: number | string) {
@@ -126,6 +190,9 @@ function DriverDashboardContent() {
       id: vehicle.id,
       fleetId: vehicle.fleetId,
       label: vehicle.unitNumber?.trim() || vehicle.licensePlate?.trim() || vehicle.vin,
+      relationshipSummary:
+        typeof vehicle.linkedVehicleSummary === "string" ? vehicle.linkedVehicleSummary : null,
+      linkedPoweredVehicleId: vehicle.linkedPoweredVehicleId ?? null,
       vin: vehicle.vin,
       licensePlate: vehicle.licensePlate || "UNKNOWN",
       make: vehicle.make || "Truck",
@@ -180,11 +247,13 @@ function DriverDashboardContent() {
   );
   const driverModeEnabled = Boolean(fleetQuery.data?.driverModeEnabled) || isDemoDriverEmail(user?.email);
   const queuedInspections = getQueuedInspectionSubmissions(storage);
-  const poweredAssignedVehicle =
-    vehicles.find((vehicle) => !isTrailerAsset(vehicle.assetType)) ?? null;
-  const assignedTrailer =
-    vehicles.find((vehicle) => isTrailerAsset(vehicle.assetType)) ?? null;
-  const canStartCombinedInspection = Boolean(poweredAssignedVehicle && assignedTrailer);
+  const linkedInspectionPair = useMemo(
+    () => resolveLinkedInspectionPair(vehicles, activeVehicleId),
+    [activeVehicleId, vehicles]
+  );
+  const poweredAssignedVehicle = linkedInspectionPair?.poweredVehicle ?? null;
+  const assignedTrailer = linkedInspectionPair?.trailer ?? null;
+  const canStartCombinedInspection = Boolean(linkedInspectionPair);
 
   useEffect(() => {
     if (!vehicles.length) {
@@ -306,8 +375,9 @@ function DriverDashboardContent() {
     setActiveVehicleId(vehicle.id);
     saveLastDriverVehicleContext({
       id: vehicle.id,
-      fleetId: resolvedFleetId,
+      fleetId: vehicle.fleetId,
       label: vehicle.label,
+      relationshipSummary: vehicle.relationshipSummary ?? null,
       vin: vehicle.vin,
       licensePlate: vehicle.licensePlate,
       make: vehicle.make,
@@ -319,7 +389,7 @@ function DriverDashboardContent() {
     });
     window.location.href =
       `/inspection?vehicle=${encodeURIComponent(String(vehicle.id))}` +
-      `&fleet=${encodeURIComponent(String(resolvedFleetId))}` +
+      `&fleet=${encodeURIComponent(String(vehicle.fleetId))}` +
       `&session=${encodeURIComponent(inspectionSessionId)}` +
       "&mode=daily";
   };
@@ -341,8 +411,9 @@ function DriverDashboardContent() {
     setActiveVehicleId(poweredAssignedVehicle.id);
     saveLastDriverVehicleContext({
       id: poweredAssignedVehicle.id,
-      fleetId: resolvedFleetId,
+      fleetId: poweredAssignedVehicle.fleetId,
       label: poweredAssignedVehicle.label,
+      relationshipSummary: poweredAssignedVehicle.relationshipSummary ?? null,
       vin: poweredAssignedVehicle.vin,
       licensePlate: poweredAssignedVehicle.licensePlate,
       make: poweredAssignedVehicle.make,
@@ -355,7 +426,7 @@ function DriverDashboardContent() {
     window.location.href =
       `/inspection?vehicle=${encodeURIComponent(String(poweredAssignedVehicle.id))}` +
       `&trailer=${encodeURIComponent(String(assignedTrailer.id))}` +
-      `&fleet=${encodeURIComponent(String(resolvedFleetId))}` +
+      `&fleet=${encodeURIComponent(String(poweredAssignedVehicle.fleetId))}` +
       `&session=${encodeURIComponent(inspectionSessionId)}` +
       "&combo=truck";
   };
@@ -365,8 +436,9 @@ function DriverDashboardContent() {
     setActiveVehicleId(vehicle.id);
     saveLastDriverVehicleContext({
       id: vehicle.id,
-      fleetId: resolvedFleetId,
+      fleetId: vehicle.fleetId,
       label: vehicle.label,
+      relationshipSummary: vehicle.relationshipSummary ?? null,
       vin: vehicle.vin,
       licensePlate: vehicle.licensePlate,
       make: vehicle.make,
@@ -376,7 +448,7 @@ function DriverDashboardContent() {
       mileage: vehicle.mileage,
       status: vehicle.status,
     });
-    window.location.href = `/diagnosis?vehicle=${encodeURIComponent(String(vehicle.id))}&fleet=${encodeURIComponent(String(resolvedFleetId))}&label=${encodeURIComponent(vehicle.label)}&vin=${encodeURIComponent(vehicle.vin)}`;
+    window.location.href = `/diagnosis?vehicle=${encodeURIComponent(String(vehicle.id))}&fleet=${encodeURIComponent(String(vehicle.fleetId))}&label=${encodeURIComponent(vehicle.label)}&vin=${encodeURIComponent(vehicle.vin)}`;
   };
 
   const openIssueReport = (vehicle: DriverVehicle) => {
@@ -631,6 +703,9 @@ function DriverDashboardContent() {
                     <p className="section-label">Assigned asset</p>
                     <h2 className="mt-2 font-['Manrope'] text-3xl font-semibold tracking-tight text-[var(--fleet-ink)]">{activeVehicle.label}</h2>
                     <p className="mt-2 text-sm text-[var(--fleet-muted)]">{activeVehicleDisplay}</p>
+                    {activeVehicle.relationshipSummary ? (
+                      <p className="mt-2 text-sm font-medium text-blue-700">{activeVehicle.relationshipSummary}</p>
+                    ) : null}
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                     {[
@@ -652,7 +727,7 @@ function DriverDashboardContent() {
                   {canStartCombinedInspection ? (
                     <Button className="fleet-primary-btn h-12 rounded-2xl" onClick={startCombinedInspection}>
                       <Truck className="h-4 w-4" />
-                      Start Truck + Trailer
+                      Start Linked Truck + Trailer
                     </Button>
                   ) : null}
                   <Button className="fleet-primary-btn h-12 rounded-2xl" onClick={() => startInspection(activeVehicle)}><SearchCode className="h-4 w-4" />{pendingDraftForActiveVehicle ? "Resume Inspection" : "Start Inspection"}</Button>
@@ -765,6 +840,9 @@ function DriverDashboardContent() {
                           </div>
                         </div>
                         <p className="mt-4 text-sm text-slate-600">{vehicle.engineMake ? `${vehicleDisplay} | ${vehicle.engineMake}` : vehicleDisplay}</p>
+                        {vehicle.relationshipSummary ? (
+                          <p className="mt-2 text-sm font-medium text-blue-700">{vehicle.relationshipSummary}</p>
+                        ) : null}
                       </div>
                       <div className="flex flex-col items-end gap-2">
                         {isActive ? <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 ring-1 ring-blue-200">Current</span> : null}

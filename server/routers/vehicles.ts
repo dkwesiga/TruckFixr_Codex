@@ -134,6 +134,44 @@ function classifyVehicle(vehicleType: VehicleClassificationInput, assetType: Veh
   }
 }
 
+function getVehicleRelationshipLabel(vehicle: any, fleetVehicles: any[]) {
+  const formatVehicleLabel = (candidate: any) =>
+    candidate?.unitNumber?.trim() || candidate?.licensePlate?.trim() || candidate?.vin || String(candidate?.id ?? "");
+
+  const linkedPoweredVehicle =
+    vehicle.linkedPoweredVehicleId != null
+      ? fleetVehicles.find((candidate) => String(candidate.id) === String(vehicle.linkedPoweredVehicleId))
+      : null;
+  if (linkedPoweredVehicle) {
+    return `Linked to ${formatVehicleLabel(linkedPoweredVehicle)}`;
+  }
+
+  const linkedTrailers = fleetVehicles.filter(
+    (candidate) =>
+      candidate.linkedPoweredVehicleId != null &&
+      String(candidate.linkedPoweredVehicleId) === String(vehicle.id)
+  );
+  if (linkedTrailers.length === 0) {
+    return null;
+  }
+
+  const trailerLabels = linkedTrailers.map(formatVehicleLabel).filter(Boolean);
+  if (trailerLabels.length === 0) {
+    return null;
+  }
+
+  return trailerLabels.length === 1
+    ? `Linked trailer ${trailerLabels[0]}`
+    : `Linked trailers ${trailerLabels.join(", ")}`;
+}
+
+function decorateVehiclesWithRelationshipSummary<T extends Record<string, any>>(fleetVehicles: T[]) {
+  return fleetVehicles.map((vehicle) => ({
+    ...vehicle,
+    linkedVehicleSummary: getVehicleRelationshipLabel(vehicle, fleetVehicles),
+  }));
+}
+
 export const vehiclesRouter = router({
   /**
    * Create a new vehicle (truck)
@@ -362,7 +400,8 @@ export const vehiclesRouter = router({
           });
         }
 
-        return db.select().from(vehicles).where(eq(vehicles.fleetId, input.fleetId));
+        const fleetVehicles = await db.select().from(vehicles).where(eq(vehicles.fleetId, input.fleetId));
+        return decorateVehiclesWithRelationshipSummary(fleetVehicles);
       }
 
       const scopedVehicles = await listDriverAccessibleVehicles({
@@ -371,7 +410,7 @@ export const vehiclesRouter = router({
       });
 
       if (scopedVehicles.length > 0) {
-        return scopedVehicles;
+        return decorateVehiclesWithRelationshipSummary(scopedVehicles);
       }
 
       return [];
@@ -399,12 +438,14 @@ export const vehiclesRouter = router({
         });
       }
 
-      return db.select().from(vehicles).where(eq(vehicles.fleetId, fleetId));
+      const fleetVehicles = await db.select().from(vehicles).where(eq(vehicles.fleetId, fleetId));
+      return decorateVehiclesWithRelationshipSummary(fleetVehicles);
     }
 
-    return listDriverAccessibleVehiclesAcrossFleets({
+    const vehiclesAcrossFleets = await listDriverAccessibleVehiclesAcrossFleets({
       driverUserId: ctx.user.id,
     });
+    return decorateVehiclesWithRelationshipSummary(vehiclesAcrossFleets);
     }),
 
   /**

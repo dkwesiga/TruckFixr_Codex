@@ -29,7 +29,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   DropdownMenu,
@@ -70,11 +69,24 @@ type DashboardRow = {
   id: number | string;
   truck: string;
   detail: string;
+  relationship: string | null;
   assignedDriver: string;
   status: "Operational" | "In Shop" | "Dispatch Hold";
   inspection: "Complete" | "Due Today" | "Overdue";
   priority: "Low" | "High" | "Critical";
   issue: string;
+};
+
+const DEFAULT_ASSIGNMENT_FORM = {
+  vehicleId: null as string | null,
+  driverUserId: null as string | null,
+  accessType: "permanent" as "permanent" | "temporary",
+  expiresAt: "",
+  notes: "",
+  driverMode: "existing" as "existing" | "invite",
+  inviteFirstName: "",
+  inviteLastName: "",
+  inviteEmail: "",
 };
 
 function badgeClasses(value: string) {
@@ -171,7 +183,44 @@ function formatManagerReviewStatus(value: string | null | undefined) {
   return match?.label ?? "Submitted";
 }
 
-function mapVehicleRow(vehicle: any, drivers: any[] = []): DashboardRow {
+function buildVehicleRelationship(vehicle: any, fleetVehicles: any[] = []) {
+  if (typeof vehicle.linkedVehicleSummary === "string" && vehicle.linkedVehicleSummary.trim().length > 0) {
+    return vehicle.linkedVehicleSummary.trim();
+  }
+
+  const linkedPoweredVehicle =
+    vehicle.linkedPoweredVehicleId != null
+      ? fleetVehicles.find(candidate => String(candidate.id) === String(vehicle.linkedPoweredVehicleId))
+      : null;
+  if (linkedPoweredVehicle) {
+    return `Linked to ${getVehicleDisplayLabel({
+      label: linkedPoweredVehicle.unitNumber,
+      vin: linkedPoweredVehicle.vin,
+      vehicleId: linkedPoweredVehicle.id,
+    })}`;
+  }
+
+  const linkedTrailers = fleetVehicles.filter(
+    candidate => candidate.linkedPoweredVehicleId != null && String(candidate.linkedPoweredVehicleId) === String(vehicle.id)
+  );
+  if (linkedTrailers.length === 0) {
+    return null;
+  }
+
+  const linkedTrailerLabels = linkedTrailers.map(candidate =>
+    getVehicleDisplayLabel({
+      label: candidate.unitNumber,
+      vin: candidate.vin,
+      vehicleId: candidate.id,
+    })
+  );
+
+  return linkedTrailerLabels.length === 1
+    ? `Linked trailer ${linkedTrailerLabels[0]}`
+    : `Linked trailers ${linkedTrailerLabels.join(", ")}`;
+}
+
+function mapVehicleRow(vehicle: any, fleetVehicles: any[] = [], drivers: any[] = []): DashboardRow {
   const priority =
     vehicle.complianceStatus === "red"
       ? "Critical"
@@ -188,6 +237,7 @@ function mapVehicleRow(vehicle: any, drivers: any[] = []): DashboardRow {
       vin: vehicle.vin,
       vehicleId: vehicle.id,
     }),
+    relationship: buildVehicleRelationship(vehicle, fleetVehicles),
     assignedDriver: driver?.name || "Unassigned",
     detail:
       [vehicle.make, vehicle.model, vehicle.engineMake, vehicle.licensePlate]
@@ -250,17 +300,7 @@ function ManagerDashboardFixedContent() {
     description: string;
     confirmLabel: string;
   } | null>(null);
-  const [assignmentForm, setAssignmentForm] = useState({
-    vehicleId: null as string | null,
-    driverUserId: null as string | null,
-    accessType: "permanent" as "permanent" | "temporary",
-    expiresAt: "",
-    notes: "",
-    driverMode: "existing" as "existing" | "invite",
-    inviteFirstName: "",
-    inviteLastName: "",
-    inviteEmail: "",
-  });
+  const [assignmentForm, setAssignmentForm] = useState(DEFAULT_ASSIGNMENT_FORM);
 
   const vehiclesQuery = trpc.vehicles.listByFleet.useQuery(
     { fleetId: resolvedFleetId ?? 0 },
@@ -317,16 +357,39 @@ function ManagerDashboardFixedContent() {
       .join("");
   }, [user?.name]);
 
-const assignMutation = trpc.vehicles.assignDriver.useMutation({
+  const resetAssignmentDialog = () => {
+    setAssignmentStep("form");
+    setAssignmentWarning(null);
+    setAssignmentForm(DEFAULT_ASSIGNMENT_FORM);
+  };
+
+  const assignMutation = trpc.vehicles.assignDriver.useMutation({
     onSuccess: () => {
       toast.success("Assignment saved successfully.");
+      resetAssignmentDialog();
       setIsAssignDialogOpen(false);
       void vehiclesQuery.refetch();
     }
   });
 
-  const approveAccessRequestMutation = trpc.vehicleAccess.approveAccessRequest.useMutation();
-  const denyAccessRequestMutation = trpc.vehicleAccess.denyAccessRequest.useMutation();
+  const approveAccessRequestMutation = trpc.vehicleAccess.approveAccessRequest.useMutation({
+    onSuccess: async () => {
+      toast.success("Vehicle access approved.");
+      await pendingAccessRequestsQuery.refetch();
+    },
+    onError: error => {
+      toast.error(error.message || "Unable to approve vehicle access request.");
+    },
+  });
+  const denyAccessRequestMutation = trpc.vehicleAccess.denyAccessRequest.useMutation({
+    onSuccess: async () => {
+      toast.success("Vehicle access request denied.");
+      await pendingAccessRequestsQuery.refetch();
+    },
+    onError: error => {
+      toast.error(error.message || "Unable to deny vehicle access request.");
+    },
+  });
   const updateDefectReviewMutation = trpc.defects.updateStatus.useMutation({
     onSuccess: async () => {
       toast.success("Manager review status updated.");
@@ -340,19 +403,27 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
         return;
       }
 
+      const hydratedVehicle = {
+        ...createdVehicle,
+        linkedVehicleSummary:
+          typeof (createdVehicle as { linkedVehicleSummary?: unknown }).linkedVehicleSummary === "string"
+            ? (createdVehicle as { linkedVehicleSummary?: string | null }).linkedVehicleSummary ?? null
+            : null,
+      };
+
       utils.vehicles.listByFleet.setData({ fleetId: resolvedFleetId }, current => {
         const vehicles = current ?? [];
         const existingIndex = vehicles.findIndex(
-          vehicle => vehicle.id === createdVehicle.id
+          vehicle => vehicle.id === hydratedVehicle.id
         );
 
         if (existingIndex >= 0) {
           const next = [...vehicles];
-          next[existingIndex] = createdVehicle;
+          next[existingIndex] = hydratedVehicle;
           return next;
         }
 
-        return [createdVehicle, ...vehicles];
+        return [hydratedVehicle, ...vehicles];
       });
 
       await utils.vehicles.listByFleet.invalidate({ fleetId: resolvedFleetId });
@@ -377,12 +448,12 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
     const explicitVehicleId = parseOptionalVehicleId(vehicleId);
     const defaultVehicleId =
       explicitVehicleId ?? (vehiclesQuery.data?.[0]?.id != null ? String(vehiclesQuery.data[0].id) : null);
-    setAssignmentForm(prev => ({ 
-      ...prev, 
+    setAssignmentForm({
+      ...DEFAULT_ASSIGNMENT_FORM,
       vehicleId: defaultVehicleId,
       driverUserId: parseOptionalDriverId(driverId),
-      driverMode: driverId ? "existing" : prev.driverMode
-    }));
+      driverMode: "existing",
+    });
     setAssignmentStep("form");
     setAssignmentWarning(null);
     setIsAssignDialogOpen(true);
@@ -492,12 +563,12 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
 
   const rows = useMemo(() => {
     const liveVehicles = vehiclesQuery.data ?? [];
-    const mapped = liveVehicles.map(vehicle => mapVehicleRow(vehicle, drivers));
+    const mapped = liveVehicles.map(vehicle => mapVehicleRow(vehicle, liveVehicles, drivers));
 
     const q = search.trim().toLowerCase();
     if (!q) return mapped;
     return mapped.filter(row =>
-      [row.truck, row.detail, row.assignedDriver, row.issue].some(value =>
+      [row.truck, row.detail, row.relationship ?? "", row.assignedDriver, row.issue].some(value =>
         value.toLowerCase().includes(q)
       )
     );
@@ -547,9 +618,6 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
         vehicleId: createdVehicle.id,
       });
 
-      toast.success(`${vehicleLabel} created.`, {
-        description: "Vehicle successfully added to fleet.",
-      });
       resetVehicleDialog();
       return {
         id: createdVehicle.id,
@@ -689,16 +757,14 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
                 }
               }}
             >
-              <DialogTrigger asChild>
-                <Button
-                  className="fleet-primary-btn rounded-full"
-                  disabled={resolvedFleetId == null && isFleetContextLoading}
-                  onClick={openAddVehicleDialog}
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add vehicle
-                </Button>
-              </DialogTrigger>
+              <Button
+                className="fleet-primary-btn rounded-full"
+                disabled={resolvedFleetId == null && isFleetContextLoading}
+                onClick={openAddVehicleDialog}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add vehicle
+              </Button>
               <DialogContent className="max-h-[calc(100svh-1rem)] w-[calc(100vw-1rem)] overflow-hidden rounded-[28px] border-[var(--fleet-outline)] p-0 sm:max-h-[calc(100svh-2rem)] sm:max-w-2xl">
                 <VehicleCaptureFlow
                   fleetId={resolvedFleetId ?? 0}
@@ -1266,6 +1332,11 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
                               <p className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-400">
                                 {row.detail}
                               </p>
+                              {row.relationship ? (
+                                <p className="mt-2 text-xs font-medium text-blue-700">
+                                  {row.relationship}
+                                </p>
+                              ) : null}
                             </div>
                           </div>
                         </td>
@@ -1632,7 +1703,15 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
           </div>
         </section>
 
-        <Dialog open={isAssignDialogOpen} onOpenChange={setIsAssignDialogOpen}>
+        <Dialog
+          open={isAssignDialogOpen}
+          onOpenChange={open => {
+            setIsAssignDialogOpen(open);
+            if (!open) {
+              resetAssignmentDialog();
+            }
+          }}
+        >
           <DialogContent className="rounded-[24px] sm:max-w-2xl">
             {assignmentStep === "form" ? (
               <>

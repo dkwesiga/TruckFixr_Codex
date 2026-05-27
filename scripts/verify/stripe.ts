@@ -2,6 +2,7 @@ import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { ENV } from "../../server/_core/env";
+import { assertDatabaseVerificationAllowed } from "./db-target-guard.ts";
 import { processStripeWebhookEvent } from "../../server/_core/stripeBillingRoutes";
 import {
   createStripeCustomer,
@@ -431,6 +432,11 @@ async function cleanupFixture(pool: Pool, userId: number | null, fleetId: number
 
 async function main() {
   assert(ENV.databaseUrl, "DATABASE_URL is required for Stripe verification.");
+  const databaseTarget = assertDatabaseVerificationAllowed({
+    databaseUrl: ENV.databaseUrl,
+    scriptName: "verify:stripe",
+    risk: "test_writes",
+  });
 
   const readiness = getStripeReadinessReport({ requireLiveVerification: parseMode() === "live" });
   const mode = parseMode();
@@ -457,6 +463,7 @@ async function main() {
         {
           ok: true,
           mode,
+          databaseTarget: databaseTarget.kind,
           readiness: {
             ok: readiness.ok,
             errors: readiness.errors,

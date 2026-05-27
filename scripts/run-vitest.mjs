@@ -109,7 +109,19 @@ if (await shouldSkipForSpawnRestrictions()) {
   console.warn(
     "[truckfixr] SKIP: `pnpm test` requires child-process spawning (esbuild/Vite) but this environment returns EPERM on spawn."
   );
-  console.warn("[truckfixr] Run tests in a non-restricted shell/host, or allow child-process spawning for Node.");
+  console.warn("[truckfixr] Falling back to spawn-safe lite tests (no Vite/Vitest).");
+  console.warn("[truckfixr] Run full tests in a non-restricted shell/host, or allow child-process spawning for Node.");
+
+  try {
+    await import("./run-tests-lite.mjs");
+  } catch (error) {
+    if (process.env.CI || process.env.TFX_REQUIRE_SPAWN === "true") {
+      process.exit(1);
+    }
+    // lite tests failed; still signal failure locally
+    process.exit(1);
+  }
+
   if (process.env.CI || process.env.TFX_REQUIRE_SPAWN === "true") {
     process.exit(1);
   }

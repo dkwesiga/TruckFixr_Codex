@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
+import { assertDatabaseVerificationAllowed } from "./db-target-guard.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -79,6 +80,11 @@ async function expectForbidden(
 async function main() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   assert(databaseUrl, "DATABASE_URL is required for RLS verification.");
+  const target = assertDatabaseVerificationAllowed({
+    databaseUrl,
+    scriptName: "verify:rls",
+    risk: "test_writes",
+  });
 
   const pool = new Pool({
     connectionString: databaseUrl,
@@ -285,6 +291,7 @@ async function main() {
       JSON.stringify(
         {
           ok: true,
+          databaseTarget: target.kind,
           checks: [
             "assigned vehicle visible to authorized driver",
             "cross-fleet vehicle hidden",
