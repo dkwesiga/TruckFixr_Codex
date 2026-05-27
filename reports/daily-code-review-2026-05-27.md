@@ -627,3 +627,36 @@ Task-list updates:
 - `TFX-CR-0031` remains Open because the policy plan is drafted, but storage implementation and cross-company storage behavior proof are still pending explicit approval.
 
 Next approved step in the sequence: commit or explicitly defer the current WIP/report/Supabase file set, then run full browser smoke, demo seed validation, and full Vitest in a capable environment.
+
+---
+
+## 23. Post-Commit Verification And Batch G/J/I Proof Addendum
+
+Completed after the Section 22 addendum:
+
+- Committed the approved WIP/report/Supabase guardrail set in commit `6813d08` (`Add Supabase guardrails and fleet workflow updates`). `.claude/worktrees/practical-bouman-31c9af` was intentionally left unstaged.
+- Ran elevated `pnpm verify:browser-smoke`: Pass as a spawn-capability probe. The packaged script is still a lite placeholder.
+- Ran real in-app browser smoke against the existing local `http://127.0.0.1:3000` server: landing page, `/signup`, and `/auth/email` rendered with zero app console errors; unauthenticated `/driver`, `/manager`, and `/diagnosis` redirected safely to the public landing page.
+- Ran elevated `pnpm validate:demo-seed`: Pass. It verified 3 demo companies, 12 demo users, 18 demo vehicles, trailer links, operational records, demo-only rollback scope, runtime company separation, and driver assignment coverage.
+- Ran elevated full Vitest directly: Pass, 34 test files / 236 tests.
+
+Batch G/J/I follow-up implemented after validation:
+
+- Batch I billing proof: `server/_core/stripeBillingRoutes.ts` now marks active paid Stripe plan syncs as Pilot Access converted to paid by calling `markPilotAccessConvertedToPaid` only when the synced tier has paid access.
+- Batch I billing proof test: `server/subscriptions.billing.test.ts` now verifies company paid checkout preserves company billing ownership and marks Pilot Access converted to paid.
+- Batch J support recovery proof: `server/supportRecovery.test.ts` now verifies non-staff users are denied every mutating support recovery action, not only one representative action.
+- Batch G knowledge-base proof remained local/static today: `server/diagnosticFeedbackPersistence.test.ts` still verifies same-fleet normalized repair outcome retrieval guardrails, but live same-fleet solved-case retrieval remains open.
+
+Post-Batch G/J/I verification:
+
+- `pnpm check`: Pass.
+- Targeted elevated Vitest: Pass, 3 files / 20 tests across diagnostic feedback persistence, support recovery, and subscription billing.
+- Final elevated full Vitest after Batch G/J/I code changes: Pass, 34 files / 237 tests.
+
+Remaining limitations:
+
+- No live/staging Supabase writes were performed.
+- No Supabase Storage buckets, policies, migrations, RLS policies, Edge Functions, secrets, or production data were modified.
+- Full Stripe checkout/webhook replay in staging remains open.
+- Live/staging support recovery audit-write proof remains open.
+- Real same-fleet confirmed-outcome retrieval using live/staging data remains open.

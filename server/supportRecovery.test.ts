@@ -95,6 +95,84 @@ describe("support recovery router", () => {
     expect(moveUserToFleet).not.toHaveBeenCalled();
   });
 
+  it("blocks every mutating recovery action for non-staff users", async () => {
+    const caller = supportRecoveryRouter.createCaller(context("manager@example.com", "manager"));
+    const deniedMutationCases = [
+      [
+        "moveUserToFleet",
+        {
+          userId: 7,
+          toFleetId: 3,
+          role: "driver",
+          reason: "Correct wrong company assignment after verified pilot support request",
+        },
+      ],
+      [
+        "reassignVehicleFleet",
+        {
+          vehicleId: "veh-1",
+          toFleetId: 3,
+          assignedDriverId: 7,
+          reason: "Correct wrong fleet vehicle ownership after support verification",
+        },
+      ],
+      [
+        "deactivateUserFromFleet",
+        {
+          userId: 7,
+          fleetId: 3,
+          reason: "Deactivate driver after support verified wrong company access",
+        },
+      ],
+      [
+        "reactivateUserInFleet",
+        {
+          userId: 7,
+          fleetId: 3,
+          role: "driver",
+          vehicleId: "veh-2",
+          reason: "Reactivate driver after verified company and vehicle assignment",
+        },
+      ],
+      [
+        "setVehicleRecoveryStatus",
+        {
+          vehicleId: "veh-1",
+          status: "retired",
+          assetRecordStatus: "archived",
+          reason: "Archive duplicate vehicle record after support verification",
+        },
+      ],
+      [
+        "resetPilotCode",
+        {
+          codeId: 5,
+          reason: "Reset pilot access after support verified misapplied code",
+        },
+      ],
+      [
+        "overrideFleetBillingStatus",
+        {
+          fleetId: 3,
+          billingStatus: "active",
+          reason: "Restore billing access after support verified Stripe state",
+        },
+      ],
+    ] as const;
+
+    for (const [mutationName, input] of deniedMutationCases) {
+      await expect((caller as any)[mutationName](input)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    }
+
+    expect(moveUserToFleet).not.toHaveBeenCalled();
+    expect(reassignVehicleFleet).not.toHaveBeenCalled();
+    expect(deactivateUserFromFleet).not.toHaveBeenCalled();
+    expect(reactivateUserInFleet).not.toHaveBeenCalled();
+    expect(setVehicleRecoveryStatus).not.toHaveBeenCalled();
+    expect(resetPilotCode).not.toHaveBeenCalled();
+    expect(overrideFleetBillingStatus).not.toHaveBeenCalled();
+  });
+
   it("requires an audit reason before staff can make recovery changes", async () => {
     const caller = supportRecoveryRouter.createCaller(context());
 

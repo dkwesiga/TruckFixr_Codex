@@ -34,9 +34,10 @@ const {
   isStripeConfigured: vi.fn(() => true),
 }));
 
-const { redeemPilotAccessCode, recordPilotMilestone } = vi.hoisted(() => ({
+const { redeemPilotAccessCode, recordPilotMilestone, markPilotAccessConvertedToPaid } = vi.hoisted(() => ({
   redeemPilotAccessCode: vi.fn(),
   recordPilotMilestone: vi.fn(),
+  markPilotAccessConvertedToPaid: vi.fn(),
 }));
 
 vi.mock("./services/subscriptions", () => ({
@@ -89,7 +90,7 @@ vi.mock("./services/pilotAccess", () => ({
   getDefaultFleetIdForUser: vi.fn(async () => 1),
   getPilotAccessOverview: vi.fn(async () => null),
   reconcilePilotAccessForUser: vi.fn(async () => null),
-  markPilotAccessConvertedToPaid: vi.fn(async () => undefined),
+  markPilotAccessConvertedToPaid,
 }));
 
 vi.mock("./services/companyAccess", () => ({
@@ -416,6 +417,10 @@ describe("subscription billing flow", () => {
         aiSessionMonthlyLimit: 75,
       })
     );
+    expect(markPilotAccessConvertedToPaid).toHaveBeenCalledWith({
+      userId: 7,
+      nextTier: "pro",
+    });
   });
 
   it("falls back to the free plan when Stripe deletes the subscription", async () => {

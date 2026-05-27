@@ -13,7 +13,8 @@ import {
 } from "../services/stripeBilling";
 import { getStripeAdminReadinessSummary } from "../services/stripeReadiness";
 import { findUserIdByStripeReference, getSubscriptionState, syncSubscriptionState } from "../services/subscriptions";
-import type { BillingStatus } from "../../shared/billing";
+import { hasPaidAccess, type BillingStatus, type SubscriptionTier } from "../../shared/billing";
+import { markPilotAccessConvertedToPaid } from "../services/pilotAccess";
 
 const processedWebhookEventIds = new Set<string>();
 
@@ -25,6 +26,25 @@ function normalizeStripeBillingStatus(value: unknown): BillingStatus {
   if (value === "incomplete_expired") return "incomplete_expired";
   if (value === "unpaid") return "unpaid";
   return "active";
+}
+
+function getTruckFixrTierForPlan(planKey: string): SubscriptionTier {
+  if (planKey === "fleet_pro" || planKey === "custom_fleet") return "fleet";
+  if (planKey === "free_trial") return "free";
+  return "pro";
+}
+
+async function markPilotConversionAfterPaidSync(input: {
+  userId: number;
+  tier: SubscriptionTier;
+  billingStatus: BillingStatus;
+}) {
+  if (!hasPaidAccess(input.tier, input.billingStatus)) return;
+
+  await markPilotAccessConvertedToPaid({
+    userId: input.userId,
+    nextTier: input.tier,
+  });
 }
 
 export async function processStripeWebhookEvent(
@@ -65,12 +85,14 @@ export async function processStripeWebhookEvent(
         const subscription = await loadSubscription(subscriptionId);
         const truckfixrSnapshot = getTruckFixrBillingSnapshotFromStripeSubscription(subscription);
         if (truckfixrSnapshot.companyId && truckfixrSnapshot.planKey) {
+          const tier = getTruckFixrTierForPlan(truckfixrSnapshot.planKey);
+          const billingStatus = normalizeStripeBillingStatus(truckfixrSnapshot.billingStatus);
           await syncSubscriptionState({
             userId,
             fleetId: truckfixrSnapshot.companyId,
-            tier: truckfixrSnapshot.planKey === "fleet_pro" || truckfixrSnapshot.planKey === "custom_fleet" ? "fleet" : truckfixrSnapshot.planKey === "free_trial" ? "free" : "pro",
+            tier,
             billingCadence: truckfixrSnapshot.billingInterval === "annual" ? "annual" : "monthly",
-            billingStatus: normalizeStripeBillingStatus(truckfixrSnapshot.billingStatus),
+            billingStatus,
             stripeCustomerId: truckfixrSnapshot.stripeCustomerId,
             stripeSubscriptionId: truckfixrSnapshot.stripeSubscriptionId,
             stripePriceId: truckfixrSnapshot.stripePriceId,
@@ -91,6 +113,7 @@ export async function processStripeWebhookEvent(
             isTrial: truckfixrSnapshot.isTrial,
             isPaidPilot: truckfixrSnapshot.isPaidPilot,
           });
+          await markPilotConversionAfterPaidSync({ userId, tier, billingStatus });
         } else {
           const snapshot = getSubscriptionSnapshotFromStripeSubscription(subscription);
           await syncSubscriptionState({
@@ -114,12 +137,14 @@ export async function processStripeWebhookEvent(
         if (userId) {
           const truckfixrSnapshot = getTruckFixrBillingSnapshotFromStripeSubscription(object);
           if (truckfixrSnapshot.companyId && truckfixrSnapshot.planKey) {
+            const tier = getTruckFixrTierForPlan(truckfixrSnapshot.planKey);
+            const billingStatus = normalizeStripeBillingStatus(truckfixrSnapshot.billingStatus);
             await syncSubscriptionState({
               userId,
               fleetId: truckfixrSnapshot.companyId,
-              tier: truckfixrSnapshot.planKey === "fleet_pro" || truckfixrSnapshot.planKey === "custom_fleet" ? "fleet" : truckfixrSnapshot.planKey === "free_trial" ? "free" : "pro",
+              tier,
               billingCadence: truckfixrSnapshot.billingInterval === "annual" ? "annual" : "monthly",
-              billingStatus: normalizeStripeBillingStatus(truckfixrSnapshot.billingStatus),
+              billingStatus,
               stripeCustomerId: truckfixrSnapshot.stripeCustomerId,
               stripeSubscriptionId: truckfixrSnapshot.stripeSubscriptionId,
               stripePriceId: truckfixrSnapshot.stripePriceId,
@@ -140,6 +165,7 @@ export async function processStripeWebhookEvent(
               isTrial: truckfixrSnapshot.isTrial,
               isPaidPilot: truckfixrSnapshot.isPaidPilot,
             });
+            await markPilotConversionAfterPaidSync({ userId, tier, billingStatus });
           } else {
             const snapshot = getSubscriptionSnapshotFromStripeSubscription(object);
             await syncSubscriptionState({
@@ -199,12 +225,14 @@ export async function processStripeWebhookEvent(
             const subscription = await loadSubscription(object.subscription);
             const truckfixrSnapshot = getTruckFixrBillingSnapshotFromStripeSubscription(subscription);
             if (truckfixrSnapshot.companyId && truckfixrSnapshot.planKey) {
+              const tier = getTruckFixrTierForPlan(truckfixrSnapshot.planKey);
+              const billingStatus = event.type === "invoice.payment_failed" ? "past_due" : "active";
               await syncSubscriptionState({
                 userId,
                 fleetId: truckfixrSnapshot.companyId,
-                tier: truckfixrSnapshot.planKey === "fleet_pro" || truckfixrSnapshot.planKey === "custom_fleet" ? "fleet" : truckfixrSnapshot.planKey === "free_trial" ? "free" : "pro",
+                tier,
                 billingCadence: truckfixrSnapshot.billingInterval === "annual" ? "annual" : "monthly",
-                billingStatus: event.type === "invoice.payment_failed" ? "past_due" : "active",
+                billingStatus,
                 stripeCustomerId: object.customer,
                 stripeSubscriptionId: object.subscription ?? current.stripeSubscriptionId,
                 stripePriceId: truckfixrSnapshot.stripePriceId,
@@ -225,6 +253,7 @@ export async function processStripeWebhookEvent(
                 isTrial: truckfixrSnapshot.isTrial,
                 isPaidPilot: truckfixrSnapshot.isPaidPilot,
               });
+              await markPilotConversionAfterPaidSync({ userId, tier, billingStatus });
             } else {
               await syncSubscriptionState({
                 userId,

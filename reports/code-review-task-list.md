@@ -11,9 +11,9 @@ Last updated: 2026-05-27
   - First discovered date: 2026-05-11
   - Last seen date: 2026-05-27
   - Affected files: `server/routers/diagnostics.ts`, `server/services/diagnosisWorkflow.ts`, `server/services/aiQualityReviewLog.ts`, `server/services/tadisCore.ts`, `drizzle/schema.ts`, `repairOutcomes`, `aiQualityReviews`
-  - Status: Open
+  - Status: Open (improved; local static retrieval proof green, live same-fleet proof outstanding)
   - Recommended fix: Batch G - verify repair outcomes are retrieved correctly as similar past cases within the same fleet and confirm manager/mechanic AI-correctness feedback is persisted with reusable structure.
-  - Verification command or check required: Confirm a repair outcome, verify normalized storage, then confirm it is retrieved as a future similar solved case within the same fleet only.
+  - Verification command or check required: Confirm a repair outcome, verify normalized storage, then confirm it is retrieved as a future similar solved case within the same fleet only. Latest evidence: 2026-05-27 targeted `server/diagnosticFeedbackPersistence.test.ts` passed and final full Vitest passed 34 files / 237 tests.
 
 - Task ID: TFX-CR-0004
   - Task: Remove broad runtime schema mutation from `server/db.ts` and reduce it to connection/bootstrap responsibilities.
@@ -68,7 +68,7 @@ Last updated: 2026-05-27
   - Affected files: `scripts/demo/demoSeedWorkflow.ts`, `shared/demoAssets.ts`, `server/services/adminMetrics.ts`, analytics/reporting/learning/billing consumers
   - Status: Open
   - Recommended fix: Add explicit demo filters or first-class demo markers wherever aggregate analytics, billing, customer reporting, or diagnostic learning consumes seeded records.
-  - Verification command or check required: Seed demo data and verify analytics, billing, learning, and customer report queries exclude demo records unless explicitly requested. Latest local run skipped because child-process spawning is blocked.
+  - Verification command or check required: Seed demo data and verify analytics, billing, learning, and customer report queries exclude demo records unless explicitly requested. Latest evidence: 2026-05-27 elevated `pnpm validate:demo-seed` passed, including demo-only rollback scope and runtime company separation checks.
 
 - Task ID: TFX-CR-0020
   - Task: Add and verify audited staff/admin recovery workflows for pilot support issues.
@@ -77,9 +77,9 @@ Last updated: 2026-05-27
   - First discovered date: 2026-05-13
   - Last seen date: 2026-05-27
   - Affected files: `server/routers/supportRecovery.ts`, `server/services/supportRecovery.ts`, `drizzle/schema.ts`, `supportRecoveryActions`, support recovery tests
-  - Status: Open (implemented; live/staging verification outstanding)
-  - Recommended fix: Batch J - verify audit writes work under live/staging DB permissions and add negative role tests for recovery actions.
-  - Verification command or check required: Staff-only permission tests, audit log checks, service-role/policy verification for `supportRecoveryActions`, and negative tests for owners/managers/drivers.
+  - Status: Open (improved; local staff-only negative coverage green, live/staging audit-write verification outstanding)
+  - Recommended fix: Batch J - verify audit writes work under live/staging DB permissions and keep negative role tests for recovery actions.
+  - Verification command or check required: Staff-only permission tests, audit log checks, service-role/policy verification for `supportRecoveryActions`, and negative tests for owners/managers/drivers. Latest evidence: 2026-05-27 targeted `server/supportRecovery.test.ts` passed 7 tests, including denial of every mutating recovery action for non-staff users.
 
 - Task ID: TFX-CR-0021
   - Task: Verify pilot-to-paid billing conversion and subscription enforcement in staging.
@@ -88,9 +88,9 @@ Last updated: 2026-05-27
   - First discovered date: 2026-05-13
   - Last seen date: 2026-05-27
   - Affected files: `server/services/stripeBilling.ts`, `server/_core/stripeBillingRoutes.ts`, `server/services/subscriptions.ts`, `server/subscriptions.billing.test.ts`, billing UI, `subscriptions`, `fleets`
-  - Status: Open
+  - Status: Open (improved; local pilot-to-paid webhook conversion marker covered, staging checkout/webhook replay outstanding)
   - Recommended fix: Batch I - run full checkout, webhook replay, subscription state assertions, route-level plan enforcement tests, and pilot-to-paid data preservation checks.
-  - Verification command or check required: `pnpm verify:stripe` full mode, staging checkout, webhook replay, subscription state enforcement. Latest evidence: 2026-05-27 Stripe-lite passed only.
+  - Verification command or check required: `pnpm verify:stripe` full mode, staging checkout, webhook replay, subscription state enforcement. Latest evidence: 2026-05-27 Stripe-lite passed, targeted `server/subscriptions.billing.test.ts` passed 9 tests, and paid checkout webhook now marks active Pilot Access converted to paid.
 
 - Task ID: TFX-CR-0022
   - Task: Complete real Android/mobile timing verification after the shared frontend bundle split.
@@ -110,9 +110,9 @@ Last updated: 2026-05-27
   - First discovered date: 2026-05-18
   - Last seen date: 2026-05-27
   - Affected files: `scripts/run-vitest.mjs`, `scripts/run-build-client.mjs`, `scripts/run-validate-demo-seed.mjs`, `scripts/verify/browser-smoke-lite.ts`, Vite/Vitest/esbuild/tsx/Playwright toolchain
-  - Status: Open (improved; full Vitest/browser smoke/demo validation still needs capable-environment proof)
+  - Status: Open (improved; capable-environment proof green, packaged browser smoke still a lite probe)
   - Recommended fix: Batch I - keep the CI/non-restricted verification path and replace the placeholder browser smoke probe with real route checks when practical.
-  - Verification command or check required: In a CI-capable environment, full Vitest, real browser smoke, demo validation, audit, and release builds pass end-to-end. Latest evidence: 2026-05-27 fallback `pnpm test` passed 5/5, browser smoke skipped, demo validation skipped, audit passed threshold with no Critical/High advisories.
+  - Verification command or check required: In a CI-capable environment, full Vitest, real browser smoke, demo validation, audit, and release builds pass end-to-end. Latest evidence: 2026-05-27 elevated final full Vitest passed 34 files / 237 tests, elevated `pnpm validate:demo-seed` passed, browser route smoke loaded landing/signup/auth with zero app console errors, and audit passed threshold with no Critical/High advisories.
 
 - Task ID: TFX-CR-0024
   - Task: Review and harden the internal admin metrics/dashboard feature.
@@ -124,28 +124,6 @@ Last updated: 2026-05-27
   - Status: Open
   - Recommended fix: Batch B - ensure admin endpoints remain TruckFixr-internal-only in production, exports are super-admin-only, metrics queries are bounded/optimized, and PII is redacted where appropriate.
   - Verification command or check required: Unit tests for role gates/export permissions, staging non-admin denial checks, and query performance checks for largest filters.
-
-- Task ID: TFX-CR-0027
-  - Task: Finalize, commit, or explicitly defer the linked-vehicle summary and Radix dialog/select stability WIP as one deployable unit.
-  - Category: Deployment hygiene / stability
-  - Severity: High
-  - First discovered date: 2026-05-24
-  - Last seen date: 2026-05-27
-  - Affected files: `server/routers/vehicles.ts`, `client/src/pages/ManagerDashboardFixed.tsx`, `client/src/pages/DriverDashboardSaaS.tsx`, `client/src/pages/DriverInspectionNSC.tsx`, `client/src/pages/DriverDiagnosis.tsx`, `client/src/lib/driverVehicles.ts`, `client/src/lib/driverVehicleContext.ts`, `client/src/components/VehicleCaptureFlow.tsx`, `client/src/components/VehicleAccessRequestDialog.tsx`, `scripts/demo/demoSeedWorkflow.ts`
-  - Status: Implemented in working tree; commit/deploy handoff pending
-  - Recommended fix: Commit, stage for review, or explicitly defer the verified Batch A file set as one deployable unit.
-  - Verification command or check required: `pnpm check`, `pnpm build:client`, `pnpm build:server`, `pnpm validate:demo-seed`, browser shell smoke, and authenticated role walkthrough.
-
-- Task ID: TFX-CR-0028
-  - Task: Ensure daily code review reports are tracked/committed or intentionally ignored.
-  - Category: Repo hygiene / reporting continuity
-  - Severity: Medium
-  - First discovered date: 2026-05-25
-  - Last seen date: 2026-05-27
-  - Affected files: `reports/daily-code-review-*.md`
-  - Status: Open
-  - Recommended fix: Treat daily reports as first-class tracked artifacts; update automation/flow so the previous report is not left untracked or is explicitly ignored with rationale.
-  - Verification command or check required: `git status --short` shows no untracked `reports/daily-code-review-*.md` after each run; prior day report is present in git history or staged for commit.
 
 ## Supabase / Database Tasks
 
@@ -183,7 +161,7 @@ Last updated: 2026-05-27
   - Severity: High
   - Owner, if known: Codex / Batch G follow-up
   - Status: Implemented partially; retrieval proof active
-  - Notes: Real-data same-fleet retrieval proof still outstanding.
+  - Notes: Targeted retrieval guardrail test passed 2026-05-27; real-data same-fleet retrieval proof still outstanding.
 
 - Task ID: TFX-CR-0020
   - Task: Add audited staff/admin recovery workflows for pilot support issues.
@@ -191,7 +169,7 @@ Last updated: 2026-05-27
   - Severity: High
   - Owner, if known: Codex / Batch J follow-up
   - Status: Implemented; live/staging audit-write verification outstanding
-  - Notes: Staff-only routing and tests re-inspected 2026-05-27.
+  - Notes: Staff-only routing and all mutating non-staff denial tests passed 2026-05-27.
 
 ## Resolved Tasks
 
@@ -285,6 +263,18 @@ Last updated: 2026-05-27
   - Resolved date: 2026-05-27
   - Evidence of resolution: `scripts/verify/db-target-guard.ts` now classifies DB targets; `scripts/verify/rls.ts`, `scripts/verify/stripe.ts`, and `scripts/verify/apply-readiness-migrations.ts` use it. `pnpm verify:rls` now exits before writes against the unclassified remote Supabase host with a clear staging/production approval message.
 
+- Task ID: TFX-CR-0027
+  - Task: Finalize, commit, or explicitly defer the linked-vehicle summary and Radix dialog/select stability WIP as one deployable unit.
+  - Category: Deployment hygiene / stability
+  - Resolved date: 2026-05-27
+  - Evidence of resolution: Commit `6813d08` captured the linked-vehicle/dialog WIP with reports and Supabase guardrail files. Post-commit verification included `pnpm check`, elevated full Vitest 34 files / 236 tests, elevated `pnpm validate:demo-seed`, and browser route smoke.
+
+- Task ID: TFX-CR-0028
+  - Task: Ensure daily code review reports are tracked/committed or intentionally ignored.
+  - Category: Repo hygiene / reporting continuity
+  - Resolved date: 2026-05-27
+  - Evidence of resolution: Daily reports for 2026-05-24 through 2026-05-27 were included in commit `6813d08`; only `.claude/worktrees/practical-bouman-31c9af` remained unstaged afterward.
+
 ## Deferred Tasks
 
 - Task ID: TFX-CR-0014
@@ -327,14 +317,14 @@ Last updated: 2026-05-27
 | Order | Workstream / Batch | Current Priority | Why It Matters | Status | Dependencies | Last Updated |
 |---:|---|---|---|---|---|---|
 | 1 | Supabase Storage privacy and file-access proof (`TFX-CR-0031`, Batch K/B) | High | Protects inspection/defect/customer file privacy | Policy plan drafted; implementation/proof open | Storage direction decision | 2026-05-27 |
-| 2 | Verification reliability across environments (`TFX-CR-0023`, Batch I) | Critical | Full tests, real browser smoke, demo validation, and audit evidence are needed before reliable pilot expansion | Improved; still open | CI/spawn-capable and network-capable verification path | 2026-05-27 |
-| 3 | Current linked-vehicle/dialog WIP deploy decision (`TFX-CR-0027`, Batch A) | High | Prevents local/demo/deploy mismatch on active manager/driver vehicle flows | Implemented in worktree; handoff pending | Commit/deploy decision | 2026-05-27 |
+| 2 | Verification reliability across environments (`TFX-CR-0023`, Batch I) | Critical | Full tests, real browser smoke, demo validation, and audit evidence are needed before reliable pilot expansion | Improved; capable-environment proof green, packaged browser smoke still lite | CI/spawn-capable and network-capable verification path | 2026-05-27 |
+| 3 | Current linked-vehicle/dialog WIP deploy decision (`TFX-CR-0027`, Batch A) | High | Prevents local/demo/deploy mismatch on active manager/driver vehicle flows | Resolved by commit `6813d08`; deploy decision remains separate | None | 2026-05-27 |
 | 4 | Real Android/mobile timing proof (`TFX-CR-0022`, Batch E) | High | Confirms bundle split improves field loading behavior | Bundle split implemented; timing outstanding | Browser/mobile run | 2026-05-27 |
 | 5 | Admin metrics authz hardening (`TFX-CR-0024`, Batch B) | High | Protects internal/customer operational data | Open | None | 2026-05-27 |
-| 6 | Support/admin recovery verification (`TFX-CR-0020`, Batch J) | High | Controlled pilots need safe recovery and auditable remediation | Implemented; verification active | Verified staging DB | 2026-05-27 |
-| 7 | Revenue/billing readiness (`TFX-CR-0021`, Batch I) | Medium/High | Enables pilot-to-paid conversion without account-state drift | Stripe-lite green; full replay pending | Stripe staging access | 2026-05-27 |
-| 8 | Knowledge base/history and TADIS learning data (`TFX-CR-0003`, Batch G) | Medium/High | Builds long-term product advantage from confirmed outcomes | Active | Stable verification path | 2026-05-27 |
+| 6 | Support/admin recovery verification (`TFX-CR-0020`, Batch J) | High | Controlled pilots need safe recovery and auditable remediation | Improved; non-staff mutation denial proof green, live audit-write proof pending | Verified staging DB | 2026-05-27 |
+| 7 | Revenue/billing readiness (`TFX-CR-0021`, Batch I) | Medium/High | Enables pilot-to-paid conversion without account-state drift | Improved; pilot-to-paid conversion marker covered, full Stripe replay pending | Stripe staging access | 2026-05-27 |
+| 8 | Knowledge base/history and TADIS learning data (`TFX-CR-0003`, Batch G) | Medium/High | Builds long-term product advantage from confirmed outcomes | Improved; local retrieval guardrail proof green | Stable verification path | 2026-05-27 |
 | 9 | Daily inspection workflow deeper proof (`TFX-CR-0006`, Batch D) | High | Core daily fleet workflow still needs full submit/review proof | Static/code proof; browser blocked | `TFX-CR-0023` | 2026-05-27 |
-| 10 | Demo/test/production separation (`TFX-CR-0018`) | Medium | Prevents seeded records polluting analytics, billing, and learning | Active | Demo validation capable env | 2026-05-27 |
+| 10 | Demo/test/production separation (`TFX-CR-0018`) | Medium | Prevents seeded records polluting analytics, billing, and learning | Improved; demo validation green in capable environment | Analytics/billing/learning consumer-specific filters | 2026-05-27 |
 | 11 | Performance and AI cost control (`TFX-CR-0007`, Batch E/C) | Medium | Controls operating cost and latency | Active | Timing telemetry | 2026-05-27 |
 | 12 | Backup/recovery, maintainability, `server/db.ts` cleanup (`TFX-CR-0004`, Batch I/K) | Medium/High | Reduces migration and restore risk | Open | Canonical migration proof | 2026-05-27 |
