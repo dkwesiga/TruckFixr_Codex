@@ -7,6 +7,7 @@ import { ChevronLeft, ChevronRight, CheckCircle } from "lucide-react";
 import { useAuthContext } from "@/hooks/useAuthContext";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import { trpc } from "@/lib/trpc";
+import { getVehicleCreateErrorPresentation } from "@/lib/actionErrorMessages";
 import { loadCompanyName, saveCompanyName } from "@/lib/companyIdentity";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -153,7 +154,11 @@ function OnboardingContent() {
         setCurrentStep(steps[currentStepIndex + 1]);
       }
     } catch (error: any) {
-      toast.error(error?.message || "TruckFixr could not save this step.");
+      if (currentStep === "truck-setup") {
+        toast.error(getVehicleCreateErrorPresentation(error).toast);
+      } else {
+        toast.error(error?.message || "TruckFixr could not save this step.");
+      }
     } finally {
       setSubmittingStep(null);
     }

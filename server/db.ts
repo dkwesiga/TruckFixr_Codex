@@ -1041,6 +1041,54 @@ async function ensureAuthSchema(pool: Pool) {
       $$;
     `);
 
+    // Widen vehicles.id to varchar(64). Older deployments created this column as
+    // varchar(36) (sized for a bare UUID), but the app generates ids as
+    // `veh_<uuid>` (40 chars), which overflows varchar(36) on INSERT.
+    await pool.query(`
+      DO $$
+      DECLARE
+        vehicle_id_max_length integer;
+      BEGIN
+        SELECT character_maximum_length
+        INTO vehicle_id_max_length
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'vehicles'
+          AND column_name = 'id';
+
+        IF vehicle_id_max_length IS NOT NULL AND vehicle_id_max_length < 64 THEN
+          EXECUTE 'ALTER TABLE "vehicles" ALTER COLUMN "id" TYPE varchar(64)';
+        END IF;
+      END
+      $$;
+    `);
+
+    // Widen vehicleId / linkedPoweredVehicleId FK columns that store `veh_<uuid>` ids
+    // so they can hold the same 40-char values without overflowing.
+    await pool.query(`
+      DO $$
+      DECLARE
+        target record;
+      BEGIN
+        FOR target IN
+          SELECT table_name, column_name, character_maximum_length
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND column_name IN ('vehicleId', 'linkedPoweredVehicleId')
+            AND data_type = 'character varying'
+            AND character_maximum_length IS NOT NULL
+            AND character_maximum_length < 64
+        LOOP
+          EXECUTE format(
+            'ALTER TABLE %I ALTER COLUMN %I TYPE varchar(64)',
+            target.table_name,
+            target.column_name
+          );
+        END LOOP;
+      END
+      $$;
+    `);
+
     await pool.query(`
       DO $$
       DECLARE

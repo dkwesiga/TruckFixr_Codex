@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import VehicleAccessRequestDialog from "@/components/VehicleAccessRequestDialog";
+import { getInspectionErrorPresentation } from "@/lib/actionErrorMessages";
 import { trpc } from "@/lib/trpc";
 import { useAuthContext } from "@/hooks/useAuthContext";
 import { loadLastDriverVehicleContext } from "@/lib/driverVehicleContext";
@@ -154,6 +155,8 @@ function VerifiedInspectionContent() {
   const [signatureConfirmed, setSignatureConfirmed] = useState(false);
   const [notes, setNotes] = useState("");
   const [submitResult, setSubmitResult] = useState<any>(null);
+  const [startErrorMessage, setStartErrorMessage] = useState("");
+  const [submitErrorMessage, setSubmitErrorMessage] = useState("");
   const proofCaptureRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const defectCaptureRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -223,8 +226,11 @@ function VerifiedInspectionContent() {
 
   const startInspection = async () => {
     try {
+      setStartErrorMessage("");
       if (fleetId <= 0) {
-        toast.error("Select or join a company fleet before starting an inspection.");
+        const presentation = getInspectionErrorPresentation("Select or join a company fleet before starting an inspection.");
+        setStartErrorMessage(presentation.inline);
+        toast.error(presentation.toast);
         return;
       }
 
@@ -244,7 +250,9 @@ function VerifiedInspectionContent() {
       setResponses(initialResponses);
       setInspectionSession(session);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not start the inspection.");
+      const presentation = getInspectionErrorPresentation(error);
+      setStartErrorMessage(presentation.inline);
+      toast.error(presentation.toast);
     }
   };
 
@@ -308,34 +316,41 @@ function VerifiedInspectionContent() {
   }, [allItems, driverPrintedName, driverSignature, followUps, openDefectGroups, responses, signatureConfirmed]);
 
   const submitInspection = async () => {
+    setSubmitErrorMessage("");
     if (validationErrors.length > 0) {
       toast.error(validationErrors[0]);
       return;
     }
 
-    const submitLocation = await captureLocation();
-    const result = await submitMutation.mutateAsync({
-      inspectionId: inspectionSession.inspectionId,
-      driverPrintedName: driverPrintedName.trim(),
-      driverSignature: driverSignature.trim(),
-      signatureConfirmed,
-      notes,
-      submitLocation,
-      checklistResponses: allItems.map((item: any) => responses[item.id]),
-      proofPhotos: requestedProofItems.map((proofItem) => ({
-        proofItem,
-        photoUrl: proofPhotos[proofItem]?.photoUrl,
-        skipped: proofPhotos[proofItem]?.skipped ?? !proofPhotos[proofItem]?.photoUrl,
-      })),
-      knownDefectFollowUps: openDefectGroups.map((defectGroup) => ({
-        defectIds: defectGroup.defectIds,
-        status: followUps[defectGroup.defectIds[0]]?.status,
-        note: followUps[defectGroup.defectIds[0]]?.note,
-        photoUrls: followUps[defectGroup.defectIds[0]]?.photoUrls ?? [],
-      })),
-    });
-    setSubmitResult(result);
-    toast.success("Verified inspection submitted");
+    try {
+      const submitLocation = await captureLocation();
+      const result = await submitMutation.mutateAsync({
+        inspectionId: inspectionSession.inspectionId,
+        driverPrintedName: driverPrintedName.trim(),
+        driverSignature: driverSignature.trim(),
+        signatureConfirmed,
+        notes,
+        submitLocation,
+        checklistResponses: allItems.map((item: any) => responses[item.id]),
+        proofPhotos: requestedProofItems.map((proofItem) => ({
+          proofItem,
+          photoUrl: proofPhotos[proofItem]?.photoUrl,
+          skipped: proofPhotos[proofItem]?.skipped ?? !proofPhotos[proofItem]?.photoUrl,
+        })),
+        knownDefectFollowUps: openDefectGroups.map((defectGroup) => ({
+          defectIds: defectGroup.defectIds,
+          status: followUps[defectGroup.defectIds[0]]?.status,
+          note: followUps[defectGroup.defectIds[0]]?.note,
+          photoUrls: followUps[defectGroup.defectIds[0]]?.photoUrls ?? [],
+        })),
+      });
+      setSubmitResult(result);
+      toast.success("Verified inspection submitted");
+    } catch (error) {
+      const presentation = getInspectionErrorPresentation(error);
+      setSubmitErrorMessage(presentation.inline);
+      toast.error(presentation.toast);
+    }
   };
 
   if (!inspectionSession) {
@@ -371,6 +386,12 @@ function VerifiedInspectionContent() {
               >
                 {startMutation.isPending ? "Starting..." : "Start today's inspection"}
               </Button>
+              {startErrorMessage ? (
+                <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                  <AlertTriangle className="mr-2 inline h-4 w-4" />
+                  {startErrorMessage}
+                </div>
+              ) : null}
               <Button
                 type="button"
                 variant="outline"
@@ -690,6 +711,12 @@ function VerifiedInspectionContent() {
                 {validationErrors[0]}
               </div>
             )}
+            {submitErrorMessage ? (
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                <AlertTriangle className="mr-2 inline h-4 w-4" />
+                {submitErrorMessage}
+              </div>
+            ) : null}
             <Button
               className="fleet-primary-btn h-12 w-full text-base"
               disabled={submitMutation.isPending}

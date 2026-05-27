@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import VehicleAccessRequestDialog from "@/components/VehicleAccessRequestDialog";
 import { useAuthContext } from "@/hooks/useAuthContext";
+import { getInspectionErrorPresentation } from "@/lib/actionErrorMessages";
 import {
   clearInspectionDraft,
   enqueueInspectionSubmission,
@@ -166,6 +167,7 @@ function DriverInspectionContent() {
     getQueuedInspectionSubmissions(storage).length
   );
   const [submitMode, setSubmitMode] = useState<"send" | "download">("send");
+  const [submitErrorMessage, setSubmitErrorMessage] = useState("");
   const [photoPickerItemId, setPhotoPickerItemId] = useState<string | null>(null);
   const [odometerRevisionPrompt, setOdometerRevisionPrompt] = useState<{
     enteredOdometer: number;
@@ -601,6 +603,7 @@ function DriverInspectionContent() {
 
   const handleSubmit = async (mode: "send" | "download") => {
     setSubmitMode(mode);
+    setSubmitErrorMessage("");
 
     if (requiresOdometer) {
       const enteredOdometer = Number(odometer);
@@ -649,7 +652,9 @@ function DriverInspectionContent() {
         return;
       }
 
-      toast.error(error instanceof Error ? error.message : "Inspection submission failed");
+      const presentation = getInspectionErrorPresentation(error);
+      setSubmitErrorMessage(presentation.inline);
+      toast.error(presentation.toast);
       return;
     }
 
@@ -1361,6 +1366,12 @@ function DriverInspectionContent() {
                 <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
                   <TriangleAlert className="mt-0.5 h-4 w-4 flex-shrink-0" />
                   Critical defects were reported. The vehicle should not be operated until the defect is reviewed.
+                </div>
+              ) : null}
+              {submitErrorMessage ? (
+                <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+                  <TriangleAlert className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                  {submitErrorMessage}
                 </div>
               ) : null}
             </CardContent>

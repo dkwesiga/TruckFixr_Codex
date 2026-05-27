@@ -91,6 +91,9 @@ export default function UserProfile() {
     lastName: profileNameParts.lastName,
     companyName: formData.company,
   });
+  const hasExistingFleet =
+    typeof subscriptionQuery.data?.activeFleetId === "number" &&
+    subscriptionQuery.data.activeFleetId > 0;
 
   useEffect(() => {
     if (!user) return;
@@ -193,6 +196,18 @@ export default function UserProfile() {
         toast.success("Profile updated! Redirecting to your dashboard...");
         setTimeout(() => {
           window.location.href = "/driver";
+        }, 500);
+        return;
+      }
+
+      if (hasExistingFleet) {
+        toast.success(
+          updatedUser.ownerOperatorMode
+            ? "Owner-operator mode is on. Your existing fleet and vehicles stay exactly as they are."
+            : "Profile updated."
+        );
+        setTimeout(() => {
+          window.location.href = "/manager";
         }, 500);
         return;
       }

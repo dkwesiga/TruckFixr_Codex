@@ -223,6 +223,17 @@ function isVehicleIdTypeMismatch(message: string) {
   );
 }
 
+function isDuplicateVinError(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("vin") &&
+    (normalized.includes("duplicate key") ||
+      normalized.includes("already exists") ||
+      normalized.includes("ix_vehicles_vin") ||
+      normalized.includes("unique"))
+  );
+}
+
 export const vehiclesRouter = router({
   /**
    * Create a new vehicle (truck)
@@ -343,6 +354,13 @@ export const vehiclesRouter = router({
           .returning(vehicleCreateModernReturnShape);
       } catch (error) {
         const message = getVehicleCreateErrorMessage(error);
+        if (isDuplicateVinError(message)) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "This VIN is already on file. Search your fleet before adding it again. If you believe it was added incorrectly, contact support.",
+          });
+        }
         const shouldRetryWithLegacyPayload =
           isLegacyVehicleSchemaError(message) || isVehicleIdTypeMismatch(message);
 
@@ -375,6 +393,13 @@ export const vehiclesRouter = router({
           };
         } catch (legacyError) {
           const legacyMessage = getVehicleCreateErrorMessage(legacyError);
+          if (isDuplicateVinError(legacyMessage)) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message:
+                "This VIN is already on file. Search your fleet before adding it again. If you believe it was added incorrectly, contact support.",
+            });
+          }
           throw new TRPCError({
             code: "BAD_REQUEST",
             message: `Unable to save this vehicle record. ${legacyMessage}`,

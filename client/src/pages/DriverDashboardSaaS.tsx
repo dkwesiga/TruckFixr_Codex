@@ -20,6 +20,7 @@ import {
   loadLastDriverVehicleContext,
   saveLastDriverVehicleContext,
 } from "@/lib/driverVehicleContext";
+import { isOwnerOperatorEnabled } from "@/lib/ownerOperator";
 import { trpc } from "@/lib/trpc";
 import { type DriverVehicleRecord } from "@/lib/driverVehicles";
 import { formatDistanceKm } from "@/lib/vehicleDisplay";
@@ -245,7 +246,11 @@ function DriverDashboardContent() {
     { vehicleId: activeVehicle?.id ?? "", status: "open" },
     { staleTime: 30_000, enabled: Boolean(activeVehicle?.id) }
   );
-  const driverModeEnabled = Boolean(fleetQuery.data?.driverModeEnabled) || isDemoDriverEmail(user?.email);
+  const isOwnerOperator = isOwnerOperatorEnabled(user);
+  const driverModeEnabled =
+    isOwnerOperator ||
+    Boolean(fleetQuery.data?.driverModeEnabled) ||
+    isDemoDriverEmail(user?.email);
   const queuedInspections = getQueuedInspectionSubmissions(storage);
   const linkedInspectionPair = useMemo(
     () => resolveLinkedInspectionPair(vehicles, activeVehicleId),

@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { trpc } from "@/lib/trpc";
 import { getApiUrl, readApiPayload } from "@/lib/api";
+import { getVehicleCreateErrorPresentation } from "@/lib/actionErrorMessages";
 import { saveLastDriverVehicleContext } from "@/lib/driverVehicleContext";
 import { loadDriverVehicles, saveDriverVehicles, type DriverVehicleRecord } from "@/lib/driverVehicles";
 import { getFallbackUnitNumber, getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
@@ -80,6 +81,8 @@ export default function VehicleCaptureFlow({
   const [ocrWarning, setOcrWarning] = useState("");
   const [vinInput, setVinInput] = useState("");
   const [decodeWarning, setDecodeWarning] = useState("");
+  const [saveErrorMessage, setSaveErrorMessage] = useState("");
+  const [vinFieldError, setVinFieldError] = useState("");
   const [saveAttempted, setSaveAttempted] = useState(false);
   const [vehicleForm, setVehicleForm] = useState<VehicleCaptureDraft>({
     label: "",
@@ -289,6 +292,8 @@ export default function VehicleCaptureFlow({
 
   const saveVehicle = async () => {
     setSaveAttempted(true);
+    setSaveErrorMessage("");
+    setVinFieldError("");
 
     if (!(typeof fleetId === "number" && fleetId > 0)) {
       toast.error("TruckFixr is still loading your fleet. Refresh and try again.");
@@ -342,7 +347,12 @@ export default function VehicleCaptureFlow({
       toast.success(`${localVehicle.label} saved and ready to use.`);
       onSaved(localVehicle);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to save vehicle");
+      const presentation = getVehicleCreateErrorPresentation(error);
+      setSaveErrorMessage(presentation.inline);
+      if (presentation.field?.name === "vin") {
+        setVinFieldError(presentation.field.message);
+      }
+      toast.error(presentation.toast);
       setStep("review");
     }
   };
@@ -383,10 +393,14 @@ export default function VehicleCaptureFlow({
                 id="manual-vin"
                 value={vehicleForm.vin}
                 onChange={(event) =>
-                  setVehicleForm((current) => ({
-                    ...current,
-                    vin: normalizeVinInput(event.target.value),
-                  }))
+                  {
+                    setVinFieldError("");
+                    setSaveErrorMessage("");
+                    setVehicleForm((current) => ({
+                      ...current,
+                      vin: normalizeVinInput(event.target.value),
+                    }));
+                  }
                 }
                 placeholder="Enter 17-character VIN"
                 className="mt-2"
@@ -558,18 +572,25 @@ export default function VehicleCaptureFlow({
                 <Input
                   id="review-vin"
                   value={vehicleForm.vin}
-                  onChange={(event) =>
+                onChange={(event) =>
+                  {
+                    setVinFieldError("");
+                    setSaveErrorMessage("");
                     setVehicleForm((current) => ({
                       ...current,
                       vin: normalizeVinInput(event.target.value),
-                    }))
+                    }));
                   }
-                  className={`mt-2 ${saveAttempted && normalizeVinInput(vehicleForm.vin).length !== 17 ? "border-red-400 ring-1 ring-red-400" : ""}`}
-                />
-                {saveAttempted && normalizeVinInput(vehicleForm.vin).length !== 17 ? (
-                  <p className="mt-1 text-xs text-red-600">VIN must be exactly 17 characters.</p>
-                ) : null}
-              </div>
+                }
+                className={`mt-2 ${(saveAttempted && normalizeVinInput(vehicleForm.vin).length !== 17) || vinFieldError ? "border-red-400 ring-1 ring-red-400" : ""}`}
+              />
+              {saveAttempted && normalizeVinInput(vehicleForm.vin).length !== 17 ? (
+                <p className="mt-1 text-xs text-red-600">VIN must be exactly 17 characters.</p>
+              ) : null}
+              {vinFieldError ? (
+                <p className="mt-1 text-xs text-red-600">{vinFieldError}</p>
+              ) : null}
+            </div>
               <div>
                 <Label htmlFor="review-make">Make</Label>
                 <Input id="review-make" value={vehicleForm.make} onChange={(event) => setVehicleForm((current) => ({ ...current, make: event.target.value }))} className="mt-2" />
@@ -635,6 +656,11 @@ export default function VehicleCaptureFlow({
                   vehicleForm,
                   setVehicleForm,
                 })}
+              </div>
+            ) : null}
+            {saveErrorMessage ? (
+              <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                {saveErrorMessage}
               </div>
             ) : null}
             <div className="flex gap-3">
