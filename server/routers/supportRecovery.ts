@@ -4,6 +4,7 @@ import { router, staffProcedure } from "../_core/trpc";
 import {
   getSupportRecoverySnapshot,
   deactivateUserFromFleet,
+  listSupportRecoveryActions,
   moveUserToFleet,
   overrideFleetBillingStatus,
   reactivateUserInFleet,
@@ -35,6 +36,17 @@ export const supportRecoveryRouter = router({
       })
     )
     .query(async ({ input }) => getSupportRecoverySnapshot(input)),
+
+  actions: staffProcedure
+    .input(
+      z.object({
+        targetFleetId: z.number().int().positive().optional(),
+        targetUserId: z.number().int().positive().optional(),
+        targetVehicleId: z.string().trim().min(1).optional(),
+        limit: z.number().int().min(1).max(100).optional(),
+      })
+    )
+    .query(async ({ input }) => listSupportRecoveryActions(input)),
 
   moveUserToFleet: staffProcedure
     .input(

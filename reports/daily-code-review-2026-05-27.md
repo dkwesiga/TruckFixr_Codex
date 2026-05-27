@@ -660,3 +660,28 @@ Remaining limitations:
 - Full Stripe checkout/webhook replay in staging remains open.
 - Live/staging support recovery audit-write proof remains open.
 - Real same-fleet confirmed-outcome retrieval using live/staging data remains open.
+
+---
+
+## 24. Batch K/B Storage Privacy And Batch J Support Recovery Addendum
+
+Completed after Dickson approved **Batch K/B** and requested **Batch J** implementation:
+
+- Added `supabase/migrations/20260527113000_storage_privacy_policies.sql` as a repo-level Supabase Storage privacy migration. It defines private `inspection-evidence`, `diagnostic-evidence`, and `fleet-documents` buckets, company-scoped object path parsing, MIME/size limits, fleet-access policy checks, and owner-limited update/delete policies.
+- Added `server/storagePolicies.test.ts` to statically verify private buckets, tenant-aware policies, operation-aware object access, no public/anon permissive storage policies, and owner restrictions for update/delete.
+- Updated `docs/supabase-storage-privacy-plan.md` with the implementation proof and remaining local/staging behavior-test requirements.
+- Implemented Batch J staff audit review support by adding `listSupportRecoveryActions` and a staff-only `supportRecovery.actions` query with bounded filters for target fleet, user, vehicle, and limit.
+- Expanded `server/supportRecovery.test.ts` to verify staff can query recent support recovery actions and non-staff users cannot read the support recovery audit trail.
+
+Verification after these changes:
+
+- `pnpm check`: Pass.
+- Targeted elevated Vitest for storage policies, support recovery, and RLS policies: Pass, 3 files / 24 tests.
+- Final elevated full Vitest: Pass, 35 files / 243 tests.
+
+Limitations and safety notes:
+
+- Supabase CLI was not installed in this environment, so the storage migration was manually authored and not applied.
+- No live, staging, or local Supabase buckets, storage policies, RLS policies, schema, Edge Functions, secrets, or production data were modified.
+- Supabase Storage privacy remains partially verified until the migration is applied to a verified local/staging project and Company A / Company B behavior tests prove upload/read/list/signed-URL isolation.
+- Support recovery remains partially verified until staff audit writes and audit reads are exercised against a verified staging database.

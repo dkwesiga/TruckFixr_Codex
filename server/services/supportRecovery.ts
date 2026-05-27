@@ -60,6 +60,32 @@ export async function recordSupportRecoveryAction(input: {
   return record;
 }
 
+export async function listSupportRecoveryActions(input: {
+  targetFleetId?: number | null;
+  targetUserId?: number | null;
+  targetVehicleId?: string | null;
+  limit?: number | null;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const filters = [
+    input.targetFleetId ? eq(supportRecoveryActions.targetFleetId, input.targetFleetId) : undefined,
+    input.targetUserId ? eq(supportRecoveryActions.targetUserId, input.targetUserId) : undefined,
+    input.targetVehicleId ? eq(supportRecoveryActions.targetVehicleId, input.targetVehicleId) : undefined,
+  ].filter((filter): filter is NonNullable<typeof filter> => Boolean(filter));
+
+  const limit = Math.min(Math.max(input.limit ?? 25, 1), 100);
+  const baseQuery = db.select().from(supportRecoveryActions);
+
+  return filters.length > 0
+    ? baseQuery
+        .where(and(...filters))
+        .orderBy(desc(supportRecoveryActions.createdAt))
+        .limit(limit)
+    : baseQuery.orderBy(desc(supportRecoveryActions.createdAt)).limit(limit);
+}
+
 export async function getSupportRecoverySnapshot(input: {
   query?: string | null;
   fleetId?: number | null;

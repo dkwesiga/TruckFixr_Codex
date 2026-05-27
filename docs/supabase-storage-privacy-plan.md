@@ -87,11 +87,26 @@ Before enabling real fleet photo storage:
 8. Confirm deletion/deactivation does not orphan files silently.
 9. Confirm logs do not print signed URLs, customer details, VINs, repair notes, or file contents.
 
-## Deferred Until Implementation Approval
+## Repo-Level Implementation Proof
 
-- Supabase bucket creation.
-- Storage policy SQL.
+Batch K/B repo-level storage privacy proof was added on 2026-05-27 after approval.
+
+- Added `supabase/migrations/20260527113000_storage_privacy_policies.sql` as a reviewable Supabase Storage policy migration. It was not applied to local, staging, or production Supabase by Codex.
+- The migration keeps `inspection-evidence`, `diagnostic-evidence`, and `fleet-documents` private, scopes object paths by `company-{fleetId}`, applies MIME/size limits, and requires fleet access checks through app-user identity helpers.
+- Added `server/storagePolicies.test.ts` to statically verify private buckets, tenant-aware storage paths, non-public policies, owner-restricted update/delete policy text, and operation-aware object access.
+- Verification passed on 2026-05-27 with targeted storage/RLS/support tests and the full Vitest suite.
+- Supabase CLI was not available in this environment, so the migration was manually authored and must be applied first to a disposable local or staging Supabase project before production use is considered.
+
+## Remaining Before Real Fleet Photo Storage
+
+- Apply the migration only to a verified local or staging Supabase project.
+- Run Company A / Company B behavior tests for upload, read, list, signed URL, update, and delete denial.
+- Connect app upload/download flows to private Supabase Storage and metadata rows if the product direction is to move beyond current URL/data-URL handling.
+- Add orphan-file detection and retention cleanup after the private storage model is validated.
+
+## Deferred Until Additional Approval
+
+- Applying Supabase bucket creation or storage policy SQL to local, staging, or production.
 - Database schema changes for richer file metadata.
-- Migration files.
 - Edge Function or server upload-route changes.
 - Production storage tests.

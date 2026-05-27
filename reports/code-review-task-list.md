@@ -77,9 +77,9 @@ Last updated: 2026-05-27
   - First discovered date: 2026-05-13
   - Last seen date: 2026-05-27
   - Affected files: `server/routers/supportRecovery.ts`, `server/services/supportRecovery.ts`, `drizzle/schema.ts`, `supportRecoveryActions`, support recovery tests
-  - Status: Open (improved; local staff-only negative coverage green, live/staging audit-write verification outstanding)
-  - Recommended fix: Batch J - verify audit writes work under live/staging DB permissions and keep negative role tests for recovery actions.
-  - Verification command or check required: Staff-only permission tests, audit log checks, service-role/policy verification for `supportRecoveryActions`, and negative tests for owners/managers/drivers. Latest evidence: 2026-05-27 targeted `server/supportRecovery.test.ts` passed 7 tests, including denial of every mutating recovery action for non-staff users.
+  - Status: Open (improved; staff-only audit-list query and non-staff denial proof green, live/staging audit-write verification outstanding)
+  - Recommended fix: Batch J - verify audit writes work under live/staging DB permissions, keep negative role tests for recovery actions, and exercise staff-only audit review in staging.
+  - Verification command or check required: Staff-only permission tests, audit log checks, service-role/policy verification for `supportRecoveryActions`, and negative tests for owners/managers/drivers. Latest evidence: 2026-05-27 `server/supportRecovery.test.ts` passed 9 tests, targeted storage/RLS/support Vitest passed 3 files / 24 tests, and final full Vitest passed 35 files / 243 tests.
 
 - Task ID: TFX-CR-0021
   - Task: Verify pilot-to-paid billing conversion and subscription enforcement in staging.
@@ -133,10 +133,10 @@ Last updated: 2026-05-27
   - Severity: High
   - First discovered date: 2026-05-27
   - Last seen date: 2026-05-27
-  - Affected files/tables/policies/buckets/functions: `client/src/pages/DriverInspectionNSC.tsx`, `client/src/pages/VerifiedInspection.tsx`, `drizzle/0007_verified_inspections.sql`, `inspectionPhotos`, `defects.photoUrls`, `server/storage.ts`, Supabase storage buckets/policies if adopted
-  - Status: Open (policy plan drafted; implementation/proof pending)
-  - Recommended fix: Use `docs/supabase-storage-privacy-plan.md` to decide whether pilot photos stay as limited data URLs or move to private Supabase Storage. If Supabase Storage is used, add private buckets, tenant-aware path/metadata rules, MIME/size limits, signed URL rules, orphan cleanup, and cross-company RLS/storage tests.
-  - Verification command or check required: In local/staging, upload files as Company A driver/manager and prove Company B users cannot read them; verify file metadata links company, vehicle, inspection, defect, user, and repair records.
+  - Affected files/tables/policies/buckets/functions: `client/src/pages/DriverInspectionNSC.tsx`, `client/src/pages/VerifiedInspection.tsx`, `drizzle/0007_verified_inspections.sql`, `inspectionPhotos`, `defects.photoUrls`, `server/storage.ts`, `docs/supabase-storage-privacy-plan.md`, `server/storagePolicies.test.ts`, `supabase/migrations/20260527113000_storage_privacy_policies.sql`
+  - Status: Open (repo-level migration and static policy proof implemented; live/local/staging storage behavior proof pending)
+  - Recommended fix: Apply `supabase/migrations/20260527113000_storage_privacy_policies.sql` only to a verified local/staging Supabase project, then decide whether pilot photos stay as limited data URLs or move to private Supabase Storage. Before real fleet use, prove private buckets, tenant-aware path/metadata rules, MIME/size limits, signed URL rules, orphan cleanup, and cross-company storage denial.
+  - Verification command or check required: In local/staging, upload files as Company A driver/manager and prove Company B users cannot read/list/signed-url them; verify file metadata links company, vehicle, inspection, defect, user, and repair records. Latest evidence: 2026-05-27 targeted storage/RLS/support Vitest passed 3 files / 24 tests and final full Vitest passed 35 files / 243 tests. Supabase CLI was unavailable, so no live/local/staging storage policy application was performed.
   - Related batch: Batch K
   - Cross-reference batch if applicable: Batch B, Batch F
 
@@ -169,7 +169,7 @@ Last updated: 2026-05-27
   - Severity: High
   - Owner, if known: Codex / Batch J follow-up
   - Status: Implemented; live/staging audit-write verification outstanding
-  - Notes: Staff-only routing and all mutating non-staff denial tests passed 2026-05-27.
+  - Notes: Staff-only routing, staff-only audit action query, bounded audit filters, and all mutating/query non-staff denial tests passed 2026-05-27.
 
 ## Resolved Tasks
 
@@ -302,8 +302,8 @@ Last updated: 2026-05-27
   - Task: Verify or implement Supabase Storage privacy for inspection/defect photos and uploaded evidence.
   - Category: Supabase database, RLS, storage & data safety
   - Severity: High
-  - Affected files: inspection photo UI, `inspectionPhotos`, `defects.photoUrls`, `server/storage.ts`, Supabase bucket/policy files if added
-  - Recommended next action: Approve Batch K + Batch B storage privacy plan.
+  - Affected files: inspection photo UI, `inspectionPhotos`, `defects.photoUrls`, `server/storage.ts`, `server/storagePolicies.test.ts`, `supabase/migrations/20260527113000_storage_privacy_policies.sql`
+  - Recommended next action: Apply and behavior-test the private storage policy migration only in verified local/staging Supabase before any production storage change.
 
 - Task ID: TFX-CR-0032
   - Task: Resolve Supabase schema source-of-truth and generated database type drift.
@@ -316,12 +316,12 @@ Last updated: 2026-05-27
 
 | Order | Workstream / Batch | Current Priority | Why It Matters | Status | Dependencies | Last Updated |
 |---:|---|---|---|---|---|---|
-| 1 | Supabase Storage privacy and file-access proof (`TFX-CR-0031`, Batch K/B) | High | Protects inspection/defect/customer file privacy | Policy plan drafted; implementation/proof open | Storage direction decision | 2026-05-27 |
+| 1 | Supabase Storage privacy and file-access proof (`TFX-CR-0031`, Batch K/B) | High | Protects inspection/defect/customer file privacy | Repo-level migration and static policy proof implemented; live/local/staging behavior proof pending | Verified local/staging Supabase target and storage direction decision | 2026-05-27 |
 | 2 | Verification reliability across environments (`TFX-CR-0023`, Batch I) | Critical | Full tests, real browser smoke, demo validation, and audit evidence are needed before reliable pilot expansion | Improved; capable-environment proof green, packaged browser smoke still lite | CI/spawn-capable and network-capable verification path | 2026-05-27 |
 | 3 | Current linked-vehicle/dialog WIP deploy decision (`TFX-CR-0027`, Batch A) | High | Prevents local/demo/deploy mismatch on active manager/driver vehicle flows | Resolved by commit `6813d08`; deploy decision remains separate | None | 2026-05-27 |
 | 4 | Real Android/mobile timing proof (`TFX-CR-0022`, Batch E) | High | Confirms bundle split improves field loading behavior | Bundle split implemented; timing outstanding | Browser/mobile run | 2026-05-27 |
 | 5 | Admin metrics authz hardening (`TFX-CR-0024`, Batch B) | High | Protects internal/customer operational data | Open | None | 2026-05-27 |
-| 6 | Support/admin recovery verification (`TFX-CR-0020`, Batch J) | High | Controlled pilots need safe recovery and auditable remediation | Improved; non-staff mutation denial proof green, live audit-write proof pending | Verified staging DB | 2026-05-27 |
+| 6 | Support/admin recovery verification (`TFX-CR-0020`, Batch J) | High | Controlled pilots need safe recovery and auditable remediation | Improved; staff-only audit-list query and non-staff denial proof green, live audit-write proof pending | Verified staging DB | 2026-05-27 |
 | 7 | Revenue/billing readiness (`TFX-CR-0021`, Batch I) | Medium/High | Enables pilot-to-paid conversion without account-state drift | Improved; pilot-to-paid conversion marker covered, full Stripe replay pending | Stripe staging access | 2026-05-27 |
 | 8 | Knowledge base/history and TADIS learning data (`TFX-CR-0003`, Batch G) | Medium/High | Builds long-term product advantage from confirmed outcomes | Improved; local retrieval guardrail proof green | Stable verification path | 2026-05-27 |
 | 9 | Daily inspection workflow deeper proof (`TFX-CR-0006`, Batch D) | High | Core daily fleet workflow still needs full submit/review proof | Static/code proof; browser blocked | `TFX-CR-0023` | 2026-05-27 |

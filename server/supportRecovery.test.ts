@@ -4,6 +4,7 @@ import { ENV } from "./_core/env";
 
 const {
   getSupportRecoverySnapshot,
+  listSupportRecoveryActions,
   deactivateUserFromFleet,
   moveUserToFleet,
   reassignVehicleFleet,
@@ -13,6 +14,7 @@ const {
   setVehicleRecoveryStatus,
 } = vi.hoisted(() => ({
   getSupportRecoverySnapshot: vi.fn(),
+  listSupportRecoveryActions: vi.fn(),
   deactivateUserFromFleet: vi.fn(),
   moveUserToFleet: vi.fn(),
   reassignVehicleFleet: vi.fn(),
@@ -24,6 +26,7 @@ const {
 
 vi.mock("./services/supportRecovery", () => ({
   getSupportRecoverySnapshot,
+  listSupportRecoveryActions,
   deactivateUserFromFleet,
   moveUserToFleet,
   reassignVehicleFleet,
@@ -71,6 +74,18 @@ describe("support recovery router", () => {
     vi.clearAllMocks();
     ENV.adminEmails = "staff@truckfixr.com";
     getSupportRecoverySnapshot.mockResolvedValue({ fleets: [], users: [], vehicles: [] });
+    listSupportRecoveryActions.mockResolvedValue([
+      {
+        id: 1,
+        actionType: "move_user_to_fleet",
+        staffUserId: 99,
+        targetFleetId: 3,
+        targetUserId: 7,
+        targetVehicleId: null,
+        reason: "Corrected wrong company assignment",
+        createdAt: new Date("2026-05-27T10:00:00.000Z"),
+      },
+    ]);
     moveUserToFleet.mockResolvedValue({ targetMembership: { id: 1 } });
     deactivateUserFromFleet.mockResolvedValue({ deactivated: true, revokedAssignments: 2 });
     reassignVehicleFleet.mockResolvedValue({ vehicle: { id: "veh-1" }, assignment: null });
@@ -184,6 +199,32 @@ describe("support recovery router", () => {
     ).rejects.toMatchObject({ code: "BAD_REQUEST" });
 
     expect(resetPilotCode).not.toHaveBeenCalled();
+  });
+
+  it("lets staff query recent support recovery audit actions with bounded filters", async () => {
+    const caller = supportRecoveryRouter.createCaller(context());
+
+    const result = await caller.actions({
+      targetFleetId: 3,
+      targetUserId: 7,
+      limit: 10,
+    });
+
+    expect(listSupportRecoveryActions).toHaveBeenCalledWith({
+      targetFleetId: 3,
+      targetUserId: 7,
+      limit: 10,
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0].actionType).toBe("move_user_to_fleet");
+  });
+
+  it("blocks non-staff users from reading support recovery audit actions", async () => {
+    const caller = supportRecoveryRouter.createCaller(context("manager@example.com", "manager"));
+
+    await expect(caller.actions({ targetFleetId: 3 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    expect(listSupportRecoveryActions).not.toHaveBeenCalled();
   });
 
   it("passes staff identity and reason into audited recovery services", async () => {
