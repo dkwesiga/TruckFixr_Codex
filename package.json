@@ -22,6 +22,7 @@
     "seed:demo:rollback": "tsx scripts/seed-demo-data-rollback.ts",
     "validate:demo-seed": "node scripts/run-validate-demo-seed.mjs",
     "demo:seed": "tsx scripts/seed-demo-data.ts",
+    "admin:set-internal-role": "tsx scripts/admin/set-internal-admin-role.ts",
     "generate:pilot-codes": "tsx scripts/generate-pilot-codes.ts",
     "screenshots:local": "cross-env DEMO_CAPTURE_ENV=local tsx scripts/demo/capture-assets.ts --screenshots",
     "screenshots:staging": "cross-env DEMO_CAPTURE_ENV=staging tsx scripts/demo/capture-assets.ts --screenshots",

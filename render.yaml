@@ -315,6 +315,6 @@ services:
       - key: STRIPE_PRICE_FLEET_MONTHLY
         sync: false
       - key: ADMIN_EMAILS
-        sync: false
+        value: dkwesiga@truckfixr.com
       - key: SALES_NOTIFICATION_EMAIL
         sync: false
