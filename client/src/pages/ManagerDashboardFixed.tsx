@@ -79,10 +79,16 @@ type DashboardRow = {
   detail: string;
   relationship: string | null;
   assignedDriver: string;
+  assignedDriverId: number | null;
+  assignedDriverDisplayName: string | null;
   status: "Operational" | "In Shop" | "Dispatch Hold";
   inspection: "Complete" | "Due Today" | "Overdue";
   priority: "Low" | "High" | "Critical";
   issue: string;
+  assetRecordStatus: string | null;
+  isOwnerOperatorSelfAssigned: boolean;
+  ownerOperatorPreviousDriverId: number | null;
+  ownerOperatorPreviousDriverName: string | null;
 };
 
 const DEFAULT_ASSIGNMENT_FORM = {
@@ -228,7 +234,12 @@ function buildVehicleRelationship(vehicle: any, fleetVehicles: any[] = []) {
     : `Linked trailers ${linkedTrailerLabels.join(", ")}`;
 }
 
-function mapVehicleRow(vehicle: any, fleetVehicles: any[] = [], drivers: any[] = []): DashboardRow {
+function mapVehicleRow(
+  vehicle: any,
+  fleetVehicles: any[] = [],
+  drivers: any[] = [],
+  currentUserId?: number | null
+): DashboardRow {
   const priority =
     vehicle.complianceStatus === "red"
       ? "Critical"
@@ -237,6 +248,16 @@ function mapVehicleRow(vehicle: any, fleetVehicles: any[] = [], drivers: any[] =
         : "Low";
 
   const driver = drivers.find(d => d.id === vehicle.assignedDriverId);
+  const ownerOperatorSelfAssignment = vehicle.ownerOperatorSelfAssignment ?? null;
+  const isOwnerOperatorSelfAssigned =
+    ownerOperatorSelfAssignment?.ownerOperatorUserId != null &&
+    currentUserId != null &&
+    ownerOperatorSelfAssignment.ownerOperatorUserId === currentUserId;
+  const assignedDriverDisplayName =
+    vehicle.assignedDriverDisplayName ??
+    driver?.name ??
+    driver?.email ??
+    (isOwnerOperatorSelfAssigned ? "Assigned to you" : null);
 
   return {
     id: vehicle.id,
@@ -246,7 +267,10 @@ function mapVehicleRow(vehicle: any, fleetVehicles: any[] = [], drivers: any[] =
       vehicleId: vehicle.id,
     }),
     relationship: buildVehicleRelationship(vehicle, fleetVehicles),
-    assignedDriver: driver?.name || "Unassigned",
+    assignedDriver: assignedDriverDisplayName || "Unassigned",
+    assignedDriverId:
+      typeof vehicle.assignedDriverId === "number" ? vehicle.assignedDriverId : null,
+    assignedDriverDisplayName,
     detail:
       [vehicle.make, vehicle.model, vehicle.engineMake, vehicle.licensePlate]
         .filter(Boolean)
@@ -270,6 +294,12 @@ function mapVehicleRow(vehicle: any, fleetVehicles: any[] = [], drivers: any[] =
         : vehicle.complianceStatus === "yellow"
           ? "Inspection attention needed"
           : "No active defects",
+    assetRecordStatus: vehicle.assetRecordStatus ?? null,
+    isOwnerOperatorSelfAssigned,
+    ownerOperatorPreviousDriverId:
+      ownerOperatorSelfAssignment?.previousDriverUserId ?? null,
+    ownerOperatorPreviousDriverName:
+      ownerOperatorSelfAssignment?.previousDriverName ?? null,
   };
 }
 
@@ -307,6 +337,11 @@ function ManagerDashboardFixedContent() {
     title: string;
     description: string;
     confirmLabel: string;
+  } | null>(null);
+  const [selfAssignmentWarning, setSelfAssignmentWarning] = useState<{
+    vehicleId: string;
+    vehicleLabel: string;
+    currentDriverName: string | null;
   } | null>(null);
   const [assignmentForm, setAssignmentForm] = useState(DEFAULT_ASSIGNMENT_FORM);
 
@@ -379,6 +414,52 @@ function ManagerDashboardFixedContent() {
       setIsAssignDialogOpen(false);
       void vehiclesQuery.refetch();
     }
+  });
+  const assignToSelfMutation = trpc.vehicles.assignOwnerOperatorToSelf.useMutation({
+    onSuccess: async (result) => {
+      setSelfAssignmentWarning(null);
+      await utils.vehicles.listByFleet.invalidate({ fleetId: resolvedFleetId ?? 0 });
+      await vehiclesQuery.refetch();
+      toast.success(
+        result.previousDriverName
+          ? `Assigned to you. ${result.previousDriverName} remains preserved for later restore.`
+          : "Assigned to you."
+      );
+    },
+    onError: (error) => {
+      const message = error.message || "TruckFixr could not assign this vehicle to you.";
+      if (message.startsWith("OWNER_OPERATOR_CONFIRM_TAKEOVER:")) {
+        const currentDriverName = message.split("OWNER_OPERATOR_CONFIRM_TAKEOVER:")[1]?.trim() || null;
+        if (selfAssignmentWarning) {
+          setSelfAssignmentWarning({
+            ...selfAssignmentWarning,
+            currentDriverName,
+          });
+          return;
+        }
+        toast.error(
+          currentDriverName
+            ? `This vehicle is currently assigned to ${currentDriverName}. Please try again to confirm takeover.`
+            : "This vehicle is currently assigned. Please try again to confirm takeover."
+        );
+        return;
+      }
+      toast.error(message);
+    },
+  });
+  const releaseSelfAssignmentMutation = trpc.vehicles.releaseOwnerOperatorSelfAssignment.useMutation({
+    onSuccess: async (result) => {
+      await utils.vehicles.listByFleet.invalidate({ fleetId: resolvedFleetId ?? 0 });
+      await vehiclesQuery.refetch();
+      toast.success(
+        result.restoredDriverName
+          ? `Self-assignment released. ${result.restoredDriverName} was restored.`
+          : "Self-assignment released."
+      );
+    },
+    onError: (error) => {
+      toast.error(error.message || "TruckFixr could not release this self-assignment.");
+    },
   });
 
   const approveAccessRequestMutation = trpc.vehicleAccess.approveAccessRequest.useMutation({
@@ -549,7 +630,9 @@ function ManagerDashboardFixedContent() {
 
   const rows = useMemo(() => {
     const liveVehicles = vehiclesQuery.data ?? [];
-    const mapped = liveVehicles.map(vehicle => mapVehicleRow(vehicle, liveVehicles, drivers));
+    const mapped = liveVehicles.map(vehicle =>
+      mapVehicleRow(vehicle, liveVehicles, drivers, user?.id ?? null)
+    );
 
     const q = search.trim().toLowerCase();
     if (!q) return mapped;
@@ -578,6 +661,59 @@ function ManagerDashboardFixedContent() {
     document.getElementById(sectionId)?.scrollIntoView({
       behavior: "smooth",
       block: "start",
+    });
+  };
+
+  const isOperationalOwnerOperatorAsset = (row: DashboardRow) =>
+    isOwnerOperator &&
+    row.status === "Operational" &&
+    row.assetRecordStatus === "active";
+
+  const handleAssignToSelf = async (
+    row: DashboardRow,
+    confirmed: boolean = false
+  ) => {
+    if (resolvedFleetId == null) {
+      toast.error("TruckFixr is still loading your fleet. Please try again.");
+      return;
+    }
+
+    if (!isOperationalOwnerOperatorAsset(row)) {
+      toast.error("Only operational active vehicles can be assigned to you.");
+      return;
+    }
+
+    if (
+      !confirmed &&
+      row.assignedDriverId != null &&
+      user?.id != null &&
+      row.assignedDriverId !== user.id
+    ) {
+      setSelfAssignmentWarning({
+        vehicleId: String(row.id),
+        vehicleLabel: row.truck,
+        currentDriverName:
+          row.assignedDriverDisplayName || row.assignedDriver || null,
+      });
+      return;
+    }
+
+    await assignToSelfMutation.mutateAsync({
+      fleetId: resolvedFleetId,
+      vehicleId: String(row.id),
+      confirmTakeover: confirmed || undefined,
+    });
+  };
+
+  const handleReleaseSelfAssignment = async (row: DashboardRow) => {
+    if (resolvedFleetId == null) {
+      toast.error("TruckFixr is still loading your fleet. Please try again.");
+      return;
+    }
+
+    await releaseSelfAssignmentMutation.mutateAsync({
+      fleetId: resolvedFleetId,
+      vehicleId: String(row.id),
     });
   };
 
@@ -1436,7 +1572,115 @@ function ManagerDashboardFixedContent() {
               </div>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="space-y-4 px-4 pb-4 lg:hidden">
+              {rows.length === 0 ? (
+                <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-600">
+                  {vehiclesQuery.isLoading
+                    ? "Loading your fleet vehicles..."
+                    : search.trim()
+                      ? "No vehicles match that search."
+                      : "No vehicles in this fleet yet. Add a vehicle to start assigning drivers and tracking fleet health."}
+                </div>
+              ) : (
+                rows.map((row) => (
+                  <div
+                    key={row.id}
+                    className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-slate-950">{row.truck}</p>
+                        <p className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-400">
+                          {row.detail}
+                        </p>
+                        {row.relationship ? (
+                          <p className="mt-2 text-xs font-medium text-blue-700">
+                            {row.relationship}
+                          </p>
+                        ) : null}
+                      </div>
+                      <span
+                        className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${badgeClasses(row.status)}`}
+                      >
+                        {row.status}
+                      </span>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-2xl bg-slate-50 px-3 py-3">
+                        <p className="text-xs uppercase tracking-[0.14em] text-slate-500">
+                          Assigned driver
+                        </p>
+                        <p className="mt-1 text-sm font-semibold text-slate-950">
+                          {row.assignedDriver}
+                        </p>
+                      </div>
+                      <div className="rounded-2xl bg-slate-50 px-3 py-3">
+                        <p className="text-xs uppercase tracking-[0.14em] text-slate-500">
+                          Inspection
+                        </p>
+                        <p className="mt-1 text-sm font-semibold text-slate-950">
+                          {row.inspection}
+                        </p>
+                      </div>
+                    </div>
+
+                    {row.isOwnerOperatorSelfAssigned ? (
+                      <p className="mt-3 text-sm text-blue-700">
+                        Assigned to you
+                        {row.ownerOperatorPreviousDriverName
+                          ? `, will restore ${row.ownerOperatorPreviousDriverName} when released.`
+                          : "."}
+                      </p>
+                    ) : null}
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="rounded-full text-blue-700 hover:bg-blue-50"
+                        onClick={() => navigate(`/truck/${row.id}`)}
+                      >
+                        View details
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-full"
+                        onClick={() => handleOpenAssign(String(row.id))}
+                      >
+                        Assign
+                      </Button>
+                      {isOperationalOwnerOperatorAsset(row) ? (
+                        row.isOwnerOperatorSelfAssigned ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="rounded-full border-blue-200 text-blue-700 hover:bg-blue-50"
+                            disabled={releaseSelfAssignmentMutation.isPending}
+                            onClick={() => void handleReleaseSelfAssignment(row)}
+                          >
+                            Release self-assignment
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            className="rounded-full bg-slate-900 text-white hover:bg-slate-800"
+                            disabled={assignToSelfMutation.isPending}
+                            onClick={() => void handleAssignToSelf(row)}
+                          >
+                            Assign to me
+                          </Button>
+                        )
+                      ) : null}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="hidden overflow-x-auto lg:block">
               <table className="min-w-full text-left text-sm">
                 <thead className="bg-slate-50/80 text-slate-500">
                   <tr>
@@ -1538,6 +1782,28 @@ function ManagerDashboardFixedContent() {
                             >
                               Assign
                             </Button>
+                            {isOperationalOwnerOperatorAsset(row) ? (
+                              row.isOwnerOperatorSelfAssigned ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="rounded-full border-blue-200 text-blue-700 hover:bg-blue-50"
+                                  disabled={releaseSelfAssignmentMutation.isPending}
+                                  onClick={() => void handleReleaseSelfAssignment(row)}
+                                >
+                                  Release self-assignment
+                                </Button>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  className="rounded-full bg-slate-900 text-white hover:bg-slate-800"
+                                  disabled={assignToSelfMutation.isPending}
+                                  onClick={() => void handleAssignToSelf(row)}
+                                >
+                                  Assign to me
+                                </Button>
+                              )
+                            ) : null}
                           </div>
                         </td>
                       </tr>
@@ -1854,6 +2120,52 @@ function ManagerDashboardFixedContent() {
             </Card>
           </div>
         </section>
+
+        <Dialog
+          open={selfAssignmentWarning != null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setSelfAssignmentWarning(null);
+            }
+          }}
+        >
+          <DialogContent className="rounded-[24px] sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Take over assignment?</DialogTitle>
+              <DialogDescription>
+                {selfAssignmentWarning?.currentDriverName
+                  ? `${selfAssignmentWarning.vehicleLabel} is currently assigned to ${selfAssignmentWarning.currentDriverName}. Assign it to yourself instead?`
+                  : "This vehicle is currently assigned. Assign it to yourself instead?"}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setSelfAssignmentWarning(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="bg-slate-900 text-white hover:bg-slate-800"
+                disabled={assignToSelfMutation.isPending}
+                onClick={() => {
+                  if (!selfAssignmentWarning) return;
+                  const row = rows.find(
+                    (candidate) => String(candidate.id) === selfAssignmentWarning.vehicleId
+                  );
+                  if (!row) {
+                    setSelfAssignmentWarning(null);
+                    toast.error("TruckFixr could not find that vehicle row anymore.");
+                    return;
+                  }
+                  void handleAssignToSelf(row, true);
+                }}
+              >
+                Assign to me
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Dialog
           open={isAssignDialogOpen}

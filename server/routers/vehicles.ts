@@ -2,8 +2,8 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { randomUUID } from "crypto";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, eq, gt, or, sql } from "drizzle-orm";
-import { driverInvitations, vehicleAssignments, vehicles } from "../../drizzle/schema";
+import { and, eq, gt, inArray, or, sql } from "drizzle-orm";
+import { driverInvitations, users, vehicleAssignments, vehicles } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { vehicleInspectionConfigSchema } from "../../shared/inspection";
 import {
@@ -19,8 +19,13 @@ import {
   verifyDriverBelongsToFleet,
 } from "../services/vehicleAccess";
 import { getUserPrimaryFleetId } from "../services/companyAccess";
-import { assignDriver } from "../../vehicle.controller";
+import {
+  assignDriver,
+  assignOwnerOperatorToSelf,
+  releaseOwnerOperatorSelfAssignment,
+} from "../../vehicle.controller";
 import { VEHICLE_TYPE_VALUES, type VehicleTypeValue } from "../../shared/vehicleTypes";
+import { parseOwnerOperatorSelfAssignmentNote } from "../services/ownerOperator";
 
 function normalizeAssetType(
   assetType: "tractor" | "straight_truck" | "trailer" | "truck" | "bus" | "van" | "reefer_trailer" | "flatbed_trailer" | "dry_van_trailer" | "other" | undefined
@@ -165,11 +170,119 @@ function getVehicleRelationshipLabel(vehicle: any, fleetVehicles: any[]) {
     : `Linked trailers ${trailerLabels.join(", ")}`;
 }
 
-function decorateVehiclesWithRelationshipSummary<T extends Record<string, any>>(fleetVehicles: T[]) {
+function decorateVehiclesWithRelationshipSummary(
+  fleetVehicles: Array<Record<string, any>>
+) : any[] {
   return fleetVehicles.map((vehicle) => ({
     ...vehicle,
     linkedVehicleSummary: getVehicleRelationshipLabel(vehicle, fleetVehicles),
   }));
+}
+
+async function decorateFleetVehiclesForDashboard(
+  db: Exclude<Awaited<ReturnType<typeof getDb>>, null>,
+  fleetVehicles: Array<Record<string, any>>
+): Promise<any[]> {
+  const vehiclesWithRelationships = decorateVehiclesWithRelationshipSummary(
+    fleetVehicles
+  );
+  if (vehiclesWithRelationships.length === 0) {
+    return vehiclesWithRelationships;
+  }
+
+  const assignedDriverIds = Array.from(
+    new Set(
+      vehiclesWithRelationships
+        .map((vehicle) => vehicle.assignedDriverId)
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+    )
+  );
+
+  const vehicleIds = vehiclesWithRelationships.map((vehicle) => String(vehicle.id));
+  const activeAssignments = await db
+    .select({
+      id: vehicleAssignments.id,
+      vehicleId: vehicleAssignments.vehicleId,
+      driverUserId: vehicleAssignments.driverUserId,
+      notes: vehicleAssignments.notes,
+      updatedAt: vehicleAssignments.updatedAt,
+    })
+    .from(vehicleAssignments)
+    .where(
+      and(
+        eq(
+          vehicleAssignments.fleetId,
+          Number(vehiclesWithRelationships[0]?.fleetId ?? 0)
+        ),
+        eq(vehicleAssignments.status, "active"),
+        inArray(vehicleAssignments.vehicleId, vehicleIds)
+      )
+    );
+
+  const ownerOperatorAssignments = new Map<
+    string,
+    {
+      ownerOperatorUserId: number;
+      ownerOperatorName: string | null;
+      previousDriverUserId: number | null;
+      previousDriverName: string | null;
+      assignedAt: string;
+    }
+  >();
+
+  for (const row of activeAssignments) {
+    const metadata = parseOwnerOperatorSelfAssignmentNote(row.notes);
+    if (!metadata) continue;
+    const vehicleId = String(row.vehicleId);
+    if (!ownerOperatorAssignments.has(vehicleId)) {
+      ownerOperatorAssignments.set(vehicleId, metadata);
+    }
+    if (typeof row.driverUserId === "number" && Number.isFinite(row.driverUserId)) {
+      assignedDriverIds.push(row.driverUserId);
+    }
+    if (metadata.previousDriverUserId != null) {
+      assignedDriverIds.push(metadata.previousDriverUserId);
+    }
+    if (metadata.ownerOperatorUserId != null) {
+      assignedDriverIds.push(metadata.ownerOperatorUserId);
+    }
+  }
+
+  const uniqueAssignedDriverIds = Array.from(
+    new Set(
+      assignedDriverIds.filter(
+        (value): value is number => typeof value === "number" && Number.isFinite(value)
+      )
+    )
+  );
+
+  const assignedDriverRows =
+    uniqueAssignedDriverIds.length > 0
+      ? await db
+          .select({ id: users.id, name: users.name, email: users.email })
+          .from(users)
+          .where(inArray(users.id, uniqueAssignedDriverIds))
+      : [];
+  const assignedDriverMap = new Map(
+    assignedDriverRows.map((row) => [row.id, row.name?.trim() || row.email || null])
+  );
+
+  return vehiclesWithRelationships.map((vehicle) => {
+    const ownerOperatorSelfAssignment = ownerOperatorAssignments.get(String(vehicle.id)) ?? null;
+    const assignedDriverDisplayName =
+      (typeof vehicle.assignedDriverId === "number"
+        ? assignedDriverMap.get(vehicle.assignedDriverId) ?? null
+        : null) ??
+      (ownerOperatorSelfAssignment?.ownerOperatorUserId === vehicle.assignedDriverId
+        ? ownerOperatorSelfAssignment?.ownerOperatorName ?? null
+        : null);
+
+    return {
+      ...vehicle,
+      assignedDriverDisplayName,
+      ownerOperatorSelfAssignment,
+    } as any;
+  });
 }
 
 const vehicleCreateReturnShape = {
@@ -513,8 +626,11 @@ export const vehiclesRouter = router({
           });
         }
 
-        const fleetVehicles = await db.select().from(vehicles).where(eq(vehicles.fleetId, input.fleetId));
-        return decorateVehiclesWithRelationshipSummary(fleetVehicles);
+        const fleetVehicles = await db
+          .select()
+          .from(vehicles)
+          .where(eq(vehicles.fleetId, input.fleetId));
+        return decorateFleetVehiclesForDashboard(db, fleetVehicles);
       }
 
       const scopedVehicles = await listDriverAccessibleVehicles({
@@ -551,8 +667,11 @@ export const vehiclesRouter = router({
         });
       }
 
-      const fleetVehicles = await db.select().from(vehicles).where(eq(vehicles.fleetId, fleetId));
-      return decorateVehiclesWithRelationshipSummary(fleetVehicles);
+      const fleetVehicles = await db
+        .select()
+        .from(vehicles)
+        .where(eq(vehicles.fleetId, fleetId));
+      return decorateFleetVehiclesForDashboard(db, fleetVehicles);
     }
 
     const vehiclesAcrossFleets = await listDriverAccessibleVehiclesAcrossFleets({
@@ -684,5 +803,28 @@ export const vehiclesRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       return await assignDriver({ input, ctx });
+    }),
+
+  assignOwnerOperatorToSelf: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number(),
+        vehicleId: z.union([z.coerce.number(), z.string().trim().min(1)]),
+        confirmTakeover: z.boolean().optional(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      return await assignOwnerOperatorToSelf({ input, ctx });
+    }),
+
+  releaseOwnerOperatorSelfAssignment: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number(),
+        vehicleId: z.union([z.coerce.number(), z.string().trim().min(1)]),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      return await releaseOwnerOperatorSelfAssignment({ input, ctx });
     }),
 });

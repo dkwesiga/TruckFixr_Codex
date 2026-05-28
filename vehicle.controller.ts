@@ -1,10 +1,15 @@
 import { getDb } from './server/db';
 import { randomUUID } from 'crypto';
-import { driverInvitations, users, vehicles } from './drizzle/schema';
+import { driverInvitations, users, vehicleAssignments, vehicles } from './drizzle/schema';
 import { eq, gt, or, sql } from 'drizzle-orm';
 import { TRPCError } from '@trpc/server';
 import { canManageVehicleAccess } from './server/services/vehicleAccess';
 import { ensureCompanyMembership } from './server/services/companyAccess';
+import {
+  buildOwnerOperatorSelfAssignmentNote,
+  isOwnerOperatorEnabled,
+  parseOwnerOperatorSelfAssignmentNote,
+} from './server/services/ownerOperator';
 
 const ALLOWED_VEHICLE_TYPES = [
   'truck', 'tractor', 'trailer', 'straight_truck', 'bus', 
@@ -357,5 +362,289 @@ export const assignDriver = async (req: any) => {
         status: 'active',
       }
     );
+  });
+};
+
+async function getOwnerOperatorAssetForSelfAssignment(input: {
+  fleetId: number;
+  vehicleId: string | number;
+  user: any;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  if (!isOwnerOperatorEnabled(input.user)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Only owner-operators can assign a vehicle to themselves.",
+    });
+  }
+
+  const vehicleIdText = String(input.vehicleId).trim();
+  const [asset] = await db
+    .select()
+    .from(vehicles)
+    .where(sql`CAST(${vehicles.id} AS text) = ${vehicleIdText}`)
+    .limit(1);
+
+  if (!asset || Number(asset.fleetId) !== Number(input.fleetId)) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Vehicle not found" });
+  }
+
+  const canManage = await canManageVehicleAccess({
+    fleetId: Number(asset.fleetId),
+    user: input.user,
+  });
+  if (!canManage) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Unauthorized to manage this fleet asset.",
+    });
+  }
+
+  if (
+    String(asset.assetRecordStatus ?? "").toLowerCase() !== "active" ||
+    String(asset.status ?? "").toLowerCase() !== "active"
+  ) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Only operational active vehicles can be assigned to you.",
+    });
+  }
+
+  return { db, asset };
+}
+
+async function getLatestActiveOwnerOperatorSelfAssignment(input: {
+  vehicleId: string | number;
+  ownerOperatorUserId?: number | null;
+}) {
+  const db = await getDb();
+  if (!db) return null;
+
+  const vehicleIdText = String(input.vehicleId).trim();
+  const result = await db.execute(sql`
+    select
+      "id",
+      "fleetId",
+      "vehicleId",
+      "driverUserId",
+      "assignedByUserId",
+      "accessType",
+      "startsAt",
+      "expiresAt",
+      "status",
+      "notes",
+      "revokedAt",
+      "revokedByUserId",
+      "createdAt",
+      "updatedAt"
+    from "vehicleAssignments"
+    where
+      CAST("vehicleId" AS text) = ${vehicleIdText}
+      and "status" = ${'active'}
+    order by "updatedAt" desc
+  `);
+
+  const rows = (result.rows ?? []) as Array<any>;
+  for (const row of rows) {
+    const metadata = parseOwnerOperatorSelfAssignmentNote(row.notes);
+    if (!metadata) continue;
+    if (
+      input.ownerOperatorUserId != null &&
+      metadata.ownerOperatorUserId !== input.ownerOperatorUserId
+    ) {
+      continue;
+    }
+
+    return {
+      ...row,
+      metadata,
+    };
+  }
+
+  return null;
+}
+
+export const assignOwnerOperatorToSelf = async (req: any) => {
+  const { fleetId, vehicleId, confirmTakeover } = req.input;
+  const { user } = req.ctx;
+  const { db, asset } = await getOwnerOperatorAssetForSelfAssignment({
+    fleetId,
+    vehicleId,
+    user,
+  });
+
+  const activeSelfAssignment = await getLatestActiveOwnerOperatorSelfAssignment({
+    vehicleId: asset.id,
+    ownerOperatorUserId: user.id,
+  });
+
+  if (activeSelfAssignment) {
+    return {
+      status: "already_assigned",
+      vehicleId: asset.id,
+      driverUserId: user.id,
+      previousDriverUserId:
+        activeSelfAssignment.metadata.previousDriverUserId ?? null,
+      previousDriverName:
+        activeSelfAssignment.metadata.previousDriverName ?? null,
+    };
+  }
+
+  const previousDriverUserId =
+    asset.assignedDriverId != null && Number(asset.assignedDriverId) !== user.id
+      ? Number(asset.assignedDriverId)
+      : null;
+  const [previousDriver] =
+    previousDriverUserId != null
+      ? await db
+          .select({ id: users.id, name: users.name, email: users.email })
+          .from(users)
+          .where(eq(users.id, previousDriverUserId))
+          .limit(1)
+      : [null];
+
+  if (previousDriverUserId != null && !confirmTakeover) {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: `OWNER_OPERATOR_CONFIRM_TAKEOVER:${previousDriver?.name || previousDriver?.email || `Driver ${previousDriverUserId}`}`,
+    });
+  }
+
+  return await db.transaction(async (tx) => {
+    if (previousDriverUserId != null) {
+      const preservedAssignment = await tx.execute(sql`
+        select "id"
+        from "vehicleAssignments"
+        where
+          CAST("vehicleId" AS text) = ${String(asset.id)}
+          and "driverUserId" = ${previousDriverUserId}
+          and "status" = ${'active'}
+        order by "updatedAt" desc
+        limit 1
+      `);
+
+      if ((preservedAssignment.rows?.length ?? 0) === 0) {
+        try {
+          await tx.insert(vehicleAssignments).values({
+            fleetId: Number(asset.fleetId),
+            vehicleId: String(asset.id),
+            driverUserId: previousDriverUserId,
+            assignedByUserId: user.id,
+            accessType: "permanent",
+            startsAt: new Date(),
+            status: "active",
+            notes: "Preserved during owner-operator self-assignment",
+          });
+        } catch (error) {
+          console.warn("[OwnerOperator] Could not preserve previous driver assignment row.", {
+            vehicleId: asset.id,
+            previousDriverUserId,
+            error: error instanceof Error ? error.message : error,
+          });
+        }
+      }
+    }
+
+    const metadata = {
+      ownerOperatorUserId: Number(user.id),
+      ownerOperatorName: user.name ?? null,
+      previousDriverUserId,
+      previousDriverName: previousDriver?.name ?? previousDriver?.email ?? null,
+      assignedAt: new Date().toISOString(),
+    };
+
+    const [assignment] = await tx
+      .insert(vehicleAssignments)
+      .values({
+        fleetId: Number(asset.fleetId),
+        vehicleId: String(asset.id),
+        driverUserId: Number(user.id),
+        assignedByUserId: Number(user.id),
+        accessType: "permanent",
+        startsAt: new Date(),
+        status: "active",
+        notes: buildOwnerOperatorSelfAssignmentNote(metadata),
+      })
+      .returning();
+
+    await tx.execute(sql`
+      update "vehicles"
+      set
+        "assignedDriverId" = ${Number(user.id)},
+        "updatedAt" = ${new Date()}
+      where CAST("id" AS text) = ${String(asset.id)}
+    `);
+
+    return {
+      status: "assigned",
+      vehicleId: asset.id,
+      driverUserId: user.id,
+      previousDriverUserId,
+      previousDriverName: previousDriver?.name ?? previousDriver?.email ?? null,
+      assignmentId: assignment?.id ?? null,
+    };
+  });
+};
+
+export const releaseOwnerOperatorSelfAssignment = async (req: any) => {
+  const { fleetId, vehicleId } = req.input;
+  const { user } = req.ctx;
+  const { db, asset } = await getOwnerOperatorAssetForSelfAssignment({
+    fleetId,
+    vehicleId,
+    user,
+  });
+
+  const activeSelfAssignment = await getLatestActiveOwnerOperatorSelfAssignment({
+    vehicleId: asset.id,
+    ownerOperatorUserId: user.id,
+  });
+
+  if (!activeSelfAssignment) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "No active self-assignment was found for this vehicle.",
+    });
+  }
+
+  const restoredDriverUserId =
+    activeSelfAssignment.metadata.previousDriverUserId ?? null;
+  const [restoredDriver] =
+    restoredDriverUserId != null
+      ? await db
+          .select({ id: users.id, name: users.name, email: users.email })
+          .from(users)
+          .where(eq(users.id, restoredDriverUserId))
+          .limit(1)
+      : [null];
+
+  return await db.transaction(async (tx) => {
+    await tx
+      .update(vehicleAssignments)
+      .set({
+        status: "revoked",
+        revokedAt: new Date(),
+        revokedByUserId: Number(user.id),
+        updatedAt: new Date(),
+        notes: `${activeSelfAssignment.notes ?? ""} | released_by_owner_operator:${new Date().toISOString()}`,
+      })
+      .where(eq(vehicleAssignments.id, Number(activeSelfAssignment.id)));
+
+    await tx.execute(sql`
+      update "vehicles"
+      set
+        "assignedDriverId" = ${restoredDriverUserId},
+        "updatedAt" = ${new Date()}
+      where CAST("id" AS text) = ${String(asset.id)}
+    `);
+
+    return {
+      status: "released",
+      vehicleId: asset.id,
+      restoredDriverUserId,
+      restoredDriverName: restoredDriver?.name ?? restoredDriver?.email ?? null,
+    };
   });
 };
