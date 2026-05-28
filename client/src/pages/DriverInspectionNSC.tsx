@@ -34,6 +34,7 @@ import {
   INSPECTION_VALIDITY_HOURS,
   buildChecklistByCategory,
   inspectionSheetLabels,
+  randomProofItems,
   type InspectionSheetType,
   type VehicleInspectionConfig,
 } from "../../../shared/inspection";
@@ -177,6 +178,13 @@ function DriverInspectionContent() {
   const stepContentRef = useRef<HTMLDivElement | null>(null);
   const hasScrolledBetweenStepsRef = useRef(false);
   const odometerInputRef = useRef<HTMLInputElement | null>(null);
+  const proofCaptureRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const [proofPhotoItems] = useState<readonly string[]>(() => {
+    const shuffled = [...randomProofItems].sort(() => Math.random() - 0.5);
+    const count = Math.random() > 0.5 ? 2 : 1;
+    return shuffled.slice(0, count);
+  });
+  const [proofPhotos, setProofPhotos] = useState<Record<string, string>>({});
 
   const checklistQuery = trpc.inspections.getDailyChecklist.useQuery(
     { vehicleId },
@@ -414,6 +422,17 @@ function DriverInspectionContent() {
     }
   };
 
+  const handleProofPhoto = async (proofItem: string, files: FileList | null) => {
+    try {
+      const urls = await filesToDataUrls(files);
+      if (urls[0]) {
+        setProofPhotos((current) => ({ ...current, [proofItem]: urls[0] }));
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to read photo");
+    }
+  };
+
   useEffect(() => {
     if (!checklistQuery.data || !checklistData) return;
     saveChecklistSnapshot(storage, vehicleId, checklistData);
@@ -563,6 +582,11 @@ function DriverInspectionContent() {
       driverSignature: signatureMode === "typed" ? typedSignatureValue : driverName,
       driverSignatureMode: signatureMode,
       driverSignatureImageUrl: signatureMode === "drawn" ? drawnSignature : undefined,
+      proofPhotos: proofPhotoItems.map((proofItem) => ({
+        proofItem,
+        photoUrl: proofPhotos[proofItem],
+        skipped: !proofPhotos[proofItem],
+      })),
       results,
     };
   };
@@ -1268,6 +1292,47 @@ function DriverInspectionContent() {
               <CardDescription>Confirm the report before submitting the inspection record.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-5 px-4 pb-5 sm:space-y-6 sm:px-6 sm:pb-6">
+              {proofPhotoItems.length > 0 ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                  <p className="font-semibold text-amber-950">Today&apos;s verification photos</p>
+                  <p className="mt-1 text-sm text-amber-800">Take a quick photo of each item below before submitting.</p>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    {proofPhotoItems.map((proofItem) => (
+                      <div key={proofItem} className="rounded-xl border border-amber-200 bg-white p-3">
+                        <p className="text-sm font-semibold capitalize text-slate-900">{proofItem}</p>
+                        <input
+                          ref={(node) => { proofCaptureRefs.current[proofItem] = node; }}
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          className="hidden"
+                          onChange={(event) => void handleProofPhoto(proofItem, event.target.files)}
+                        />
+                        {proofPhotos[proofItem] ? (
+                          <div className="mt-2 flex items-center gap-2">
+                            <img
+                              src={proofPhotos[proofItem]}
+                              alt={`${proofItem} verification`}
+                              className="h-14 w-14 rounded-lg border border-slate-200 object-cover"
+                            />
+                            <span className="text-xs font-medium text-emerald-700">Photo captured</span>
+                          </div>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="mt-2 h-9 w-full rounded-xl border-amber-300 text-amber-900 hover:bg-amber-50"
+                            onClick={() => proofCaptureRefs.current[proofItem]?.click()}
+                          >
+                            <Camera className="mr-2 h-4 w-4" />
+                            Take photo
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <div className="grid gap-3 sm:grid-cols-3 sm:gap-4">
                 <div className="rounded-2xl bg-slate-50 p-4">
                   <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Items checked</p>

@@ -355,6 +355,11 @@ export const dailyInspectionSubmissionSchema = z.object({
   driverSignature: z.string().trim().min(1, "Driver signature is required"),
   driverSignatureMode: signatureModeSchema,
   driverSignatureImageUrl: z.string().trim().min(1).optional(),
+  proofPhotos: z.array(z.object({
+    proofItem: z.string().min(1),
+    photoUrl: z.string().trim().optional(),
+    skipped: z.boolean().default(false),
+  })).default([]),
   results: z.array(inspectionItemResultSchema).min(1),
 }).superRefine((value, context) => {
   if (value.driverSignatureMode === "drawn" && !value.driverSignatureImageUrl?.trim()) {

@@ -351,6 +351,7 @@ function buildDvirPayload(input: {
     input.inspection.submitLatitude && input.inspection.submitLongitude
       ? `${input.inspection.submitLatitude}, ${input.inspection.submitLongitude}`
       : input.inspection.locationStatus ?? "unavailable";
+  const odometer = typeof results?.odometer === "number" ? results.odometer : null;
   const vehicleLabel =
     input.vehicle?.unitNumber ||
     input.vehicle?.licensePlate ||
@@ -361,6 +362,7 @@ function buildDvirPayload(input: {
     inspectionId: input.inspection.id,
     inspectionSessionId:
       input.inspection.inspectionSessionId ?? results?.inspectionSessionId ?? null,
+    odometer,
     reportType: "Driver Vehicle Inspection Report",
     formStyle: "DVIR familiar layout",
     company: {
@@ -1770,6 +1772,43 @@ export const inspectionsRouter = router({
 
           if (createdDefect) {
             createdDefects.push(createdDefect);
+          }
+        }
+
+        // Save proof photos submitted with the daily inspection
+        if (input.proofPhotos && input.proofPhotos.length > 0) {
+          try {
+            await db.insert(randomProofRequests).values(
+              input.proofPhotos.map((proof) => ({
+                inspectionId: inspectionResult.id,
+                fleetId: input.fleetId,
+                vehicleId: normalizedVehicleId,
+                driverId: ctx.user.id,
+                proofItem: proof.proofItem,
+                photoSubmitted: Boolean(proof.photoUrl),
+                photoUrl: proof.photoUrl ?? null,
+                complianceStatus: proof.photoUrl ? "submitted" : proof.skipped ? "skipped" : "failed_upload",
+                updatedAt: new Date(),
+              }))
+            );
+            const proofPhotoRows = input.proofPhotos
+              .filter((p) => p.photoUrl)
+              .map((p) => ({
+                inspectionId: inspectionResult.id,
+                fleetId: input.fleetId,
+                vehicleId: normalizedVehicleId,
+                driverId: ctx.user.id,
+                checklistItemId: p.proofItem,
+                photoType: "random_proof",
+                imageUrl: p.photoUrl!,
+                source: "upload",
+                notes: `Random proof: ${p.proofItem}`,
+              }));
+            if (proofPhotoRows.length > 0) {
+              await db.insert(inspectionPhotos).values(proofPhotoRows);
+            }
+          } catch (proofError) {
+            console.warn("[Inspections] Unable to save proof photos for daily inspection:", proofError);
           }
         }
 
