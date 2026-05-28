@@ -23,6 +23,7 @@ import {
   saveChecklistSnapshot,
   saveInspectionDraft,
   type InspectionDraftItemResponse,
+  type InspectionDraftProofPhotoPrompt,
 } from "@/lib/inspectionDrafts";
 import { loadLastDriverVehicleContext, saveLastDriverVehicleContext } from "@/lib/driverVehicleContext";
 import { type DriverVehicleRecord } from "@/lib/driverVehicles";
@@ -34,7 +35,6 @@ import {
   INSPECTION_VALIDITY_HOURS,
   buildChecklistByCategory,
   inspectionSheetLabels,
-  randomProofItems,
   type InspectionSheetType,
   type VehicleInspectionConfig,
 } from "../../../shared/inspection";
@@ -52,6 +52,43 @@ import {
 } from "@/components/ui/alert-dialog";
 
 type ItemResponse = InspectionDraftItemResponse;
+type ProofPhotoPrompt = InspectionDraftProofPhotoPrompt;
+
+const randomProofCandidateCategories = new Set([
+  "dashboard_warning_lights",
+  "tires_wheels",
+  "tires",
+  "lights",
+  "lights_reflectors",
+  "fluid_leaks",
+  "brakes",
+  "brakes_air_system",
+  "steering",
+  "suspension",
+  "coupling",
+  "mirrors_windshield",
+  "safety_equipment",
+]);
+
+function chooseRandomProofPrompts(items: Array<{ id: string; label: string; category: string }>): ProofPhotoPrompt[] {
+  const candidates = items.filter((item) => randomProofCandidateCategories.has(item.category));
+  const source = (candidates.length > 0 ? candidates : items).filter(
+    (item, index, allItems) => allItems.findIndex((candidate) => candidate.id === item.id) === index
+  );
+
+  if (source.length === 0) return [];
+
+  const shuffled = [...source].sort(() => Math.random() - 0.5);
+  const count = source.length === 1 ? 1 : Math.min(2, Math.random() > 0.5 ? 2 : 1);
+  return shuffled.slice(0, count).map((item) => ({ itemId: item.id, label: item.label }));
+}
+
+function buildEvidencePhotoUrls(response: ItemResponse | undefined, carriedProofPhoto?: string) {
+  const attachedItemPhotos = response?.photoUrls ?? [];
+  return carriedProofPhoto && !attachedItemPhotos.includes(carriedProofPhoto)
+    ? [...attachedItemPhotos, carriedProofPhoto]
+    : attachedItemPhotos;
+}
 
 function formatInspectionTime(value: string | Date) {
   return new Date(value).toLocaleString([], {
@@ -179,12 +216,12 @@ function DriverInspectionContent() {
   const hasScrolledBetweenStepsRef = useRef(false);
   const odometerInputRef = useRef<HTMLInputElement | null>(null);
   const proofCaptureRefs = useRef<Record<string, HTMLInputElement | null>>({});
-  const [proofPhotoItems] = useState<readonly string[]>(() => {
-    const shuffled = [...randomProofItems].sort(() => Math.random() - 0.5);
-    const count = Math.random() > 0.5 ? 2 : 1;
-    return shuffled.slice(0, count);
-  });
-  const [proofPhotos, setProofPhotos] = useState<Record<string, string>>({});
+  const [proofPhotoPrompts, setProofPhotoPrompts] = useState<ProofPhotoPrompt[]>(
+    () => restoredDraft?.data.proofPhotoPrompts ?? []
+  );
+  const [proofPhotos, setProofPhotos] = useState<Record<string, string>>(
+    () => restoredDraft?.data.proofPhotos ?? {}
+  );
 
   const checklistQuery = trpc.inspections.getDailyChecklist.useQuery(
     { vehicleId },
@@ -272,6 +309,36 @@ function DriverInspectionContent() {
     () => categories.flatMap((category) => category.items),
     [categories]
   );
+  const proofPhotoPromptMap = useMemo(
+    () => new Map(proofPhotoPrompts.map((prompt) => [prompt.itemId, prompt])),
+    [proofPhotoPrompts]
+  );
+  const outstandingProofPrompts = useMemo(
+    () =>
+      proofPhotoPrompts.filter((prompt) => {
+        const response = responses[prompt.itemId];
+        return (
+          response?.status === "pass" &&
+          !proofPhotos[prompt.itemId] &&
+          buildEvidencePhotoUrls(response, proofPhotos[prompt.itemId]).length === 0
+        );
+      }),
+    [proofPhotoPrompts, proofPhotos, responses]
+  );
+  const completedProofPrompts = useMemo(
+    () => {
+      const completed: Array<ProofPhotoPrompt & { photoUrl: string; status: ItemResponse["status"] | undefined }> = [];
+      for (const prompt of proofPhotoPrompts) {
+        const response = responses[prompt.itemId];
+        const evidencePhotos = buildEvidencePhotoUrls(response, proofPhotos[prompt.itemId]);
+        const photoUrl = proofPhotos[prompt.itemId] ?? evidencePhotos[0];
+        if (!photoUrl) continue;
+        completed.push({ ...prompt, photoUrl, status: response?.status });
+      }
+      return completed;
+    },
+    [proofPhotoPrompts, proofPhotos, responses]
+  );
 
   const failedItems = useMemo(
     () =>
@@ -287,6 +354,7 @@ function DriverInspectionContent() {
     driverSignature.trim().length > 0 ||
     drawnSignature.length > 0 ||
     Boolean(inspectionSheetType) ||
+    Object.keys(proofPhotos).length > 0 ||
     Object.keys(responses).length > 0 ||
     stepIndex > 0;
   const {
@@ -330,7 +398,7 @@ function DriverInspectionContent() {
         nextPendingItems.push(`Add a comment for "${item.label}".`);
       }
 
-      if (response.status === "fail" && response.photoUrls.length === 0) {
+      if (response.status === "fail" && buildEvidencePhotoUrls(response, proofPhotos[item.id]).length === 0) {
         nextPendingItems.push(`Add at least one photo for "${item.label}".`);
       }
     });
@@ -354,6 +422,7 @@ function DriverInspectionContent() {
     drawnSignature,
     location,
     odometer,
+    proofPhotos,
     responses,
     requiresInspectionSheetSelection,
     requiresOdometer,
@@ -381,11 +450,16 @@ function DriverInspectionContent() {
       const response = responses[item.id];
       if (!response?.status) return false;
       if (response.status === "pass" || response.status === "na") return true;
-      return Boolean(response.classification && response.comment?.trim() && response.photoUrls.length > 0);
+      return Boolean(
+        response.classification &&
+        response.comment?.trim() &&
+        buildEvidencePhotoUrls(response, proofPhotos[item.id]).length > 0
+      );
     });
   }, [
     currentCategory,
     drawnSignature,
+    proofPhotos,
     isMetadataStep,
     isSummaryStep,
     location,
@@ -413,8 +487,16 @@ function DriverInspectionContent() {
     try {
       const photoUrls = await filesToDataUrls(files);
       startTransition(() => {
-        const existingPhotos = responses[itemId]?.photoUrls ?? [];
-        updateItemResponse(itemId, { photoUrls: [...existingPhotos, ...photoUrls] });
+        setResponses((current) => {
+          const existingPhotos = current[itemId]?.photoUrls ?? [];
+          return {
+            ...current,
+            [itemId]: {
+              ...current[itemId],
+              photoUrls: [...existingPhotos, ...photoUrls],
+            },
+          };
+        });
       });
       setPhotoPickerItemId((current) => (current === itemId ? null : current));
     } catch (error) {
@@ -448,6 +530,22 @@ function DriverInspectionContent() {
   }, [checklistData]);
 
   useEffect(() => {
+    if (restoredDraft || proofPhotoPrompts.length > 0 || allChecklistItems.length === 0) {
+      return;
+    }
+
+    setProofPhotoPrompts(
+      chooseRandomProofPrompts(
+        allChecklistItems.map((item) => ({
+          id: item.id,
+          label: item.label,
+          category: item.category,
+        }))
+      )
+    );
+  }, [allChecklistItems, proofPhotoPrompts.length, restoredDraft]);
+
+  useEffect(() => {
     if (!hasDraftData) {
       clearInspectionDraft(storage, vehicleId);
       return;
@@ -468,6 +566,8 @@ function DriverInspectionContent() {
         driverSignature,
         drawnSignature,
         inspectionSheetType,
+        proofPhotoPrompts,
+        proofPhotos,
         responses,
       },
     });
@@ -480,6 +580,8 @@ function DriverInspectionContent() {
     inspectionSheetType,
     location,
     odometer,
+    proofPhotoPrompts,
+    proofPhotos,
     requiresOdometer,
     responses,
     signatureMode,
@@ -564,9 +666,31 @@ function DriverInspectionContent() {
         status: "fail" as const,
         classification: response.classification ?? "not_sure",
         comment: response.comment?.trim() ?? "",
-        photoUrls: response.photoUrls,
+        photoUrls: buildEvidencePhotoUrls(response, proofPhotos[item.id]),
       };
     });
+
+    const selectedProofPhotos: Array<{
+      proofItem: string;
+      proofLabel: string;
+      photoUrl?: string;
+      skipped: boolean;
+    }> = [];
+    for (const prompt of proofPhotoPrompts) {
+        const response = responses[prompt.itemId];
+        const evidencePhotoUrl =
+          proofPhotos[prompt.itemId] ?? buildEvidencePhotoUrls(response, proofPhotos[prompt.itemId])[0];
+        const stillRequired = response?.status === "pass";
+        if (!stillRequired && !evidencePhotoUrl) {
+          continue;
+        }
+        selectedProofPhotos.push({
+          proofItem: prompt.itemId,
+          proofLabel: prompt.label,
+          photoUrl: evidencePhotoUrl,
+          skipped: stillRequired && !evidencePhotoUrl,
+        });
+      }
 
     return {
       vehicleId,
@@ -582,11 +706,7 @@ function DriverInspectionContent() {
       driverSignature: signatureMode === "typed" ? typedSignatureValue : driverName,
       driverSignatureMode: signatureMode,
       driverSignatureImageUrl: signatureMode === "drawn" ? drawnSignature : undefined,
-      proofPhotos: proofPhotoItems.map((proofItem) => ({
-        proofItem,
-        photoUrl: proofPhotos[proofItem],
-        skipped: !proofPhotos[proofItem],
-      })),
+      proofPhotos: selectedProofPhotos,
       results,
     };
   };
@@ -1154,6 +1274,14 @@ function DriverInspectionContent() {
               {currentCategory.items.map((item) => {
                 const response = responses[item.id] ?? { photoUrls: [] };
                 const isFail = response.status === "fail";
+                const hasRandomProofPrompt = proofPhotoPromptMap.has(item.id);
+                const carriedProofPhoto = proofPhotos[item.id];
+                const evidencePhotoUrls = buildEvidencePhotoUrls(response, carriedProofPhoto);
+                const showProofCarriedNotice =
+                  hasRandomProofPrompt &&
+                  response.status &&
+                  response.status !== "pass" &&
+                  evidencePhotoUrls.length > 0;
 
                 return (
                   <div key={item.id} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
@@ -1163,17 +1291,23 @@ function DriverInspectionContent() {
                         <p className="mt-1 text-sm text-slate-600">{item.guidance}</p>
                       </div>
                       <div className="grid grid-cols-3 gap-2 sm:flex">
-                        <Button type="button" variant={response.status === "pass" ? "default" : "outline"} className="h-10 rounded-full px-4 text-sm sm:min-w-[88px]" onClick={() => updateItemResponse(item.id, { status: "pass", classification: undefined, comment: "", photoUrls: [] })}>
+                        <Button type="button" variant={response.status === "pass" ? "default" : "outline"} className="h-10 rounded-full px-4 text-sm sm:min-w-[88px]" onClick={() => updateItemResponse(item.id, { status: "pass", classification: undefined, comment: "" })}>
                           Pass
                         </Button>
                         <Button type="button" variant={isFail ? "destructive" : "outline"} className="h-10 rounded-full px-4 text-sm sm:min-w-[88px]" onClick={() => updateItemResponse(item.id, { status: "fail" })}>
                           Defect
                         </Button>
-                        <Button type="button" variant={response.status === "na" ? "secondary" : "outline"} className="h-10 rounded-full px-4 text-sm sm:min-w-[88px]" onClick={() => updateItemResponse(item.id, { status: "na", classification: undefined, comment: "", photoUrls: [] })}>
+                        <Button type="button" variant={response.status === "na" ? "secondary" : "outline"} className="h-10 rounded-full px-4 text-sm sm:min-w-[88px]" onClick={() => updateItemResponse(item.id, { status: "na", classification: undefined, comment: "" })}>
                           N/A
                         </Button>
                       </div>
                     </div>
+
+                    {showProofCarriedNotice ? (
+                      <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                        Random photo no longer required for this item. The previous photo already attached here will be considered.
+                      </div>
+                    ) : null}
 
                     {isFail ? (
                       <div className="mt-4 grid gap-4 rounded-2xl border border-red-200 bg-white p-4">
@@ -1261,7 +1395,7 @@ function DriverInspectionContent() {
                           />
                         </div>
                         <div className="flex flex-wrap gap-2">
-                          {response.photoUrls.map((photoUrl, index) => (
+                          {evidencePhotoUrls.map((photoUrl, index) => (
                             <img
                               key={`${item.id}-${index}`}
                               src={photoUrl}
@@ -1269,7 +1403,7 @@ function DriverInspectionContent() {
                               className="h-16 w-16 rounded-xl border border-slate-200 object-cover"
                             />
                           ))}
-                          {response.photoUrls.length === 0 ? (
+                          {evidencePhotoUrls.length === 0 ? (
                             <div className="flex items-center gap-2 text-sm text-slate-500">
                               <Camera className="h-4 w-4" />
                               Add a required defect photo before continuing.
@@ -1292,45 +1426,68 @@ function DriverInspectionContent() {
               <CardDescription>Confirm the report before submitting the inspection record.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-5 px-4 pb-5 sm:space-y-6 sm:px-6 sm:pb-6">
-              {proofPhotoItems.length > 0 ? (
+              {proofPhotoPrompts.length > 0 ? (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
                   <p className="font-semibold text-amber-950">Today&apos;s verification photos</p>
-                  <p className="mt-1 text-sm text-amber-800">Take a quick photo of each item below before submitting.</p>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                    {proofPhotoItems.map((proofItem) => (
-                      <div key={proofItem} className="rounded-xl border border-amber-200 bg-white p-3">
-                        <p className="text-sm font-semibold capitalize text-slate-900">{proofItem}</p>
-                        <input
-                          ref={(node) => { proofCaptureRefs.current[proofItem] = node; }}
-                          type="file"
-                          accept="image/*"
-                          capture="environment"
-                          className="hidden"
-                          onChange={(event) => void handleProofPhoto(proofItem, event.target.files)}
-                        />
-                        {proofPhotos[proofItem] ? (
-                          <div className="mt-2 flex items-center gap-2">
-                            <img
-                              src={proofPhotos[proofItem]}
-                              alt={`${proofItem} verification`}
-                              className="h-14 w-14 rounded-lg border border-slate-200 object-cover"
+                  <p className="mt-1 text-sm text-amber-800">TruckFixr picked a couple of spot-check items for this inspection.</p>
+                  {outstandingProofPrompts.length > 0 ? (
+                    <div className="mt-3 space-y-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-800">Still needed today</p>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {outstandingProofPrompts.map((prompt) => (
+                          <div key={prompt.itemId} className="rounded-xl border border-amber-200 bg-white p-3">
+                            <p className="text-sm font-semibold text-slate-900">{prompt.label}</p>
+                            <input
+                              ref={(node) => { proofCaptureRefs.current[prompt.itemId] = node; }}
+                              type="file"
+                              accept="image/*"
+                              capture="environment"
+                              className="hidden"
+                              onChange={(event) => void handleProofPhoto(prompt.itemId, event.target.files)}
                             />
-                            <span className="text-xs font-medium text-emerald-700">Photo captured</span>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="mt-2 h-9 w-full rounded-xl border-amber-300 text-amber-900 hover:bg-amber-50"
+                              onClick={() => proofCaptureRefs.current[prompt.itemId]?.click()}
+                            >
+                              <Camera className="mr-2 h-4 w-4" />
+                              Take photo
+                            </Button>
                           </div>
-                        ) : (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="mt-2 h-9 w-full rounded-xl border-amber-300 text-amber-900 hover:bg-amber-50"
-                            onClick={() => proofCaptureRefs.current[proofItem]?.click()}
-                          >
-                            <Camera className="mr-2 h-4 w-4" />
-                            Take photo
-                          </Button>
-                        )}
+                        ))}
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  ) : (
+                    <div className="mt-3 rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm text-amber-900">
+                      No additional random proof photos are still required for this inspection.
+                    </div>
+                  )}
+                  {completedProofPrompts.length > 0 ? (
+                    <div className="mt-4 space-y-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-800">Completed verification photos</p>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {completedProofPrompts.map((prompt) => (
+                          <div key={`${prompt.itemId}-completed`} className="rounded-xl border border-emerald-200 bg-white p-3">
+                            <p className="text-sm font-semibold text-slate-900">{prompt.label}</p>
+                            <div className="mt-2 flex items-center gap-3">
+                              <img
+                                src={prompt.photoUrl}
+                                alt={`${prompt.label} verification`}
+                                className="h-14 w-14 rounded-lg border border-slate-200 object-cover"
+                              />
+                              <div className="text-xs">
+                                <p className="font-medium text-emerald-700">Photo captured</p>
+                                {prompt.status && prompt.status !== "pass" ? (
+                                  <p className="mt-1 text-slate-600">Requirement cleared because this item did not finish as Pass.</p>
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
               <div className="grid gap-3 sm:grid-cols-3 sm:gap-4">
@@ -1532,4 +1689,3 @@ export default function DriverInspectionNSC() {
     </RoleBasedRoute>
   );
 }
-

@@ -148,12 +148,15 @@ function InspectionReportDvirContent() {
   const defects = (report.defectsNotCodedAbove ?? []) as string[];
   const flags = (report.flags ?? []) as Array<{ message?: string }>;
   const isTractor = report.inspectionSheetType === "tractor";
+  const trailerInspected = report.trailerInspected === true;
 
   // For Ontario DVIR (tractor): combine all rows under Part A, with trailer rows as Part B if present
   const ontarioSections = isTractor
     ? [
         { label: "Part A – Power Unit (Tractor)", rows: sheetSections.length > 0 ? sheetSections.flatMap((s) => s.rows) : (tractorRows.length > 0 ? tractorRows : []) },
-        ...(trailerRows.length > 0 ? [{ label: "Part B – Trailer (if applicable)", rows: trailerRows }] : []),
+        ...(trailerInspected && trailerRows.length > 0
+          ? [{ label: "Part B – Trailer (if applicable)", rows: trailerRows }]
+          : []),
       ].filter((s) => s.rows.length > 0)
     : sheetSections.length > 0
       ? sheetSections

@@ -357,6 +357,11 @@ function buildDvirPayload(input: {
     input.vehicle?.licensePlate ||
     input.vehicle?.vin ||
     String(input.inspection.vehicleId);
+  const trailerInspected =
+    resolvedSheetType === "trailer" ||
+    Boolean(input.inspection.linkedVehicleId) ||
+    results?.trailerIncluded === true ||
+    results?.combinedStage === "trailer";
 
   return {
     inspectionId: input.inspection.id,
@@ -391,6 +396,7 @@ function buildDvirPayload(input: {
       email: input.driver?.email ?? "",
     },
     inspectionSheetType: resolvedSheetType,
+    trailerInspected,
     inspectionSheetLabel: results?.inspectionSheetLabel ?? inspectionSheetLabels[resolvedSheetType],
     status: {
       noDefectsFound: issueItems.length === 0,
@@ -403,7 +409,7 @@ function buildDvirPayload(input: {
     },
     rows: groupedRows,
     tractorRows: groupedRows.filter((row: any) => row.side === "tractor"),
-    trailerRows: groupedRows.filter((row: any) => row.side === "trailer"),
+    trailerRows: trailerInspected ? groupedRows.filter((row: any) => row.side === "trailer") : [],
     sheetSections: Array.from(
       groupedRows.reduce((sections: Map<string, any>, row: any) => {
         const key = row.categoryLabel || "Inspection items";
@@ -1802,7 +1808,7 @@ export const inspectionsRouter = router({
                 photoType: "random_proof",
                 imageUrl: p.photoUrl!,
                 source: "upload",
-                notes: `Random proof: ${p.proofItem}`,
+                notes: `Random proof: ${p.proofLabel ?? p.proofItem}`,
               }));
             if (proofPhotoRows.length > 0) {
               await db.insert(inspectionPhotos).values(proofPhotoRows);

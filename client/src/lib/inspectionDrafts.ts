@@ -12,6 +12,11 @@ export type InspectionDraftItemResponse = {
   photoUrls: string[];
 };
 
+export type InspectionDraftProofPhotoPrompt = {
+  itemId: string;
+  label: string;
+};
+
 export type InspectionChecklistSnapshot = {
   vehicle: {
     id: number | string;
@@ -67,6 +72,8 @@ export type InspectionDraft = {
     driverSignature: string;
     drawnSignature: string;
     inspectionSheetType?: InspectionSheetType | null;
+    proofPhotoPrompts?: InspectionDraftProofPhotoPrompt[];
+    proofPhotos?: Record<string, string>;
     responses: Record<string, InspectionDraftItemResponse>;
   };
 };
@@ -100,6 +107,15 @@ const draftSchema: z.ZodType<InspectionDraft> = z.object({
     driverSignature: z.string(),
     drawnSignature: z.string(),
     inspectionSheetType: inspectionSheetTypeSchema.nullable().optional(),
+    proofPhotoPrompts: z
+      .array(
+        z.object({
+          itemId: z.string(),
+          label: z.string(),
+        })
+      )
+      .optional(),
+    proofPhotos: z.record(z.string(), z.string()).optional(),
     responses: z.record(
       z.string(),
       z.object({

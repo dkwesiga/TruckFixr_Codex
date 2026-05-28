@@ -357,6 +357,7 @@ export const dailyInspectionSubmissionSchema = z.object({
   driverSignatureImageUrl: z.string().trim().min(1).optional(),
   proofPhotos: z.array(z.object({
     proofItem: z.string().min(1),
+    proofLabel: z.string().trim().optional(),
     photoUrl: z.string().trim().optional(),
     skipped: z.boolean().default(false),
   })).default([]),
@@ -448,6 +449,7 @@ export const knownDefectFollowUpSchema = z.object({
 
 export const proofPhotoSubmissionSchema = z.object({
   proofItem: z.string().min(1),
+  proofLabel: z.string().trim().optional(),
   photoUrl: z.string().trim().optional(),
   skipped: z.boolean().default(false),
 });
