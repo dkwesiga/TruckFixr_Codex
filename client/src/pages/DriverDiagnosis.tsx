@@ -10,6 +10,7 @@ import VehicleAccessRequestDialog from "@/components/VehicleAccessRequestDialog"
 import { trackFeatureAccessed } from "@/lib/analytics";
 import { loadLastDriverVehicleContext, saveLastDriverVehicleContext } from "@/lib/driverVehicleContext";
 import { type DriverVehicleRecord } from "@/lib/driverVehicles";
+import { useOwnerOperatorReturnToOwner } from "@/hooks/useOwnerOperatorModeNavigation";
 import { useAuthContext } from "@/hooks/useAuthContext";
 import { trpc } from "@/lib/trpc";
 import { getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
@@ -300,6 +301,22 @@ function DriverDiagnosisContent() {
     Boolean(vehicleId) && !selectedVehicle && !vehiclesQuery.isLoading;
   const clarificationPanelRef = useRef<HTMLDivElement | null>(null);
   const lastAnnouncedQuestionRef = useRef("");
+  const hasDriverModeWorkInProgress =
+    symptom.trim().length > 0 ||
+    faultCode.trim().length > 0 ||
+    clarificationHistory.length > 0 ||
+    clarificationAnswer.trim().length > 0 ||
+    diagnosisStarted ||
+    diagnoseMutation.isPending;
+  const {
+    canReturnToOwnerDashboard,
+    requestReturnToOwnerDashboard,
+    ownerDashboardReturnDialog,
+  } = useOwnerOperatorReturnToOwner({
+    hasInProgressWork: hasDriverModeWorkInProgress,
+    description:
+      "You have diagnosis work in progress. Leaving Driver Mode now may interrupt this intake and clarification flow.",
+  });
 
   useEffect(() => {
     if (!demoCase) return;
@@ -403,6 +420,7 @@ function DriverDiagnosisContent() {
   if (!vehicleId) {
     return (
       <div className="app-shell min-h-screen">
+        {ownerDashboardReturnDialog}
         <main className="mx-auto max-w-4xl px-4 py-12 sm:px-6 lg:px-8">
           <Card className="fleet-panel border-[#ffdbcb] bg-[#fff6f0] shadow-none">
             <CardHeader>
@@ -469,6 +487,11 @@ function DriverDiagnosisContent() {
                       />
                     ) : null
                   )}
+                  {canReturnToOwnerDashboard ? (
+                    <Button variant="outline" onClick={requestReturnToOwnerDashboard}>
+                      Back to Owner Dashboard
+                    </Button>
+                  ) : null}
                   <Button variant="outline" onClick={() => (window.location.href = "/driver")}>Back to Dashboard</Button>
                 </div>
               </div>
@@ -492,6 +515,7 @@ function DriverDiagnosisContent() {
   if (isBlockedVehicleSelection) {
     return (
       <div className="app-shell min-h-screen">
+        {ownerDashboardReturnDialog}
         <main className="mx-auto max-w-4xl px-4 py-12 sm:px-6 lg:px-8">
           <Card className="fleet-panel border-[#ffdbcb] bg-[#fff6f0] shadow-none">
             <CardHeader>
@@ -510,6 +534,11 @@ function DriverDiagnosisContent() {
                   />
                 ) : null
               )}
+              {canReturnToOwnerDashboard ? (
+                <Button variant="outline" onClick={requestReturnToOwnerDashboard}>
+                  Back to Owner Dashboard
+                </Button>
+              ) : null}
               <Button variant="outline" onClick={() => (window.location.href = "/driver")}>
                 Back to Dashboard
               </Button>
@@ -522,16 +551,36 @@ function DriverDiagnosisContent() {
 
   return (
     <div className="app-shell min-h-screen">
+      {ownerDashboardReturnDialog}
       <header className="border-b border-[var(--fleet-outline)] bg-white/95 backdrop-blur">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-5 flex items-center justify-between">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-700 ring-1 ring-slate-200">
+              Driver Mode
+            </span>
+            {canReturnToOwnerDashboard ? (
+              <span className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 ring-1 ring-blue-200">
+                Owner-operator active
+              </span>
+            ) : null}
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="fleet-page-title text-2xl font-bold">Start Diagnosis</h1>
             <p className="text-sm text-slate-600">{vehicleLabel} diagnostic intake</p>
           </div>
-          <Button variant="outline" onClick={() => (window.location.href = "/driver")}>
-            <ChevronLeft className="w-4 h-4 mr-2" />
-            Back to Dashboard
-          </Button>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              {canReturnToOwnerDashboard ? (
+                <Button variant="outline" onClick={requestReturnToOwnerDashboard}>
+                  Back to Owner Dashboard
+                </Button>
+              ) : null}
+              <Button variant="outline" onClick={() => (window.location.href = "/driver")}>
+                <ChevronLeft className="w-4 h-4 mr-2" />
+                Back to Dashboard
+              </Button>
+            </div>
+          </div>
         </div>
       </header>
 

@@ -8,6 +8,8 @@ import VehicleCaptureFlow, {
 } from "@/components/VehicleCaptureFlow";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import { useAuthContext } from "@/hooks/useAuthContext";
+import { goToDriverMode } from "@/hooks/useOwnerOperatorModeNavigation";
+import { isOwnerOperatorEnabled } from "@/lib/ownerOperator";
 import { trpc } from "@/lib/trpc";
 import {
   getFallbackUnitNumber,
@@ -15,6 +17,12 @@ import {
 } from "@/lib/vehicleDisplay";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import {
   Card,
   CardContent,
@@ -356,6 +364,7 @@ function ManagerDashboardFixedContent() {
       .map(part => part.charAt(0).toUpperCase())
       .join("");
   }, [user?.name]);
+  const isOwnerOperator = isOwnerOperatorEnabled(user);
 
   const resetAssignmentDialog = () => {
     setAssignmentStep("form");
@@ -565,6 +574,13 @@ function ManagerDashboardFixedContent() {
     setIsAddVehicleOpen(true);
   };
 
+  const scrollToSection = (sectionId: string) => {
+    document.getElementById(sectionId)?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  };
+
   const resetVehicleDialog = () => {};
 
   const handleAddVehicle = async (draft: VehicleCaptureDraft) => {
@@ -696,7 +712,14 @@ function ManagerDashboardFixedContent() {
           <div className="flex items-start gap-4">
             <AppLogo imageClassName="h-10" frameClassName="p-1.5" href="/manager" />
             <div>
-              <p className="section-label">Manager dashboard</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="section-label">Manager dashboard</p>
+                {isOwnerOperator ? (
+                  <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-700 ring-1 ring-slate-200">
+                    Owner Mode
+                  </span>
+                ) : null}
+              </div>
               <h1 className="fleet-page-title mt-2 text-3xl font-semibold tracking-tight">
                 Fleet operations center
               </h1>
@@ -723,6 +746,15 @@ function ManagerDashboardFixedContent() {
             >
               Export morning brief
             </Button>
+            {isOwnerOperator ? (
+              <Button
+                variant="outline"
+                className="rounded-full border-[var(--fleet-outline)] bg-white"
+                onClick={() => goToDriverMode()}
+              >
+                Switch to Driver Mode
+              </Button>
+            ) : null}
             <Dialog
               open={isAddVehicleOpen}
               onOpenChange={open => {
@@ -781,7 +813,150 @@ function ManagerDashboardFixedContent() {
           </div>
         </div>
 
-        <section className="grid gap-4 md:grid-cols-3">
+        <section className="space-y-4 lg:hidden">
+          <Card className="saas-card border-0">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-slate-950">Quick actions</CardTitle>
+              <CardDescription>
+                Jump into the next owner task without hunting through the full dashboard.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 sm:grid-cols-2">
+              {isOwnerOperator ? (
+                <>
+                  <Button className="fleet-primary-btn h-12 rounded-2xl justify-start" onClick={() => goToDriverMode()}>
+                    Switch to Driver Mode
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-12 rounded-2xl justify-start border-[var(--fleet-outline)] bg-white"
+                    onClick={() => goToDriverMode("start-inspection")}
+                  >
+                    Start Inspection
+                  </Button>
+                </>
+              ) : null}
+              <Button
+                className="h-12 rounded-2xl justify-start bg-slate-900 text-white hover:bg-slate-800"
+                onClick={openAddVehicleDialog}
+              >
+                Add Vehicle
+              </Button>
+              <Button
+                variant="outline"
+                className="h-12 rounded-2xl justify-start border-[var(--fleet-outline)] bg-white"
+                onClick={() => scrollToSection("manager-open-defects-panel")}
+              >
+                View Open Defects
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card id="manager-open-defects-panel" className="saas-card border-0">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-slate-950">Urgent fleet issues</CardTitle>
+              <CardDescription>
+                The highest-priority items for the fleet right now.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-red-700">Open defects</p>
+                <p className="mt-2 text-2xl font-semibold text-red-950">
+                  {verifiedHealth?.openDefects.length ?? 0}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-700">Missed inspections</p>
+                <p className="mt-2 text-2xl font-semibold text-amber-950">
+                  {verifiedHealth?.today.missedInspections ?? 0}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-700">Needs manager action</p>
+                <p className="mt-2 text-2xl font-semibold text-blue-950">
+                  {managerActionItems.length}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="saas-card border-0">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-slate-950">Today&apos;s inspections</CardTitle>
+              <CardDescription>
+                Keep today&apos;s inspection status visible without opening the full reporting stack.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Inspected</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-950">
+                  {verifiedHealth?.today.inspectedVehicles ?? 0}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Completion</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-950">
+                  {verifiedHealth?.today.completionRate ?? 0}%
+                </p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Integrity score</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-950">
+                  {verifiedHealth?.averages.fleetIntegrityScore ?? 100}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Accordion type="multiple" className="space-y-3">
+            <AccordionItem value="snapshot" className="rounded-3xl border border-slate-200 bg-white px-5">
+              <AccordionTrigger className="text-base font-semibold text-slate-950">
+                Fleet snapshot
+              </AccordionTrigger>
+              <AccordionContent className="space-y-3 pb-4 text-sm text-slate-600">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl bg-slate-50 px-4 py-4">
+                    <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Vehicles in fleet</p>
+                    <p className="mt-2 text-2xl font-semibold text-slate-950">{vehiclesQuery.data?.length ?? 0}</p>
+                  </div>
+                  <div className="rounded-2xl bg-slate-50 px-4 py-4">
+                    <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Linked drivers</p>
+                    <p className="mt-2 text-2xl font-semibold text-slate-950">{drivers.length}</p>
+                  </div>
+                </div>
+                <Button variant="outline" className="w-full rounded-2xl" onClick={() => handleOpenAssign()}>
+                  Assign Vehicle / Trailer
+                </Button>
+              </AccordionContent>
+            </AccordionItem>
+            <AccordionItem value="monitoring" className="rounded-3xl border border-slate-200 bg-white px-5">
+              <AccordionTrigger className="text-base font-semibold text-slate-950">
+                Reports & monitoring
+              </AccordionTrigger>
+              <AccordionContent className="space-y-3 pb-4 text-sm text-slate-600">
+                <p>Daily health, DVIR reports, integrity alerts, and the morning brief remain available below on larger screens.</p>
+                <Button
+                  variant="outline"
+                  className="w-full rounded-2xl"
+                  onClick={() => {
+                    const firstReport = inspectionReportsQuery.data?.[0];
+                    if (firstReport) {
+                      navigate(`/inspection-report/${firstReport.id}`);
+                      return;
+                    }
+                    toast.info("No DVIR inspection reports are available yet.");
+                  }}
+                >
+                  Open latest inspection report
+                </Button>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </section>
+
+        <section className="hidden gap-4 lg:grid lg:grid-cols-3">
           {pilotAccess?.status === "active" ? (
             <Card className="metric-card border-0">
               <CardHeader className="pb-3">
@@ -855,7 +1030,7 @@ function ManagerDashboardFixedContent() {
           </Card>
         </section>
 
-        <section className="grid gap-4 lg:grid-cols-4">
+        <section id="manager-open-defects" className="hidden gap-4 lg:grid lg:grid-cols-4">
           <Card className="metric-card border-0">
             <CardHeader className="pb-3">
               <CardDescription>Inspected today</CardDescription>
@@ -916,7 +1091,7 @@ function ManagerDashboardFixedContent() {
           </Card>
         </section>
 
-        <section>
+        <section className="hidden lg:block">
           <Card className="saas-card">
             <CardHeader>
               <CardTitle className="text-slate-950">DVIR inspection reports</CardTitle>
@@ -963,7 +1138,7 @@ function ManagerDashboardFixedContent() {
           </Card>
         </section>
 
-        <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+        <section className="hidden gap-6 xl:grid-cols-[1.15fr_0.85fr] lg:grid">
           <Card className="saas-card">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-slate-950">
@@ -1225,7 +1400,7 @@ function ManagerDashboardFixedContent() {
           </Card>
         </section>
 
-        <section>
+        <section className="hidden lg:block">
           {resolvedFleetId != null ? <MorningFleetSummary fleetId={resolvedFleetId} /> : null}
         </section>
 

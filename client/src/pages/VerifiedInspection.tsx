@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import VehicleAccessRequestDialog from "@/components/VehicleAccessRequestDialog";
+import { useOwnerOperatorReturnToOwner } from "@/hooks/useOwnerOperatorModeNavigation";
 import { getInspectionErrorPresentation } from "@/lib/actionErrorMessages";
 import { trpc } from "@/lib/trpc";
 import { useAuthContext } from "@/hooks/useAuthContext";
@@ -207,6 +208,24 @@ function VerifiedInspectionContent() {
     }
     return Array.from(grouped.values());
   }, [openDefects]);
+  const hasDriverModeWorkInProgress =
+    Boolean(inspectionSession) ||
+    Object.keys(responses).length > 0 ||
+    Object.keys(proofPhotos).length > 0 ||
+    Object.keys(followUps).length > 0 ||
+    signatureConfirmed ||
+    notes.trim().length > 0 ||
+    startMutation.isPending ||
+    submitMutation.isPending;
+  const {
+    canReturnToOwnerDashboard,
+    requestReturnToOwnerDashboard,
+    ownerDashboardReturnDialog,
+  } = useOwnerOperatorReturnToOwner({
+    hasInProgressWork: hasDriverModeWorkInProgress,
+    description:
+      "You have verified inspection work in progress. Leaving Driver Mode now may interrupt this inspection.",
+  });
 
   const updateResponse = (item: any, patch: Partial<ChecklistResponse>) => {
     setResponses((current) => ({
@@ -356,6 +375,7 @@ function VerifiedInspectionContent() {
   if (!inspectionSession) {
     return (
       <div className="app-shell min-h-screen px-4 py-6">
+        {ownerDashboardReturnDialog}
         <div className="mx-auto max-w-3xl space-y-4">
           <Card className="fleet-panel border-[var(--fleet-outline)] shadow-none">
             <CardHeader>
@@ -401,6 +421,16 @@ function VerifiedInspectionContent() {
                 <ChevronLeft className="mr-2 h-4 w-4" />
                 Back to dashboard
               </Button>
+              {canReturnToOwnerDashboard ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-12 w-full text-base"
+                  onClick={requestReturnToOwnerDashboard}
+                >
+                  Back to Owner Dashboard
+                </Button>
+              ) : null}
               {!isOwnerOperator && (
                 fleetId > 0 ? (
                   <VehicleAccessRequestDialog
@@ -419,9 +449,20 @@ function VerifiedInspectionContent() {
 
   return (
     <div className="app-shell min-h-screen px-3 py-4 sm:px-6">
+      {ownerDashboardReturnDialog}
       <div className="mx-auto max-w-4xl space-y-4">
         <Card className="fleet-panel border-[var(--fleet-outline)] shadow-none">
           <CardHeader>
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-700 ring-1 ring-slate-200">
+                Driver Mode
+              </span>
+              {canReturnToOwnerDashboard ? (
+                <span className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 ring-1 ring-blue-200">
+                  Owner-operator active
+                </span>
+              ) : null}
+            </div>
             <CardTitle className="fleet-page-title flex items-center gap-2">
               <Clock3 className="h-5 w-5 text-[var(--fleet-primary)]" />
               Daily verified inspection
@@ -430,6 +471,13 @@ function VerifiedInspectionContent() {
               Started {new Date(inspectionSession.startedAt).toLocaleTimeString()} by {user?.name || "Driver"}.
               Location: {location?.permissionStatus ?? "unavailable"}.
             </CardDescription>
+            {canReturnToOwnerDashboard ? (
+              <div className="pt-2">
+                <Button type="button" variant="outline" onClick={requestReturnToOwnerDashboard}>
+                  Back to Owner Dashboard
+                </Button>
+              </div>
+            ) : null}
           </CardHeader>
         </Card>
 

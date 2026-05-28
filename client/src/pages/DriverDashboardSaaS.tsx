@@ -13,6 +13,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import QuickStartBanner from "@/components/quickStart/QuickStartBanner";
 import VehicleAccessRequestDialog from "@/components/VehicleAccessRequestDialog";
+import {
+  useOwnerOperatorReturnToOwner,
+} from "@/hooks/useOwnerOperatorModeNavigation";
 import { getBrowserStorage, getQueuedInspectionSubmissions, loadInspectionDraft } from "@/lib/inspectionDrafts";
 import { enqueueIssueReport, flushQueuedIssueReports, getQueuedIssueReports } from "@/lib/issueDrafts";
 import { trackEvent, trackInspectionStarted } from "@/lib/analytics";
@@ -151,9 +154,14 @@ function DriverDashboardContent() {
   const { user, logout } = useAuthContext();
   const [, navigate] = useLocation();
   const storedVehicle = useMemo(() => loadLastDriverVehicleContext(), []);
+  const launchIntent = useMemo(
+    () => new URLSearchParams(window.location.search).get("intent"),
+    []
+  );
   const [activeVehicleId, setActiveVehicleId] = useState<number | string>(
     () => storedVehicle?.id ?? 0
   );
+  const [handledLaunchIntent, setHandledLaunchIntent] = useState<string | null>(null);
   const [isIssueDialogOpen, setIsIssueDialogOpen] = useState(false);
   const [issueForm, setIssueForm] = useState({
     title: "",
@@ -333,6 +341,21 @@ function DriverDashboardContent() {
           : latestInspectionReport
             ? "Submitted"
             : "Not Started";
+  const hasDriverModeWorkInProgress =
+    pendingDrafts.length > 0 ||
+    isIssueDialogOpen ||
+    issueForm.title.trim().length > 0 ||
+    issueForm.description.trim().length > 0 ||
+    issueForm.photoUrls.length > 0;
+  const {
+    canReturnToOwnerDashboard,
+    requestReturnToOwnerDashboard,
+    ownerDashboardReturnDialog,
+  } = useOwnerOperatorReturnToOwner({
+    hasInProgressWork: hasDriverModeWorkInProgress,
+    description:
+      "You have work in progress in Driver Mode. Leaving now may interrupt an inspection draft or issue report.",
+  });
 
   useEffect(() => {
     if (!pilotAccess || pilotAccess.status !== "active") return;
@@ -435,6 +458,15 @@ function DriverDashboardContent() {
       `&session=${encodeURIComponent(inspectionSessionId)}` +
       "&combo=truck";
   };
+
+  useEffect(() => {
+    if (!activeVehicle || launchIntent !== "start-inspection" || handledLaunchIntent === launchIntent) {
+      return;
+    }
+
+    setHandledLaunchIntent(launchIntent);
+    startInspection(activeVehicle);
+  }, [activeVehicle, handledLaunchIntent, launchIntent]);
 
   const startDiagnosis = (vehicle: DriverVehicle) => {
     trackEvent("driver_diagnosis_started", { source: "driver_dashboard", vehicle_id: vehicle.id, vehicle_label: vehicle.label });
@@ -576,6 +608,7 @@ function DriverDashboardContent() {
 
   return (
     <div className="app-shell min-h-screen">
+      {ownerDashboardReturnDialog}
       <div className="fixed right-4 top-4 z-50">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -622,17 +655,44 @@ function DriverDashboardContent() {
 
       <header className="border-b border-[var(--fleet-outline)] bg-white/95 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 pr-20 sm:px-6 lg:px-8 lg:pr-24">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-700 ring-1 ring-slate-200">
+              Driver Mode
+            </span>
+            {canReturnToOwnerDashboard ? (
+              <span className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 ring-1 ring-blue-200">
+                Owner-operator active
+              </span>
+            ) : null}
+          </div>
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-4">
               <AppLogo variant="icon" imageClassName="h-full w-full" href="/driver" />
               <div>
-                <p className="section-label">Driver Mode</p>
                 <h1 className="fleet-page-title mt-2 text-3xl font-semibold tracking-tight">Today&apos;s driver workflow</h1>
                 <p className="mt-2 text-sm text-slate-600">Inspect assigned trucks and trailers, report defects, and send manager-ready updates from the yard or roadside.</p>
               </div>
             </div>
+            {canReturnToOwnerDashboard ? (
+              <Button
+                variant="outline"
+                className="hidden rounded-full border-slate-200 bg-white text-slate-900 sm:inline-flex"
+                onClick={requestReturnToOwnerDashboard}
+              >
+                Back to Owner Dashboard
+              </Button>
+            ) : null}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            {canReturnToOwnerDashboard ? (
+              <Button
+                variant="outline"
+                className="h-11 rounded-2xl border-slate-200 bg-white text-slate-900 sm:hidden"
+                onClick={requestReturnToOwnerDashboard}
+              >
+                Back to Owner Dashboard
+              </Button>
+            ) : null}
             <VehicleAccessRequestDialog
               fleetId={resolvedFleetId}
               triggerLabel="Request Vehicle Access"

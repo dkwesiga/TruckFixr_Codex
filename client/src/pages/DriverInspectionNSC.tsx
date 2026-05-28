@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import VehicleAccessRequestDialog from "@/components/VehicleAccessRequestDialog";
 import { useAuthContext } from "@/hooks/useAuthContext";
+import { useOwnerOperatorReturnToOwner } from "@/hooks/useOwnerOperatorModeNavigation";
 import { getInspectionErrorPresentation } from "@/lib/actionErrorMessages";
 import {
   clearInspectionDraft,
@@ -280,6 +281,15 @@ function DriverInspectionContent() {
     Boolean(inspectionSheetType) ||
     Object.keys(responses).length > 0 ||
     stepIndex > 0;
+  const {
+    canReturnToOwnerDashboard,
+    requestReturnToOwnerDashboard,
+    ownerDashboardReturnDialog,
+  } = useOwnerOperatorReturnToOwner({
+    hasInProgressWork: hasDraftData || submitMutation.isPending,
+    description:
+      "You have inspection work in progress. Leaving Driver Mode now may interrupt this inspection.",
+  });
 
   const pendingItems = useMemo(() => {
     const nextPendingItems: string[] = [];
@@ -865,6 +875,7 @@ function DriverInspectionContent() {
 
   return (
     <div className="min-h-screen bg-slate-50">
+      {ownerDashboardReturnDialog}
       <AlertDialog
         open={Boolean(odometerRevisionPrompt)}
         onOpenChange={(open) => {
@@ -900,6 +911,16 @@ function DriverInspectionContent() {
       </AlertDialog>
       <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/95 backdrop-blur-xl">
         <div className="mx-auto max-w-4xl px-4 py-4 sm:px-6 sm:py-5">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-700 ring-1 ring-slate-200">
+              Driver Mode
+            </span>
+            {canReturnToOwnerDashboard ? (
+              <span className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 ring-1 ring-blue-200">
+                Owner-operator active
+              </span>
+            ) : null}
+          </div>
           <div className="flex flex-col gap-3 sm:gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <p className="section-label">
@@ -923,6 +944,16 @@ function DriverInspectionContent() {
             </div>
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2 lg:min-w-[360px]">
+                {canReturnToOwnerDashboard ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-10 min-w-0 flex-1 rounded-full border-slate-200 bg-white px-3 text-sm"
+                    onClick={requestReturnToOwnerDashboard}
+                  >
+                    Back to Owner Dashboard
+                  </Button>
+                ) : null}
                 <Button
                   type="button"
                   variant="outline"
