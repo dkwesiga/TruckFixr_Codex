@@ -65,6 +65,9 @@ export default function UserProfile() {
 
   const updateProfileMutation = trpc.auth.updateProfile.useMutation();
   const createFleetMutation = trpc.fleet.create.useMutation();
+  const fleetsQuery = trpc.fleet.list.useQuery(undefined, {
+    enabled: Boolean(user) && (user?.role === "owner" || user?.role === "manager"),
+  });
   const subscriptionQuery = trpc.subscriptions.getCurrent.useQuery(undefined, {
     enabled: Boolean(user),
   });
@@ -94,6 +97,12 @@ export default function UserProfile() {
   const hasExistingFleet =
     typeof subscriptionQuery.data?.activeFleetId === "number" &&
     subscriptionQuery.data.activeFleetId > 0;
+  const existingFleetName =
+    fleetsQuery.data?.find((fleet) => fleet.id === subscriptionQuery.data?.activeFleetId)?.name ??
+    fleetsQuery.data?.[0]?.name ??
+    "";
+  const requiresCompanyName =
+    (formData.role === "manager" || formData.role === "owner") && !hasExistingFleet;
 
   useEffect(() => {
     if (!user) return;
@@ -108,6 +117,19 @@ export default function UserProfile() {
       company: current.company || loadCompanyName(),
     }));
   }, [user]);
+
+  useEffect(() => {
+    if (!existingFleetName.trim()) return;
+    setFormData((current) => {
+      if (current.company.trim()) {
+        return current;
+      }
+      return {
+        ...current,
+        company: existingFleetName,
+      };
+    });
+  }, [existingFleetName]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -155,7 +177,7 @@ export default function UserProfile() {
         return;
       }
 
-      if ((formData.role === "manager" || formData.role === "owner") && !formData.company.trim()) {
+      if (requiresCompanyName && !formData.company.trim()) {
         toast.error("Please enter your company name");
         setIsLoading(false);
         return;
@@ -470,9 +492,14 @@ export default function UserProfile() {
                       ? "Your company name (optional)"
                       : "Your company name"
                   }
-                  required={formData.role === "manager" || formData.role === "owner"}
+                  required={requiresCompanyName}
                   className="border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                 />
+                {hasExistingFleet && !formData.company.trim() ? (
+                  <p className="mt-1 text-xs text-slate-500">
+                    Using your existing fleet setup. Company name is optional for this profile update.
+                  </p>
+                ) : null}
                 </div>
 
                 <div>
