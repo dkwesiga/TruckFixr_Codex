@@ -231,6 +231,7 @@ function DriverInspectionContent() {
     enabled: Boolean(user?.id),
   });
   const submitMutation = trpc.inspections.create.useMutation();
+  const uploadEvidencePhotoMutation = trpc.inspections.uploadEvidencePhoto.useMutation();
   const vehicleChoices = useMemo<DriverVehicleRecord[]>(
     () =>
       (vehiclesQuery.data ?? []).map((vehicle) => ({
@@ -482,9 +483,33 @@ function DriverInspectionContent() {
     }));
   };
 
-  const handlePhotoUpload = async (itemId: string, files: FileList | null, input?: HTMLInputElement | null) => {
+  const handlePhotoUpload = async (
+    itemId: string,
+    files: FileList | null,
+    input?: HTMLInputElement | null
+  ) => {
     try {
-      const photoUrls = await filesToDataUrls(files);
+      const rawUrls = await filesToDataUrls(files);
+      if (rawUrls.length === 0) return;
+
+      const photoUrls = isOnline && fleetId > 0
+        ? await Promise.all(
+            rawUrls.map(async (dataUrl) => {
+              try {
+                const result = await uploadEvidencePhotoMutation.mutateAsync({
+                  fleetId,
+                  vehicleId,
+                  inspectionId: null,
+                  kind: "defect",
+                  dataUrl,
+                });
+                return result.url;
+              } catch {
+                return dataUrl;
+              }
+            })
+          )
+        : rawUrls;
       if (photoUrls.length === 0) return;
 
       setResponses((current) => {
@@ -508,11 +533,28 @@ function DriverInspectionContent() {
 
   const handleProofPhoto = async (proofItem: string, files: FileList | null, input?: HTMLInputElement | null) => {
     try {
-      const urls = await filesToDataUrls(files);
-      if (urls[0]) {
-        setProofPhotos((current) => ({ ...current, [proofItem]: urls[0] }));
-        toast.success("Verification photo attached.");
+      const rawUrls = await filesToDataUrls(files);
+      const firstUrl = rawUrls[0];
+      if (!firstUrl) return;
+
+      let url = firstUrl;
+      if (isOnline && fleetId > 0) {
+        try {
+          const result = await uploadEvidencePhotoMutation.mutateAsync({
+            fleetId,
+            vehicleId,
+            inspectionId: null,
+            kind: "proof",
+            dataUrl: firstUrl,
+          });
+          url = result.url;
+        } catch {
+          url = firstUrl;
+        }
       }
+
+      setProofPhotos((current) => ({ ...current, [proofItem]: url }));
+        toast.success("Verification photo attached.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to read photo");
     } finally {

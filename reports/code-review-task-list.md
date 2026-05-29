@@ -1,6 +1,6 @@
 # TruckFixr Fleet AI Code Review Task List
 
-Last updated: 2026-05-27
+Last updated: 2026-05-29
 
 ## Open Tasks
 
@@ -20,7 +20,7 @@ Last updated: 2026-05-27
   - Category: Code quality & maintainability
   - Severity: High
   - First discovered date: 2026-05-11
-  - Last seen date: 2026-05-27
+  - Last seen date: 2026-05-28
   - Affected files: `server/db.ts`, `drizzle/*.sql`, `render.yaml`
   - Status: Open
   - Recommended fix: Batch I - move schema guarantees into canonical migrations after fresh-database validation; pair with Supabase source-of-truth work in Batch K.
@@ -132,26 +132,77 @@ Last updated: 2026-05-27
   - Category: Supabase database, RLS, storage & data safety
   - Severity: High
   - First discovered date: 2026-05-27
-  - Last seen date: 2026-05-27
+  - Last seen date: 2026-05-29
   - Affected files/tables/policies/buckets/functions: `client/src/pages/DriverInspectionNSC.tsx`, `client/src/pages/VerifiedInspection.tsx`, `drizzle/0007_verified_inspections.sql`, `inspectionPhotos`, `defects.photoUrls`, `server/storage.ts`, `docs/supabase-storage-privacy-plan.md`, `server/storagePolicies.test.ts`, `supabase/migrations/20260527113000_storage_privacy_policies.sql`
-  - Status: Open (repo-level migration and static policy proof implemented; live/local/staging storage behavior proof pending)
+  - Status: In Progress (repo-level migration + static policy proof present; online evidence upload path added; live/local/staging storage behavior proof pending)
   - Recommended fix: Apply `supabase/migrations/20260527113000_storage_privacy_policies.sql` only to a verified local/staging Supabase project, then decide whether pilot photos stay as limited data URLs or move to private Supabase Storage. Before real fleet use, prove private buckets, tenant-aware path/metadata rules, MIME/size limits, signed URL rules, orphan cleanup, and cross-company storage denial.
   - Verification command or check required: In local/staging, upload files as Company A driver/manager and prove Company B users cannot read/list/signed-url them; verify file metadata links company, vehicle, inspection, defect, user, and repair records. Latest evidence: 2026-05-27 targeted storage/RLS/support Vitest passed 3 files / 24 tests and final full Vitest passed 35 files / 243 tests. Supabase CLI was unavailable, so no live/local/staging storage policy application was performed.
   - Related batch: Batch K
   - Cross-reference batch if applicable: Batch B, Batch F
+
+- Task ID: TFX-CR-0035
+  - Task: Prove inspection/defect photo workflow privacy and consent end-to-end (including “proof photos”) with staging/local evidence.
+  - Category: Daily inspection workflow / data safety
+  - Severity: High
+  - First discovered date: 2026-05-29
+  - Last seen date: 2026-05-29
+  - Affected files/tables/policies/buckets/functions: inspection/defect photo capture flows, `server/routers/inspections.ts`, `server/routers/vehicles.ts`, `dist/public/*` client assets, and Storage policies/migrations related to `TFX-CR-0031`
+  - Status: Open
+  - Recommended fix: In a verified staging/local environment, validate upload/view/delete flows across multiple fleets/users; confirm “proof photo” UX disclosure and consent; confirm Storage object paths + policy enforcement deny cross-fleet list/read/signed-url; confirm orphan cleanup.
+  - Verification command or check required: Spawn-capable browser smoke + manual staging/local evidence run; optionally pair with `TFX-CR-0031` storage-policy proof steps.
+  - Related batch: Batch K
 
 - Task ID: TFX-CR-0032
   - Task: Resolve Supabase schema source-of-truth and generated database type drift.
   - Category: Supabase generated types / migration quality
   - Severity: Medium
   - First discovered date: 2026-05-27
-  - Last seen date: 2026-05-27
+  - Last seen date: 2026-05-28
   - Affected files/tables/policies/buckets/functions: `drizzle/schema.ts`, `drizzle/*.sql`, `supabase/migrations/20260403_expand_diagnostic_sessions.sql`, generated Supabase type files if added
   - Status: Open
   - Recommended fix: Document whether Drizzle is canonical and Supabase migrations are supplemental, or align Supabase migration/type generation workflow. Add safe type-generation instructions if Supabase clients are used directly.
   - Verification command or check required: Fresh schema build from canonical migrations; generated types exist or explicit Drizzle-only decision is documented; app typecheck passes.
   - Related batch: Batch K
   - Cross-reference batch if applicable: Batch I
+
+- Task ID: TFX-CR-0033
+  - Task: Align the live `vehicles` schema with the repo's additive vehicle fields so manager vehicle creation does not fail on schema drift.
+  - Category: Supabase / database schema safety
+  - Severity: High
+  - First discovered date: 2026-05-27
+  - Last seen date: 2026-05-28
+  - Affected files/tables/policies/buckets/functions: `server/routers/vehicles.ts`, `server/db.ts`, `drizzle/0013_truckfixr_pricing_refactor.sql`, `drizzle/0026_inspection_review_workflow_storage.sql`, `public.vehicles`
+  - Status: Open
+  - Recommended fix: Batch K1 - run the read-only preflight, then apply only the additive live schema alignment SQL for missing `vehicles` columns. If `vehicles.id` or related `vehicleId` types still drift, handle that as a separate Batch K2 step.
+  - Verification command or check required: Run the read-only checklist in `reports/batch-k1-live-schema-preflight-and-approval.md`, then after approval apply `reports/batch-k1-live-vehicles-schema.sql` and re-test live manager add-vehicle flow.
+  - Related batch: Batch K
+  - Cross-reference batch if applicable: Batch H
+
+## Access Control / Role Gating Tasks
+
+- Task ID: TFX-CR-0034
+  - Task: Prove owner-operator mode authorization and data invariants (no cross-fleet leakage; correct fleet membership; safe role gating).
+  - Category: Security & access control / role gating
+  - Severity: High
+  - First discovered date: 2026-05-28
+  - Last seen date: 2026-05-29
+  - Affected files: `client/src/components/OwnerOperatorGate.tsx`, `client/src/components/RoleBasedRoute.tsx`, `client/src/lib/roleBasedAccess.ts`, `client/src/lib/ownerOperator.ts`, `scripts/verify/owner-operator.ts`, `reports/batch-oo-owner-operator-staging-proof.md`, `package.json`, `server/services/ownerOperator.ts`, `server/routers/vehicleAccess.ts`, `server/services/ownerOperator.test.ts`, `server/ownerOperatorAccessControl.test.ts`, `server/routers/auth.ts`, `server/_core/localUsers.ts`, `drizzle/0028_owner_operator_mode.sql`
+  - Status: In Progress (server endpoints tightened; server authz tests added; full browser/staging flow proof pending)
+  - Recommended fix: Finish staged verification (local/staging) proving direct-route access control, correct fleet/membership invariants on toggle, and no cross-fleet read/write in owner-operator mode.
+  - Verification command or check required: `pnpm verify:owner-operator` (read-only DB invariants) + spawn-capable full `pnpm test` + browser smoke for direct-route protection.
+
+## AI Diagnosis / Reliability Tasks
+
+- Task ID: TFX-CR-0036
+  - Task: Add/verify observability + safety checks for diagnosis enum-format drift tolerance so provider regressions are detectable and non-corrupting.
+  - Category: AI diagnosis workflow / reliability
+  - Severity: Medium/High
+  - First discovered date: 2026-05-29
+  - Last seen date: 2026-05-29
+  - Affected files: `server/services/diagnosisWorkflow.ts`, `server/services/diagnosisWorkflow.test.ts`, `scripts/admin/probe-diagnosis-ai-health.ts`
+  - Status: In Progress (enum coercion summaries now recorded and surfaced; staging run + alerting proof pending)
+  - Recommended fix: Confirm drift-handled enum coercions are visible in staging telemetry and do not silently hide invalid final states; keep a tight threshold for “defaulted” enum coercions.
+  - Verification command or check required: Run `scripts/admin/probe-diagnosis-ai-health.ts` in staging and confirm recent diagnosis sessions surface `enumCoercions` evidence (non-zero when drift occurs; zero when outputs are clean).
 
 ## In Progress Tasks
 
@@ -177,7 +228,7 @@ Last updated: 2026-05-27
   - Task: Complete live verification of the RLS hardening migrations.
   - Category: Security & access control
   - Resolved date: 2026-05-18
-  - Evidence of resolution: `pnpm verify:rls` passed; reconfirmed 2026-05-27 with six checks green. Environment-classification guardrail is tracked separately under `TFX-CR-0030`.
+  - Evidence of resolution: `pnpm verify:rls` previously passed in a spawn/network-capable environment; on 2026-05-27 (sandbox rerun) `pnpm verify:rls` correctly refused to write verification rows because the DB target was unclassified (`unknown_remote`). Environment-classification guardrail is tracked separately under `TFX-CR-0030`.
 
 - Task ID: TFX-CR-0002
   - Task: Restore a fully green automated test suite.
@@ -237,7 +288,7 @@ Last updated: 2026-05-27
   - Task: Resolve critical/high dependency audit advisories.
   - Category: Security / Dependency Risk
   - Resolved date: 2026-05-14
-  - Evidence of resolution: 2026-05-27 `$env:NODE_OPTIONS='--use-system-ca'; pnpm audit --audit-level=high` reported only 1 low and 11 moderate advisories.
+  - Evidence of resolution: 2026-05-27 `$env:NODE_OPTIONS='--use-system-ca'; pnpm audit --audit-level=high` reported only 1 low and 11 moderate advisories (not reproducible in this sandbox rerun due to `ECONNREFUSED` to the npm audit endpoint).
 
 - Task ID: TFX-CR-0025
   - Task: Commit and apply migration 0025 before deploying the offline queue feature.
@@ -291,26 +342,17 @@ Last updated: 2026-05-27
 
 ## New Tasks From Today
 
-- Task ID: TFX-CR-0030
-  - Task: Add environment classification and guardrails before remote Supabase/Postgres verification scripts write test rows.
-  - Category: Supabase database safety / verification reliability
+- Task ID: TFX-CR-0035
+  - Task: Prove inspection/defect photo workflow privacy and consent end-to-end (including “proof photos”) with staging/local evidence.
+  - Category: Daily inspection workflow / data safety
   - Severity: High
-  - Affected files: `scripts/verify/rls.ts`, `scripts/verify/stripe.ts`, demo/seed verification scripts
-  - Recommended next action: Resolved for script guardrails; configure `TFX_DATABASE_TARGET=staging` and `ALLOW_STAGING_DB_VERIFY_WRITES=true` only for safe staging verification reruns.
+  - Recommended next action: Run cross-fleet photo privacy/consent proof on an explicitly classified staging/local target.
 
-- Task ID: TFX-CR-0031
-  - Task: Verify or implement Supabase Storage privacy for inspection/defect photos and uploaded evidence.
-  - Category: Supabase database, RLS, storage & data safety
-  - Severity: High
-  - Affected files: inspection photo UI, `inspectionPhotos`, `defects.photoUrls`, `server/storage.ts`, `server/storagePolicies.test.ts`, `supabase/migrations/20260527113000_storage_privacy_policies.sql`
-  - Recommended next action: Apply and behavior-test the private storage policy migration only in verified local/staging Supabase before any production storage change.
-
-- Task ID: TFX-CR-0032
-  - Task: Resolve Supabase schema source-of-truth and generated database type drift.
-  - Category: Supabase generated types / migration quality
-  - Severity: Medium
-  - Affected files: `drizzle/schema.ts`, `drizzle/*.sql`, `supabase/migrations/*`, generated database types
-  - Recommended next action: Decide whether Drizzle remains canonical or add Supabase type generation workflow.
+- Task ID: TFX-CR-0036
+  - Task: Add/verify observability + safety checks for diagnosis enum-format drift tolerance so provider regressions are detectable and non-corrupting.
+  - Category: AI diagnosis workflow / reliability
+  - Severity: Medium/High
+  - Recommended next action: Run the new diagnosis health probe in staging and confirm drift-handled signals are visible.
 
 ## Rolling Implementation Roadmap
 
