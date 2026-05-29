@@ -681,4 +681,119 @@ describe("MVP diagnosis workflow", () => {
   it("classifies no-code symptoms without blocking diagnosis", () => {
     expect(classifyDiagnosticIssue({ symptoms: "Rough idle and vibration", faultCodes: [] })).toBe("normal");
   });
+
+  // Regression: production logs on 2026-05-29 showed every diagnosis call
+  // failing Zod validation because small LLMs were echoing the prompt template
+  // literally (e.g. status: "clarification_needed/final"). The coercer
+  // should normalize these so the pipeline still returns a usable answer.
+  it("rescues responses where the LLM echoes the slash-joined enum template", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        const system = firstMessageText(body);
+        if (system.includes("routing classifier")) {
+          // Routing classifier echoing every enum field with the slash joiner
+          return createAiResponse({
+            case_type: "normal/fault_code/safety_critical/complex",
+            issue_type: "symptom_only/fault_code/mixed",
+            code_type: "SPN_FMI/MID_PID_SID_FMI/OBD_DTC/ABS/transmission/aftertreatment/unknown/none",
+            risk_level: "low/medium/high/critical",
+            reference_lookup_required: true,
+            reference_match_quality: "approved_match/no_match/needs_review_internal/none",
+            needs_clarification: false,
+            clarifying_question: "",
+            clarification_reason: "",
+            confidence_score: 82,
+            recommended_model_tier: "low_cost/advanced",
+            escalation_required: false,
+            reason_for_escalation: "",
+            extracted_fault_codes: ["SPN 4364 FMI 18"],
+            normalized_symptoms: ["Low power"],
+          });
+        }
+        // Diagnosis stage echoing slash strings + a few synonym variants
+        return createAiResponse({
+          case_id: "case-test",
+          vehicle_id: "veh-1",
+          status: "clarification_needed/final",
+          issue_summary: "Low power with aftertreatment fault.",
+          systems_affected: ["aftertreatment"],
+          likely_causes: [
+            {
+              cause: "SCR/DEF dosing fault",
+              likelihood: "high/medium/low",
+              probability: 78,
+              reasoning: "SPN/FMI points to aftertreatment derate.",
+            },
+          ],
+          confidence_score: 85,
+          clarifying_question: "",
+          clarification_reason: "",
+          recommended_tests: ["Scan aftertreatment codes"],
+          likely_parts: ["NOx sensor"],
+          safe_to_drive_decision:
+            "safe_to_drive/drive_with_caution/stop_and_inspect/tow_or_repair_immediately",
+          risk_level: "low/medium/high/critical",
+          maintenance_recommendation: "Inspect aftertreatment.",
+          compliance_impact: "none/warning/critical",
+          driver_friendly_explanation: "Emissions system may need attention.",
+          manager_summary: "Verify aftertreatment before dispatch.",
+          model_used: "",
+          fallback_used: false,
+        });
+      })
+    );
+
+    const result = await runDiagnosisWorkflow({
+      vehicleId: "veh-1",
+      context: baseContext(),
+    });
+
+    // All enum fields should be normalized to the first valid value
+    // listed in the slash-joined template (or a safe default).
+    expect(["clarification_needed", "final"]).toContain(result.diagnosis.status);
+    expect(["safe_to_drive", "drive_with_caution", "stop_and_inspect", "tow_or_repair_immediately"]).toContain(
+      result.diagnosis.safe_to_drive_decision
+    );
+    expect(["low", "medium", "high", "critical"]).toContain(result.diagnosis.risk_level);
+    expect(["none", "warning", "critical"]).toContain(result.diagnosis.compliance_impact);
+    expect(["high", "medium", "low"]).toContain(result.diagnosis.likely_causes[0]?.likelihood);
+    // And we should have a real diagnosis, not the rule-engine fallback path
+    expect(result.diagnosis.issue_summary).toContain("aftertreatment");
+  });
+
+  it("normalizes near-synonym variants the LLM may use instead of canonical enum values", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        const system = firstMessageText(body);
+        if (system.includes("routing classifier")) return createAiResponse(routing({ confidence_score: 84 }));
+        return createAiResponse({
+          ...diagnosis({ confidence_score: 90 }),
+          // Synonyms / variant spellings small models commonly produce.
+          // (Note: risk_level may be overridden downstream by safety logic,
+          // so we don't assert it here — the coercer is exercised through
+          // the slash-template test above.)
+          status: "done",
+          compliance_impact: "warn",
+          likely_causes: [
+            { cause: "Test cause", likelihood: "moderate", probability: 70, reasoning: "" },
+          ],
+        });
+      })
+    );
+
+    const result = await runDiagnosisWorkflow({
+      vehicleId: "veh-1",
+      context: baseContext(),
+    });
+
+    // Synonyms should be normalized to canonical enum values — and crucially,
+    // the response should NOT have been rejected as invalid by Zod.
+    expect(result.diagnosis.status).toBe("final");
+    expect(result.diagnosis.compliance_impact).toBe("warning");
+    expect(result.diagnosis.likely_causes[0]?.likelihood).toBe("medium");
+  });
 });

@@ -608,14 +608,221 @@ function buildFallbackClarification(input: {
   );
 }
 
+/**
+ * Normalize an LLM-returned string against an allowed enum.
+ *
+ * Handles common ways small/fast models go off-script:
+ *   - echoing the slash-joined prompt template literally
+ *     (e.g. "clarification_needed/final" → "clarification_needed")
+ *   - returning a near-synonym
+ *     (e.g. "needs clarification" → "clarification_needed",
+ *      "done" → "final")
+ *   - casing / whitespace / hyphen / space drift
+ *     (e.g. "Clarification Needed", "clarification-needed")
+ *
+ * `synonyms` is keyed by the canonical allowed value and lists alternate
+ * spellings/words that should map to it. If no match is found, returns
+ * `safeDefault` so downstream Zod parsing still succeeds with a benign value.
+ */
+function coerceEnumValue(
+  raw: unknown,
+  allowed: readonly string[],
+  safeDefault: string,
+  synonyms: Record<string, readonly string[]> = {}
+): string {
+  if (typeof raw !== "string") return safeDefault;
+  const trimmed = raw.trim();
+  if (!trimmed) return safeDefault;
+
+  // Exact match — fast path
+  if ((allowed as readonly string[]).includes(trimmed)) return trimmed;
+
+  // Try each token of a slash- or pipe-joined echo
+  const candidates = trimmed
+    .split(/[/|,]/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  for (const candidate of candidates) {
+    if ((allowed as readonly string[]).includes(candidate)) return candidate;
+  }
+
+  // Normalize: lowercase, collapse separators
+  const normalize = (value: string) =>
+    value.toLowerCase().replace(/[\s\-]+/g, "_").replace(/_+/g, "_");
+  const normalizedRaw = normalize(trimmed);
+
+  for (const value of allowed) {
+    if (normalize(value) === normalizedRaw) return value;
+  }
+  for (const candidate of candidates) {
+    const normalizedCandidate = normalize(candidate);
+    for (const value of allowed) {
+      if (normalize(value) === normalizedCandidate) return value;
+    }
+  }
+
+  // Synonyms (case-insensitive substring contains)
+  for (const [canonical, alternates] of Object.entries(synonyms)) {
+    if (!(allowed as readonly string[]).includes(canonical)) continue;
+    for (const alt of alternates) {
+      const normalizedAlt = normalize(alt);
+      if (normalizedRaw === normalizedAlt || normalizedRaw.includes(normalizedAlt)) {
+        return canonical;
+      }
+    }
+  }
+
+  return safeDefault;
+}
+
+function coerceArrayEnum(
+  raw: unknown,
+  allowed: readonly string[],
+  safeDefault: string,
+  synonyms: Record<string, readonly string[]> = {}
+): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => coerceEnumValue(item, allowed, safeDefault, synonyms));
+}
+
+/** In-place sanitize known enum fields in the LLM's diagnosis output. */
+function coerceDiagnosisOutput(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  const obj = value as Record<string, unknown>;
+
+  obj.status = coerceEnumValue(
+    obj.status,
+    ["clarification_needed", "final"] as const,
+    "final",
+    {
+      clarification_needed: ["needs_clarification", "ask", "ask_question", "question", "needs_more_info", "pending"],
+      final: ["done", "complete", "completed", "finalized", "ready", "answer"],
+    }
+  );
+
+  obj.safe_to_drive_decision = coerceEnumValue(
+    obj.safe_to_drive_decision,
+    ["safe_to_drive", "drive_with_caution", "stop_and_inspect", "tow_or_repair_immediately"] as const,
+    "stop_and_inspect",
+    {
+      safe_to_drive: ["safe", "ok_to_drive", "no_issue"],
+      drive_with_caution: ["caution", "monitor", "drive_cautiously"],
+      stop_and_inspect: ["stop", "inspect", "pull_over"],
+      tow_or_repair_immediately: ["tow", "do_not_operate", "repair_immediately", "no_drive"],
+    }
+  );
+
+  obj.risk_level = coerceEnumValue(
+    obj.risk_level,
+    ["low", "medium", "high", "critical"] as const,
+    "medium",
+    {
+      medium: ["moderate", "mid"],
+      critical: ["severe", "urgent", "danger"],
+    }
+  );
+
+  obj.compliance_impact = coerceEnumValue(
+    obj.compliance_impact,
+    ["none", "warning", "critical"] as const,
+    "none",
+    {
+      warning: ["warn", "minor", "low"],
+      critical: ["severe", "major", "violation"],
+    }
+  );
+
+  if (Array.isArray(obj.likely_causes)) {
+    obj.likely_causes = obj.likely_causes.map((cause) => {
+      if (!cause || typeof cause !== "object") return cause;
+      const causeObj = cause as Record<string, unknown>;
+      causeObj.likelihood = coerceEnumValue(
+        causeObj.likelihood,
+        ["high", "medium", "low"] as const,
+        "medium",
+        { medium: ["moderate", "mid"] }
+      );
+      return causeObj;
+    });
+  }
+
+  return obj;
+}
+
+/** In-place sanitize known enum fields in the LLM's routing classification. */
+function coerceRoutingClassification(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  const obj = value as Record<string, unknown>;
+
+  obj.case_type = coerceEnumValue(
+    obj.case_type,
+    ["normal", "fault_code", "safety_critical", "complex"] as const,
+    "normal",
+    {
+      safety_critical: ["safety", "critical"],
+      complex: ["complex_high_risk", "complicated"],
+    }
+  );
+
+  obj.issue_type = coerceEnumValue(
+    obj.issue_type,
+    ["symptom_only", "fault_code", "mixed"] as const,
+    "symptom_only",
+    {
+      mixed: ["both", "symptom_and_code", "combined"],
+    }
+  );
+
+  obj.code_type = coerceEnumValue(
+    obj.code_type,
+    ["SPN_FMI", "MID_PID_SID_FMI", "OBD_DTC", "ABS", "transmission", "aftertreatment", "unknown", "none"] as const,
+    "none",
+    {
+      OBD_DTC: ["obd", "obdii", "dtc"],
+      SPN_FMI: ["spn", "fmi", "j1939"],
+      none: ["n_a", "na"],
+    }
+  );
+
+  obj.risk_level = coerceEnumValue(
+    obj.risk_level,
+    ["low", "medium", "high", "critical"] as const,
+    "medium",
+    { medium: ["moderate", "mid"], critical: ["severe", "urgent"] }
+  );
+
+  obj.reference_match_quality = coerceEnumValue(
+    obj.reference_match_quality,
+    ["none", "approved_match", "needs_review_internal", "no_match"] as const,
+    "none",
+    {
+      approved_match: ["match", "approved", "exact"],
+      needs_review_internal: ["needs_review", "review", "internal_review"],
+      no_match: ["no_matches", "missing"],
+    }
+  );
+
+  obj.recommended_model_tier = coerceEnumValue(
+    obj.recommended_model_tier,
+    ["low_cost", "advanced"] as const,
+    "low_cost",
+    {
+      low_cost: ["low", "cheap", "basic", "fast"],
+      advanced: ["high", "premium", "advanced_model", "strong"],
+    }
+  );
+
+  return obj;
+}
+
 function parseDiagnosisJson(text: string) {
   const parsed = JSON.parse(extractJsonObject(text)) as unknown;
-  return diagnosisOutputSchema.parse(parsed);
+  return diagnosisOutputSchema.parse(coerceDiagnosisOutput(parsed));
 }
 
 function parseRoutingJson(text: string) {
   const parsed = JSON.parse(extractJsonObject(text)) as unknown;
-  return diagnosticRoutingClassificationSchema.parse(parsed);
+  return diagnosticRoutingClassificationSchema.parse(coerceRoutingClassification(parsed));
 }
 
 function codeTypeFromPreprocessing(preprocessing: DiagnosticPreprocessingResult) {
@@ -724,16 +931,19 @@ function buildUserPrompt(input: {
     confirmed_outcome_references: input.context.confirmed_outcome_references ?? [],
   };
   return JSON.stringify({
+    // IMPORTANT: enum fields show one valid example value below. Use ONLY
+    // values from allowed_values in the rules section — do not echo the
+    // example. Strings like "low/medium/high/critical" are NOT valid.
     required_contract: {
       case_id: input.caseId,
       vehicle_id: input.vehicleId,
-      status: "clarification_needed/final",
+      status: "final",
       issue_summary: "",
       systems_affected: [],
       likely_causes: [
         {
           cause: "",
-          likelihood: "high/medium/low",
+          likelihood: "medium",
           probability: 0,
           reasoning: "",
         },
@@ -743,11 +953,10 @@ function buildUserPrompt(input: {
       clarification_reason: "",
       recommended_tests: [],
       likely_parts: [],
-      safe_to_drive_decision:
-        "safe_to_drive/drive_with_caution/stop_and_inspect/tow_or_repair_immediately",
-      risk_level: "low/medium/high/critical",
+      safe_to_drive_decision: "stop_and_inspect",
+      risk_level: "medium",
       maintenance_recommendation: "",
-      compliance_impact: "none/warning/critical",
+      compliance_impact: "none",
       driver_friendly_explanation: "",
       manager_summary: "",
       model_used: "",
@@ -760,8 +969,14 @@ function buildUserPrompt(input: {
         "include one clarifying_question and clarification_reason; do not present a certain final repair recommendation; include temporary safety guidance if needed",
       if_status_final:
         "clarifying_question must be empty; include final tests, safe-to-drive decision, likely parts, and maintenance recommendation",
+      status_allowed_values: diagnosisStatusSchema.options,
+      likelihood_allowed_values: ["high", "medium", "low"],
       safe_to_drive_decision_allowed_values: safeToDriveDecisionSchema.options,
+      risk_level_allowed_values: riskLevelSchema.options,
+      compliance_impact_allowed_values: complianceImpactSchema.options,
       no_labor_estimates: true,
+      enum_strictness:
+        "All enum-valued fields must contain EXACTLY one value from the matching *_allowed_values list. Do not concatenate options with '/'.",
     },
     issue_classification: input.classification,
     routing_classification: input.routing,
@@ -793,18 +1008,21 @@ function buildRoutingUserPrompt(input: {
     confirmed_outcome_references: input.context.confirmed_outcome_references ?? [],
   };
   return JSON.stringify({
+    // IMPORTANT: enum fields below show ONE valid example value. Replace each
+    // with exactly one value from the matching *_allowed_values list in rules.
+    // Never output a slash-joined string like "low/medium/high/critical".
     required_contract: {
-      case_type: "normal/fault_code/safety_critical/complex",
-      issue_type: "symptom_only/fault_code/mixed",
-      code_type: "SPN_FMI/MID_PID_SID_FMI/OBD_DTC/ABS/transmission/aftertreatment/unknown/none",
-      risk_level: "low/medium/high/critical",
+      case_type: "normal",
+      issue_type: "symptom_only",
+      code_type: "none",
+      risk_level: "medium",
       reference_lookup_required: true,
-      reference_match_quality: "approved_match/no_match/needs_review_internal/none",
+      reference_match_quality: "none",
       needs_clarification: true,
       clarifying_question: "",
       clarification_reason: "",
       confidence_score: 0,
-      recommended_model_tier: "low_cost/advanced",
+      recommended_model_tier: "low_cost",
       escalation_required: true,
       reason_for_escalation: "",
       extracted_fault_codes: [],
@@ -816,6 +1034,23 @@ function buildRoutingUserPrompt(input: {
       never_use_generic_more_details_question: true,
       escalate_for_safety_unclear_or_high_risk_codes: true,
       fault_code_reference_status: input.referenceLookup.match_status,
+      case_type_allowed_values: ["normal", "fault_code", "safety_critical", "complex"],
+      issue_type_allowed_values: ["symptom_only", "fault_code", "mixed"],
+      code_type_allowed_values: [
+        "SPN_FMI",
+        "MID_PID_SID_FMI",
+        "OBD_DTC",
+        "ABS",
+        "transmission",
+        "aftertreatment",
+        "unknown",
+        "none",
+      ],
+      risk_level_allowed_values: ["low", "medium", "high", "critical"],
+      reference_match_quality_allowed_values: ["approved_match", "no_match", "needs_review_internal", "none"],
+      recommended_model_tier_allowed_values: ["low_cost", "advanced"],
+      enum_strictness:
+        "All enum-valued fields must contain EXACTLY one value from the matching *_allowed_values list. Do not concatenate options with '/'.",
     },
     compact_context: compactPromptContext,
     preprocessing: input.preprocessing,
