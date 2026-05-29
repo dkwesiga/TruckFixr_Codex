@@ -118,6 +118,15 @@ async function main() {
     isChunkLoadError,
   } = chunkRecovery;
 
+  const ownerOperator = await import("../client/src/lib/ownerOperator.ts");
+  const { canUseDriverWorkflows, isOwnerOperatorEnabled } = ownerOperator;
+
+  const roleBasedAccess = await import("../client/src/lib/roleBasedAccess.ts");
+  const { hasRoleBasedAccess } = roleBasedAccess;
+
+  const evidencePhotos = await import("../server/services/evidencePhotos.ts");
+  const { buildEvidencePhotoStorageKey, parseEvidenceImageDataUrl } = evidencePhotos;
+
   const tests = [
     {
       name: "chunkRecovery: detects common chunk-load failures",
@@ -125,6 +134,42 @@ async function main() {
         assert.equal(isChunkLoadError(new Error("Failed to fetch dynamically imported module")), true);
         assert.equal(isChunkLoadError(new Error("Loading chunk dashboard failed")), true);
         assert.equal(isChunkLoadError(new Error("Something else failed")), false);
+      },
+    },
+    {
+      name: "ownerOperator: enabled only for owners with flag",
+      fn: () => {
+        assert.equal(isOwnerOperatorEnabled({ role: "owner", ownerOperatorMode: true }), true);
+        assert.equal(isOwnerOperatorEnabled({ role: "owner", ownerOperatorMode: false }), false);
+        assert.equal(isOwnerOperatorEnabled({ role: "driver", ownerOperatorMode: true }), false);
+        assert.equal(isOwnerOperatorEnabled({ role: "manager", ownerOperatorMode: true }), false);
+      },
+    },
+    {
+      name: "ownerOperator: canUseDriverWorkflows matches policy",
+      fn: () => {
+        assert.equal(canUseDriverWorkflows({ role: "driver" }), true);
+        assert.equal(canUseDriverWorkflows({ role: "manager" }), true);
+        assert.equal(canUseDriverWorkflows({ role: "owner", ownerOperatorMode: true }), true);
+        assert.equal(canUseDriverWorkflows({ role: "owner", ownerOperatorMode: false }), false);
+        assert.equal(canUseDriverWorkflows(null), false);
+      },
+    },
+    {
+      name: "roleBasedRoute: owner-operator counts as driver access",
+      fn: () => {
+        assert.equal(
+          hasRoleBasedAccess({ user: { role: "owner", ownerOperatorMode: true }, requiredRoles: ["driver"] }),
+          true
+        );
+        assert.equal(
+          hasRoleBasedAccess({ user: { role: "owner", ownerOperatorMode: true }, requiredRoles: ["owner_operator"] }),
+          true
+        );
+        assert.equal(
+          hasRoleBasedAccess({ user: { role: "owner", ownerOperatorMode: false }, requiredRoles: ["driver"] }),
+          false
+        );
       },
     },
     {
@@ -264,6 +309,29 @@ async function main() {
             }
           }
         ),
+    },
+    {
+      name: "evidencePhotos: parses image data URLs and builds scoped keys",
+      fn: () => {
+        const bytes = Buffer.from("hello");
+        const dataUrl = `data:image/png;base64,${bytes.toString("base64")}`;
+        const parsed = parseEvidenceImageDataUrl(dataUrl);
+        assert.equal(parsed.mimeType, "image/png");
+        assert.equal(parsed.extension, "png");
+        assert.equal(parsed.sizeBytes > 0, true);
+
+        const key = buildEvidencePhotoStorageKey({
+          bucketId: "inspection-evidence",
+          fleetId: 123,
+          vehicleId: 456,
+          inspectionId: "unlinked",
+          kind: "defect",
+          extension: parsed.extension,
+        });
+        assert.ok(key.startsWith("inspection-evidence/company-123/"), "key should be scoped to company folder");
+        assert.ok(key.includes("/vehicle-456/defect/"), "key should include vehicle and kind");
+        assert.ok(key.endsWith(".png"), "key should include extension");
+      },
     },
   ];
 

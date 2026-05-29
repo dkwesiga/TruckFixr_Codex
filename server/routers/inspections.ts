@@ -82,6 +82,11 @@ import {
 } from "../services/vehicleAccess";
 import { sendEmail } from "../services/email";
 import { ENV } from "../_core/env";
+import { storagePut } from "../storage";
+import {
+  buildEvidencePhotoStorageKey,
+  parseEvidenceImageDataUrl,
+} from "../services/evidencePhotos";
 
 async function verifyFleetAccess(fleetId: number, userId: number, userRole: string): Promise<boolean> {
   return canManageVehicleAccess({
@@ -1099,6 +1104,82 @@ function buildDailyInspectionCreateResponse(input: {
 }
 
 export const inspectionsRouter = router({
+  uploadEvidencePhoto: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().int().positive(),
+        vehicleId: z.union([
+          z.coerce.number().int().positive(),
+          z.string().trim().min(1),
+        ]),
+        inspectionId: z
+          .union([z.coerce.number().int().positive(), z.string().trim().min(1)])
+          .nullish(),
+        kind: z.enum(["defect", "proof"]),
+        dataUrl: z.string().min(32),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database not available");
+
+      const hasAccess = await verifyVehicleInspectionAccess({
+        fleetId: input.fleetId,
+        vehicleId: input.vehicleId,
+        userId: ctx.user.id,
+        userRole: ctx.user.role,
+      });
+      if (!hasAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You do not have access to upload evidence for this vehicle",
+        });
+      }
+
+      const inspectionId = input.inspectionId ?? null;
+      if (inspectionId != null) {
+        const [inspection] = await db
+          .select({
+            id: inspections.id,
+            fleetId: inspections.fleetId,
+            vehicleId: inspections.vehicleId,
+          })
+          .from(inspections)
+          .where(eq(inspections.id, Number(inspectionId)))
+          .limit(1);
+
+        if (
+          !inspection ||
+          Number(inspection.fleetId) !== Number(input.fleetId) ||
+          String(inspection.vehicleId) !== String(input.vehicleId)
+        ) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Evidence upload is not permitted for this inspection",
+          });
+        }
+      }
+
+      const parsed = parseEvidenceImageDataUrl(input.dataUrl);
+      const key = buildEvidencePhotoStorageKey({
+        bucketId: "inspection-evidence",
+        fleetId: input.fleetId,
+        vehicleId: input.vehicleId,
+        inspectionId,
+        kind: input.kind,
+        extension: parsed.extension,
+      });
+
+      const { url } = await storagePut(key, parsed.bytes, parsed.mimeType);
+      return {
+        ok: true,
+        key,
+        url,
+        sizeBytes: parsed.sizeBytes,
+        mimeType: parsed.mimeType,
+      };
+    }),
+
   getDailyChecklist: protectedProcedure
     .input(z.object({ vehicleId: z.union([z.number(), z.string()]) }))
     .query(async ({ input, ctx }) => {

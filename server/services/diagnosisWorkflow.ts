@@ -233,6 +233,11 @@ export type AiCallHistoryEntry = {
   estimatedCostUsd: number | null;
   latencyMs: number | null;
   errorMessage?: string;
+  enumCoercions?: {
+    count: number;
+    defaulted: number;
+    fields: string[];
+  };
 };
 
 type ModelCandidate = {
@@ -626,13 +631,29 @@ function buildFallbackClarification(input: {
  */
 function coerceEnumValue(
   raw: unknown,
+  fieldName: string,
   allowed: readonly string[],
   safeDefault: string,
-  synonyms: Record<string, readonly string[]> = {}
+  synonyms: Record<string, readonly string[]> = {},
+  report?: { count: number; defaulted: number; fields: Set<string> }
 ): string {
-  if (typeof raw !== "string") return safeDefault;
+  if (typeof raw !== "string") {
+    if (report) {
+      report.count += 1;
+      report.defaulted += 1;
+      report.fields.add(fieldName);
+    }
+    return safeDefault;
+  }
   const trimmed = raw.trim();
-  if (!trimmed) return safeDefault;
+  if (!trimmed) {
+    if (report) {
+      report.count += 1;
+      report.defaulted += 1;
+      report.fields.add(fieldName);
+    }
+    return safeDefault;
+  }
 
   // Exact match — fast path
   if ((allowed as readonly string[]).includes(trimmed)) return trimmed;
@@ -643,7 +664,13 @@ function coerceEnumValue(
     .map((value) => value.trim())
     .filter(Boolean);
   for (const candidate of candidates) {
-    if ((allowed as readonly string[]).includes(candidate)) return candidate;
+    if ((allowed as readonly string[]).includes(candidate)) {
+      if (report) {
+        report.count += 1;
+        report.fields.add(fieldName);
+      }
+      return candidate;
+    }
   }
 
   // Normalize: lowercase, collapse separators
@@ -652,12 +679,24 @@ function coerceEnumValue(
   const normalizedRaw = normalize(trimmed);
 
   for (const value of allowed) {
-    if (normalize(value) === normalizedRaw) return value;
+    if (normalize(value) === normalizedRaw) {
+      if (report) {
+        report.count += 1;
+        report.fields.add(fieldName);
+      }
+      return value;
+    }
   }
   for (const candidate of candidates) {
     const normalizedCandidate = normalize(candidate);
     for (const value of allowed) {
-      if (normalize(value) === normalizedCandidate) return value;
+      if (normalize(value) === normalizedCandidate) {
+        if (report) {
+          report.count += 1;
+          report.fields.add(fieldName);
+        }
+        return value;
+      }
     }
   }
 
@@ -667,41 +706,78 @@ function coerceEnumValue(
     for (const alt of alternates) {
       const normalizedAlt = normalize(alt);
       if (normalizedRaw === normalizedAlt || normalizedRaw.includes(normalizedAlt)) {
+        if (report) {
+          report.count += 1;
+          report.fields.add(fieldName);
+        }
         return canonical;
       }
     }
   }
 
+  if (report) {
+    report.count += 1;
+    report.defaulted += 1;
+    report.fields.add(fieldName);
+  }
   return safeDefault;
 }
 
 function coerceArrayEnum(
   raw: unknown,
+  fieldName: string,
   allowed: readonly string[],
   safeDefault: string,
-  synonyms: Record<string, readonly string[]> = {}
+  synonyms: Record<string, readonly string[]> = {},
+  report?: { count: number; defaulted: number; fields: Set<string> }
 ): string[] {
   if (!Array.isArray(raw)) return [];
-  return raw.map((item) => coerceEnumValue(item, allowed, safeDefault, synonyms));
+  return raw.map((item) =>
+    coerceEnumValue(item, fieldName, allowed, safeDefault, synonyms, report)
+  );
+}
+
+function createEnumCoercionReport() {
+  return { count: 0, defaulted: 0, fields: new Set<string>() };
+}
+
+function attachEnumCoercions(
+  aiCallHistory: AiCallHistoryEntry[],
+  report: { count: number; defaulted: number; fields: Set<string> }
+) {
+  if (report.count === 0) return;
+  const last = aiCallHistory[aiCallHistory.length - 1];
+  if (!last) return;
+  last.enumCoercions = {
+    count: report.count,
+    defaulted: report.defaulted,
+    fields: Array.from(report.fields).sort(),
+  };
 }
 
 /** In-place sanitize known enum fields in the LLM's diagnosis output. */
-function coerceDiagnosisOutput(value: unknown): unknown {
+function coerceDiagnosisOutput(
+  value: unknown,
+  report?: { count: number; defaulted: number; fields: Set<string> }
+): unknown {
   if (!value || typeof value !== "object") return value;
   const obj = value as Record<string, unknown>;
 
   obj.status = coerceEnumValue(
     obj.status,
+    "status",
     ["clarification_needed", "final"] as const,
     "final",
     {
       clarification_needed: ["needs_clarification", "ask", "ask_question", "question", "needs_more_info", "pending"],
       final: ["done", "complete", "completed", "finalized", "ready", "answer"],
-    }
+    },
+    report
   );
 
   obj.safe_to_drive_decision = coerceEnumValue(
     obj.safe_to_drive_decision,
+    "safe_to_drive_decision",
     ["safe_to_drive", "drive_with_caution", "stop_and_inspect", "tow_or_repair_immediately"] as const,
     "stop_and_inspect",
     {
@@ -709,27 +785,32 @@ function coerceDiagnosisOutput(value: unknown): unknown {
       drive_with_caution: ["caution", "monitor", "drive_cautiously"],
       stop_and_inspect: ["stop", "inspect", "pull_over"],
       tow_or_repair_immediately: ["tow", "do_not_operate", "repair_immediately", "no_drive"],
-    }
+    },
+    report
   );
 
   obj.risk_level = coerceEnumValue(
     obj.risk_level,
+    "risk_level",
     ["low", "medium", "high", "critical"] as const,
     "medium",
     {
       medium: ["moderate", "mid"],
       critical: ["severe", "urgent", "danger"],
-    }
+    },
+    report
   );
 
   obj.compliance_impact = coerceEnumValue(
     obj.compliance_impact,
+    "compliance_impact",
     ["none", "warning", "critical"] as const,
     "none",
     {
       warning: ["warn", "minor", "low"],
       critical: ["severe", "major", "violation"],
-    }
+    },
+    report
   );
 
   if (Array.isArray(obj.likely_causes)) {
@@ -738,9 +819,11 @@ function coerceDiagnosisOutput(value: unknown): unknown {
       const causeObj = cause as Record<string, unknown>;
       causeObj.likelihood = coerceEnumValue(
         causeObj.likelihood,
+        "likely_causes[].likelihood",
         ["high", "medium", "low"] as const,
         "medium",
-        { medium: ["moderate", "mid"] }
+        { medium: ["moderate", "mid"] },
+        report
       );
       return causeObj;
     });
@@ -750,79 +833,102 @@ function coerceDiagnosisOutput(value: unknown): unknown {
 }
 
 /** In-place sanitize known enum fields in the LLM's routing classification. */
-function coerceRoutingClassification(value: unknown): unknown {
+function coerceRoutingClassification(
+  value: unknown,
+  report?: { count: number; defaulted: number; fields: Set<string> }
+): unknown {
   if (!value || typeof value !== "object") return value;
   const obj = value as Record<string, unknown>;
 
   obj.case_type = coerceEnumValue(
     obj.case_type,
+    "case_type",
     ["normal", "fault_code", "safety_critical", "complex"] as const,
     "normal",
     {
       safety_critical: ["safety", "critical"],
       complex: ["complex_high_risk", "complicated"],
-    }
+    },
+    report
   );
 
   obj.issue_type = coerceEnumValue(
     obj.issue_type,
+    "issue_type",
     ["symptom_only", "fault_code", "mixed"] as const,
     "symptom_only",
     {
       mixed: ["both", "symptom_and_code", "combined"],
-    }
+    },
+    report
   );
 
   obj.code_type = coerceEnumValue(
     obj.code_type,
+    "code_type",
     ["SPN_FMI", "MID_PID_SID_FMI", "OBD_DTC", "ABS", "transmission", "aftertreatment", "unknown", "none"] as const,
     "none",
     {
       OBD_DTC: ["obd", "obdii", "dtc"],
       SPN_FMI: ["spn", "fmi", "j1939"],
       none: ["n_a", "na"],
-    }
+    },
+    report
   );
 
   obj.risk_level = coerceEnumValue(
     obj.risk_level,
+    "routing.risk_level",
     ["low", "medium", "high", "critical"] as const,
     "medium",
-    { medium: ["moderate", "mid"], critical: ["severe", "urgent"] }
+    { medium: ["moderate", "mid"], critical: ["severe", "urgent"] },
+    report
   );
 
   obj.reference_match_quality = coerceEnumValue(
     obj.reference_match_quality,
+    "reference_match_quality",
     ["none", "approved_match", "needs_review_internal", "no_match"] as const,
     "none",
     {
       approved_match: ["match", "approved", "exact"],
       needs_review_internal: ["needs_review", "review", "internal_review"],
       no_match: ["no_matches", "missing"],
-    }
+    },
+    report
   );
 
   obj.recommended_model_tier = coerceEnumValue(
     obj.recommended_model_tier,
+    "recommended_model_tier",
     ["low_cost", "advanced"] as const,
     "low_cost",
     {
       low_cost: ["low", "cheap", "basic", "fast"],
       advanced: ["high", "premium", "advanced_model", "strong"],
-    }
+    },
+    report
   );
 
   return obj;
 }
 
-function parseDiagnosisJson(text: string) {
+function parseDiagnosisJson(
+  text: string,
+  report?: { count: number; defaulted: number; fields: Set<string> }
+) {
   const parsed = JSON.parse(extractJsonObject(text)) as unknown;
-  return diagnosisOutputSchema.parse(coerceDiagnosisOutput(parsed));
+  return diagnosisOutputSchema.parse(coerceDiagnosisOutput(parsed, report));
 }
 
-function parseRoutingJson(text: string) {
+function parseRoutingJson(
+  text: string,
+  report?: { count: number; defaulted: number; fields: Set<string> }
+) {
   const parsed = JSON.parse(extractJsonObject(text)) as unknown;
-  return diagnosticRoutingClassificationSchema.parse(coerceRoutingClassification(parsed));
+  return diagnosticRoutingClassificationSchema.parse(
+    coerceRoutingClassification(parsed, report)
+  );
 }
 
 function codeTypeFromPreprocessing(preprocessing: DiagnosticPreprocessingResult) {
@@ -1425,7 +1531,9 @@ export async function runDiagnosisWorkflow(
       }
       const rawText = ensureNonEmptyAiText(rawRouting, "routing classifier");
       try {
-        routing = parseRoutingJson(rawText);
+        const enumReport = createEnumCoercionReport();
+        routing = parseRoutingJson(rawText, enumReport);
+        attachEnumCoercions(aiCallHistory, enumReport);
       } catch (parseError) {
         const repaired = await repairRoutingJson({
           rawText,
@@ -1434,7 +1542,9 @@ export async function runDiagnosisWorkflow(
         aiCallHistory.push(
           ...aiCallHistoryFromResult("classification_repair", repaired, true)
         );
-        routing = parseRoutingJson(extractMessageText(repaired));
+        const enumReport = createEnumCoercionReport();
+        routing = parseRoutingJson(extractMessageText(repaired), enumReport);
+        attachEnumCoercions(aiCallHistory, enumReport);
       }
     } catch (error) {
       providerErrors.push({
@@ -1560,7 +1670,9 @@ export async function runDiagnosisWorkflow(
         let modelUsed = raw.orchestration?.model ?? raw.model ?? candidate.model ?? candidate.label;
 
         try {
-          parsed = parseDiagnosisJson(rawText);
+          const enumReport = createEnumCoercionReport();
+          parsed = parseDiagnosisJson(rawText, enumReport);
+          attachEnumCoercions(aiCallHistory, enumReport);
         } catch (parseError) {
           const repaired = await repairDiagnosisJson({
             candidate,
@@ -1576,7 +1688,9 @@ export async function runDiagnosisWorkflow(
               `Controlled fallback returned during JSON repair by ${candidate.provider}:${candidate.model ?? candidate.label}`
             );
           }
-          parsed = parseDiagnosisJson(extractMessageText(repaired));
+          const enumReport = createEnumCoercionReport();
+          parsed = parseDiagnosisJson(extractMessageText(repaired), enumReport);
+          attachEnumCoercions(aiCallHistory, enumReport);
           fallbackUsed = true;
           modelUsed = repaired.orchestration?.model ?? repaired.model ?? modelUsed;
         }

@@ -128,6 +128,69 @@ async function probeAiRequestLogs(pool: Pool, hours: number, limit: number) {
   }
 }
 
+async function probeEnumCoercions(pool: Pool, hours: number, limit: number) {
+  console.log(`\n=== enumCoercions (aiQualityReviewLogs metadata) over last ${hours}h ===`);
+  try {
+    const aggregate = await pool.query(
+      `SELECT
+         COUNT(*)::int AS total_rows,
+         SUM(CASE WHEN ("metadata"->'enumCoercions') IS NULL THEN 0 ELSE 1 END)::int AS rows_with_enum_coercions
+       FROM "aiQualityReviewLogs"
+       WHERE "createdAt" >= NOW() - ($1::int * INTERVAL '1 hour')`,
+      [hours]
+    );
+
+    const totals = (aggregate.rows?.[0] as any) ?? null;
+    console.log(
+      `  total_rows=${Number(totals?.total_rows ?? 0)} rows_with_enum_coercions=${Number(
+        totals?.rows_with_enum_coercions ?? 0
+      )}`
+    );
+
+    const sample = await pool.query(
+      `SELECT
+         "createdAt",
+         "diagnosticCaseId",
+         "fleetId",
+         "modelUsed",
+         "providerUsed",
+         "metadata"->'enumCoercions' AS enum_coercions
+       FROM "aiQualityReviewLogs"
+       WHERE "createdAt" >= NOW() - ($1::int * INTERVAL '1 hour')
+         AND ("metadata"->'enumCoercions') IS NOT NULL
+       ORDER BY "createdAt" DESC
+       LIMIT $2`,
+      [hours, limit]
+    );
+
+    if (sample.rowCount === 0) {
+      console.log("  (no enumCoercions recorded in this window)");
+      return;
+    }
+
+    console.table(
+      sample.rows.map((row) => ({
+        createdAt:
+          row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
+        diagnosticCaseId: row.diagnosticCaseId ?? "",
+        fleetId: row.fleetId ?? "",
+        provider: row.providerUsed ?? "",
+        model: row.modelUsed ?? "",
+        enumCoercions:
+          typeof row.enum_coercions === "object"
+            ? JSON.stringify(row.enum_coercions)
+            : String(row.enum_coercions),
+      }))
+    );
+  } catch (error) {
+    console.log(
+      `  (skipped) Unable to query aiQualityReviewLogs: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+}
+
 async function probeOpenRouterKey(apiKey: string) {
   console.log(`\n=== OpenRouter /auth/key ===`);
   try {
@@ -256,6 +319,7 @@ async function main() {
     });
     try {
       await probeAiRequestLogs(pool, args.hours, args.limit);
+      await probeEnumCoercions(pool, args.hours, args.limit);
     } catch (error) {
       console.log(`\n  ERROR reading aiRequestLogs: ${error instanceof Error ? error.message : String(error)}`);
     } finally {

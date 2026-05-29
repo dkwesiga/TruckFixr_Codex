@@ -163,6 +163,7 @@ function VerifiedInspectionContent() {
 
   const startMutation = trpc.inspections.startVerified.useMutation();
   const submitMutation = trpc.inspections.submitVerified.useMutation();
+  const uploadEvidencePhotoMutation = trpc.inspections.uploadEvidencePhoto.useMutation();
   const vehiclesQuery = trpc.vehicles.listByFleet.useQuery(
     { fleetId },
     { staleTime: 30_000, enabled: fleetId > 0 }
@@ -276,12 +277,56 @@ function VerifiedInspectionContent() {
   };
 
   const handleDefectPhoto = async (item: any, files: FileList | null) => {
-    const photoUrls = await filesToDataUrls(files);
+    const rawUrls = await filesToDataUrls(files);
+    if (rawUrls.length === 0) {
+      updateResponse(item, { photoUrls: [] });
+      return;
+    }
+
+    const inspectionId = inspectionSession?.inspectionId ?? inspectionSession?.id ?? null;
+    const photoUrls =
+      fleetId > 0 && vehicleId
+        ? await Promise.all(
+            rawUrls.map(async (dataUrl) => {
+              try {
+                const result = await uploadEvidencePhotoMutation.mutateAsync({
+                  fleetId,
+                  vehicleId,
+                  inspectionId,
+                  kind: "defect",
+                  dataUrl,
+                });
+                return result.url;
+              } catch {
+                return dataUrl;
+              }
+            })
+          )
+        : rawUrls;
+
     updateResponse(item, { photoUrls });
   };
 
   const handleProofPhoto = async (proofItem: string, files: FileList | null) => {
-    const [photoUrl] = await filesToDataUrls(files);
+    const [firstUrl] = await filesToDataUrls(files);
+    if (!firstUrl) return;
+
+    const inspectionId = inspectionSession?.inspectionId ?? inspectionSession?.id ?? null;
+    let photoUrl = firstUrl;
+    if (fleetId > 0 && vehicleId) {
+      try {
+        const result = await uploadEvidencePhotoMutation.mutateAsync({
+          fleetId,
+          vehicleId,
+          inspectionId,
+          kind: "proof",
+          dataUrl: firstUrl,
+        });
+        photoUrl = result.url;
+      } catch {
+        photoUrl = firstUrl;
+      }
+    }
     setProofPhotos((current) => ({
       ...current,
       [proofItem]: { photoUrl, skipped: false },

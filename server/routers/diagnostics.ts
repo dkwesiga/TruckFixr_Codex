@@ -1544,6 +1544,15 @@ export const diagnosticsRouter = router({
         (total, call) => total + (call.estimatedCostUsd ?? 0),
         0
       );
+      const enumCoercionCalls = workflow.aiCallHistory
+        .map((call) => call.enumCoercions)
+        .filter((value): value is NonNullable<typeof value> => Boolean(value));
+      const enumCoercionSummary = {
+        callsWithCoercions: enumCoercionCalls.length,
+        totalCoercions: enumCoercionCalls.reduce((total, entry) => total + entry.count, 0),
+        totalDefaulted: enumCoercionCalls.reduce((total, entry) => total + entry.defaulted, 0),
+        fields: Array.from(new Set(enumCoercionCalls.flatMap((entry) => entry.fields))).sort(),
+      };
 
       await Promise.all(
         workflow.aiCallHistory.map((call) =>
@@ -1606,6 +1615,7 @@ export const diagnosticsRouter = router({
           preprocessing: workflow.preprocessing,
           providerErrors: workflow.providerErrors.slice(-3),
           assetDiagnosisScope: assetScopeCheck.metadata,
+          enumCoercions: enumCoercionSummary.callsWithCoercions > 0 ? enumCoercionSummary : undefined,
         },
       });
 
