@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -40,7 +40,7 @@ import {
 } from "../../../shared/inspection";
 import { getInspectionOdometerRevisionMessage } from "../../../shared/inspectionOdometer";
 import { toast } from "sonner";
-import { AlertCircle, Camera, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Download, MapPin, TriangleAlert, Truck, XCircle } from "lucide-react";
+import { AlertCircle, Camera, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Download, MapPin, TriangleAlert, Truck, Upload, XCircle } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -215,7 +215,6 @@ function DriverInspectionContent() {
   const stepContentRef = useRef<HTMLDivElement | null>(null);
   const hasScrolledBetweenStepsRef = useRef(false);
   const odometerInputRef = useRef<HTMLInputElement | null>(null);
-  const proofCaptureRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [proofPhotoPrompts, setProofPhotoPrompts] = useState<ProofPhotoPrompt[]>(
     () => restoredDraft?.data.proofPhotoPrompts ?? []
   );
@@ -483,35 +482,41 @@ function DriverInspectionContent() {
     }));
   };
 
-  const handlePhotoUpload = async (itemId: string, files: FileList | null) => {
+  const handlePhotoUpload = async (itemId: string, files: FileList | null, input?: HTMLInputElement | null) => {
     try {
       const photoUrls = await filesToDataUrls(files);
-      startTransition(() => {
-        setResponses((current) => {
-          const existingPhotos = current[itemId]?.photoUrls ?? [];
-          return {
-            ...current,
-            [itemId]: {
-              ...current[itemId],
-              photoUrls: [...existingPhotos, ...photoUrls],
-            },
-          };
-        });
+      if (photoUrls.length === 0) return;
+
+      setResponses((current) => {
+        const existingPhotos = current[itemId]?.photoUrls ?? [];
+        return {
+          ...current,
+          [itemId]: {
+            ...current[itemId],
+            photoUrls: [...existingPhotos, ...photoUrls],
+          },
+        };
       });
       setPhotoPickerItemId((current) => (current === itemId ? null : current));
+      toast.success(`${photoUrls.length} photo${photoUrls.length === 1 ? "" : "s"} attached.`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to read photo");
+    } finally {
+      if (input) input.value = "";
     }
   };
 
-  const handleProofPhoto = async (proofItem: string, files: FileList | null) => {
+  const handleProofPhoto = async (proofItem: string, files: FileList | null, input?: HTMLInputElement | null) => {
     try {
       const urls = await filesToDataUrls(files);
       if (urls[0]) {
         setProofPhotos((current) => ({ ...current, [proofItem]: urls[0] }));
+        toast.success("Verification photo attached.");
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to read photo");
+    } finally {
+      if (input) input.value = "";
     }
   };
 
@@ -1342,26 +1347,20 @@ function DriverInspectionContent() {
                               </Button>
                               {photoPickerItemId === item.id ? (
                                 <div className="grid gap-2 sm:grid-cols-2">
-                                  <Button
-                                    type="button"
-                                    variant="secondary"
-                                    className="rounded-xl"
-                                    onClick={() =>
-                                      document.getElementById(`${item.id}-camera-input`)?.click()
-                                    }
+                                  <label
+                                    htmlFor={`${item.id}-camera-input`}
+                                    className="inline-flex h-10 cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-slate-100 px-4 text-sm font-medium text-slate-950 transition-colors hover:bg-slate-200"
                                   >
+                                    <Camera className="mr-2 h-4 w-4" />
                                     Use camera
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    variant="secondary"
-                                    className="rounded-xl"
-                                    onClick={() =>
-                                      document.getElementById(`${item.id}-upload-input`)?.click()
-                                    }
+                                  </label>
+                                  <label
+                                    htmlFor={`${item.id}-upload-input`}
+                                    className="inline-flex h-10 cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-slate-100 px-4 text-sm font-medium text-slate-950 transition-colors hover:bg-slate-200"
                                   >
+                                    <Upload className="mr-2 h-4 w-4" />
                                     Upload photo
-                                  </Button>
+                                  </label>
                                 </div>
                               ) : null}
                               <Input
@@ -1370,16 +1369,16 @@ function DriverInspectionContent() {
                                 accept="image/*"
                                 capture="environment"
                                 multiple
-                                onChange={(event) => void handlePhotoUpload(item.id, event.target.files)}
-                                className="hidden"
+                                onChange={(event) => void handlePhotoUpload(item.id, event.currentTarget.files, event.currentTarget)}
+                                className="sr-only"
                               />
                               <Input
                                 id={`${item.id}-upload-input`}
                                 type="file"
                                 accept="image/*"
                                 multiple
-                                onChange={(event) => void handlePhotoUpload(item.id, event.target.files)}
-                                className="hidden"
+                                onChange={(event) => void handlePhotoUpload(item.id, event.currentTarget.files, event.currentTarget)}
+                                className="sr-only"
                               />
                             </div>
                           </div>
@@ -1438,22 +1437,20 @@ function DriverInspectionContent() {
                           <div key={prompt.itemId} className="rounded-xl border border-amber-200 bg-white p-3">
                             <p className="text-sm font-semibold text-slate-900">{prompt.label}</p>
                             <input
-                              ref={(node) => { proofCaptureRefs.current[prompt.itemId] = node; }}
+                              id={`${prompt.itemId}-proof-photo-input`}
                               type="file"
                               accept="image/*"
                               capture="environment"
-                              className="hidden"
-                              onChange={(event) => void handleProofPhoto(prompt.itemId, event.target.files)}
+                              className="sr-only"
+                              onChange={(event) => void handleProofPhoto(prompt.itemId, event.currentTarget.files, event.currentTarget)}
                             />
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="mt-2 h-9 w-full rounded-xl border-amber-300 text-amber-900 hover:bg-amber-50"
-                              onClick={() => proofCaptureRefs.current[prompt.itemId]?.click()}
+                            <label
+                              htmlFor={`${prompt.itemId}-proof-photo-input`}
+                              className="mt-2 inline-flex h-9 w-full cursor-pointer items-center justify-center rounded-xl border border-amber-300 bg-white px-3 text-sm font-medium text-amber-900 transition-colors hover:bg-amber-50"
                             >
                               <Camera className="mr-2 h-4 w-4" />
                               Take photo
-                            </Button>
+                            </label>
                           </div>
                         ))}
                       </div>

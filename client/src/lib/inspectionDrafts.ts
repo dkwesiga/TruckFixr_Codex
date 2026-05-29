@@ -171,7 +171,11 @@ export function saveInspectionDraft(
   draft: InspectionDraft
 ) {
   if (!storage) return;
-  storage.setItem(getDraftKey(draft.vehicleId), JSON.stringify(draft));
+  try {
+    storage.setItem(getDraftKey(draft.vehicleId), JSON.stringify(draft));
+  } catch (error) {
+    console.warn("[InspectionDrafts] Unable to save inspection draft:", error);
+  }
 }
 
 export function loadInspectionDraft(storage: LocalStorageLike | null, vehicleId: string | number) {
