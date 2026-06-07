@@ -82,10 +82,11 @@ import {
 } from "../services/vehicleAccess";
 import { sendEmail } from "../services/email";
 import { ENV } from "../_core/env";
-import { storagePut } from "../storage";
+import { storageGet, storagePut } from "../storage";
 import {
   buildEvidencePhotoStorageKey,
   parseEvidenceImageDataUrl,
+  parseEvidenceStorageKey,
 } from "../services/evidencePhotos";
 
 async function verifyFleetAccess(fleetId: number, userId: number, userRole: string): Promise<boolean> {
@@ -1178,6 +1179,39 @@ export const inspectionsRouter = router({
         sizeBytes: parsed.sizeBytes,
         mimeType: parsed.mimeType,
       };
+    }),
+
+  // Backend-agnostic authorized read for evidence files (Rec 1, Phase 1).
+  // Re-derives the owning fleet + vehicle from the storage key and re-checks
+  // inspection access before minting a fresh download URL, so evidence reads are
+  // tenant-enforced at the application layer regardless of whether the storage
+  // backend (forge proxy today, Supabase private buckets later) enforces it.
+  getEvidenceDownloadUrl: protectedProcedure
+    .input(z.object({ key: z.string().trim().min(1).max(512) }))
+    .query(async ({ input, ctx }) => {
+      const parsed = parseEvidenceStorageKey(input.key);
+      if (!parsed) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Invalid evidence reference.",
+        });
+      }
+
+      const hasAccess = await verifyVehicleInspectionAccess({
+        fleetId: parsed.fleetId,
+        vehicleId: parsed.vehicleId,
+        userId: ctx.user.id,
+        userRole: ctx.user.role,
+      });
+      if (!hasAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You do not have access to this evidence file.",
+        });
+      }
+
+      const { url } = await storageGet(input.key);
+      return { url };
     }),
 
   getDailyChecklist: protectedProcedure
