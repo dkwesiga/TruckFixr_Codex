@@ -591,7 +591,7 @@ export default function LandingSaaS() {
       <header className="sticky top-0 z-50 border-b border-[var(--fleet-outline)] bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-[1200px] items-center justify-between gap-4 px-4 py-4 sm:px-6">
           <a href="/" className="flex items-center">
-            <AppLogo variant="full" imageClassName="h-10 w-auto" />
+            <AppLogo variant="full" imageClassName="h-8 w-auto sm:h-10" />
           </a>
 
           <nav className="hidden items-center gap-6 lg:flex">
@@ -647,7 +647,7 @@ export default function LandingSaaS() {
                 <Button
                   asChild
                   size="lg"
-                  className="rounded-full bg-[#E32636] px-8 font-['Manrope'] text-base font-bold text-white shadow-[0_18px_35px_-22px_rgba(227,38,54,0.72)] hover:bg-[#BC1E2C]"
+                  className="rounded-full bg-[#E32636] px-8 py-3 font-['Manrope'] text-base font-bold text-white shadow-[0_18px_35px_-22px_rgba(227,38,54,0.72)] hover:bg-[#BC1E2C] h-auto whitespace-normal text-center leading-snug"
                 >
                   <a href="#pilot" onClick={() => handleLeadCtaClick("hero_pilot")}>Start a 90-Day Breakdown Reduction Pilot</a>
                 </Button>
@@ -977,7 +977,7 @@ export default function LandingSaaS() {
                 <Button asChild size="lg" className="rounded-full bg-[#E32636] px-8 font-['Manrope'] font-bold text-white hover:bg-[#BC1E2C]">
                   <a href="#book-demo" onClick={() => handleLeadCtaClick("pilot_primary")}>Apply for the 90-Day Pilot</a>
                 </Button>
-                <Button asChild size="lg" variant="outline" className="rounded-full border-2 border-[#00263F] px-8 font-['Manrope'] font-bold text-[#00263F] hover:bg-[#00263F] hover:text-white">
+                <Button asChild size="lg" variant="outline" className="rounded-full border-2 border-[#00263F] px-8 py-3 font-['Manrope'] font-bold text-[#00263F] hover:bg-[#00263F] hover:text-white h-auto whitespace-normal text-center leading-snug">
                   <a href="#book-demo" onClick={() => handleLeadCtaClick("pilot_health_check")}>Run a Free AI Truck Health Check</a>
                 </Button>
               </div>
