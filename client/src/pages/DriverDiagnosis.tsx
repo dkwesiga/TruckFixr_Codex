@@ -908,6 +908,25 @@ function DriverDiagnosisContent() {
                       <p className="mt-2 text-sm text-slate-700">{diagnosisView.clarificationReason}</p>
                     </div>
                   ) : null}
+                  <div className="rounded-lg border border-slate-300 bg-slate-50 p-4">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
+                      <div className="space-y-1">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">AI guidance only</p>
+                        {diagnosisView.safeToDriveDecision === "stop_and_inspect" ||
+                        diagnosisView.safeToDriveDecision === "tow_or_repair_immediately" ||
+                        diagnosisView.riskLevel === "high" ||
+                        diagnosisView.riskLevel === "critical" ? (
+                          <p className="text-sm font-medium text-red-700">
+                            This result points to a possible safety issue. Remove the vehicle from service and have a qualified technician inspect it before operating.
+                          </p>
+                        ) : null}
+                        <p className="text-sm text-slate-600">
+                          TruckFixr provides AI maintenance guidance to support your decisions. It is not a substitute for a licensed inspection or a qualified technician&apos;s professional judgment. Always confirm with hands-on inspection before repairs or returning the vehicle to service.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
                 </>
               ) : (
                 <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">

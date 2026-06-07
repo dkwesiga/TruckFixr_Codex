@@ -358,26 +358,61 @@ export default function Pricing() {
               </p>
             </div>
 
-            <div className="overflow-hidden rounded-3xl border border-slate-200 shadow-sm">
-              <div className="grid grid-cols-[1.4fr_repeat(5,minmax(0,1fr))] bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
-                <div>Feature</div>
-                {comparisonPricingPlans.map((plan) => (
-                  <div key={plan.planKey} className={plan.recommended ? "text-red-700" : ""}>
-                    {plan.name}
+            {/* Mobile / small viewport: stacked per-plan cards so values stay legible
+                without horizontal page scroll or clipped columns (Android Chrome/Brave). */}
+            <div className="grid gap-4 md:hidden">
+              {comparisonPricingPlans.map((plan, planIndex) => (
+                <div
+                  key={plan.planKey}
+                  className={`rounded-3xl border p-5 shadow-sm ${
+                    plan.recommended ? "border-red-200 bg-red-50/70" : "border-slate-200 bg-white"
+                  }`}
+                >
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <p className={`text-base font-semibold ${plan.recommended ? "text-red-700" : "text-slate-950"}`}>
+                      {plan.name}
+                    </p>
+                    {plan.recommended ? (
+                      <span className="rounded-full bg-red-600 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-white">
+                        Most Popular
+                      </span>
+                    ) : null}
                   </div>
-                ))}
-              </div>
-              <div className="divide-y divide-slate-200 bg-white">
-                {featureRows.map(([label, ...values]) => (
-                  <div key={label} className="grid grid-cols-[1.4fr_repeat(5,minmax(0,1fr))] px-4 py-4 text-sm">
-                    <div className="font-medium text-slate-900">{label}</div>
-                    {values.map((value, index) => (
-                      <div key={`${label}-${index}`} className="text-slate-600">
-                        {value}
+                  <dl className="divide-y divide-slate-200">
+                    {featureRows.map(([label, ...values]) => (
+                      <div key={`${plan.planKey}-${label}`} className="flex items-start justify-between gap-4 py-2.5">
+                        <dt className="min-w-0 text-sm text-slate-600">{label}</dt>
+                        <dd className="shrink-0 text-right text-sm font-medium text-slate-900">{values[planIndex]}</dd>
                       </div>
                     ))}
-                  </div>
-                ))}
+                  </dl>
+                </div>
+              ))}
+            </div>
+
+            {/* Desktop / tablet: full comparison grid. */}
+            <div className="hidden overflow-x-auto rounded-3xl border border-slate-200 shadow-sm md:block">
+              <div className="min-w-[640px]">
+                <div className="grid grid-cols-[1.4fr_repeat(5,minmax(0,1fr))] bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
+                  <div>Feature</div>
+                  {comparisonPricingPlans.map((plan) => (
+                    <div key={plan.planKey} className={plan.recommended ? "text-red-700" : ""}>
+                      {plan.name}
+                    </div>
+                  ))}
+                </div>
+                <div className="divide-y divide-slate-200 bg-white">
+                  {featureRows.map(([label, ...values]) => (
+                    <div key={label} className="grid grid-cols-[1.4fr_repeat(5,minmax(0,1fr))] px-4 py-4 text-sm">
+                      <div className="font-medium text-slate-900">{label}</div>
+                      {values.map((value, index) => (
+                        <div key={`${label}-${index}`} className="text-slate-600">
+                          {value}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
