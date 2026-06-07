@@ -38,32 +38,6 @@ type ContentCard = {
   description: string;
 };
 
-const painPoints: ContentCard[] = [
-  {
-    icon: Siren,
-    title: "Surprise breakdowns",
-    description:
-      "Small warning signs become roadside calls, missed loads, driver downtime, and emergency labour when nobody connects the pattern early.",
-  },
-  {
-    icon: ClipboardCheck,
-    title: "Scattered warning signs",
-    description:
-      "Driver texts, inspection notes, photos, fault codes, and repair invoices live in too many places for a busy owner to interpret quickly.",
-  },
-  {
-    icon: Wrench,
-    title: "Unclear repair decisions",
-    description:
-      "Owners need to know whether to keep operating, inspect today, schedule repair, stop the truck, or call the shop before the problem gets worse.",
-  },
-  {
-    icon: ShieldCheck,
-    title: "Inspection record pressure",
-    description:
-      "Canadian fleets need maintenance and inspection records that are easier to trust when defects, repairs, or compliance questions come up.",
-  },
-];
 
 const solutionCards: ContentCard[] = [
   {
@@ -198,20 +172,6 @@ const pilotIncludes = [
   "End-of-pilot review",
 ];
 
-const demoWorkflow = [
-  {
-    label: "Driver report",
-    body: "ABS warning light on. Brake pedal feels normal. Truck completed route yesterday.",
-  },
-  {
-    label: "TruckFixr AI context",
-    body: "Vehicle history, previous ABS repair, inspection notes, urgency level, and possible diagnostic direction.",
-  },
-  {
-    label: "Repair decision",
-    body: "Prioritize inspection before next dispatch. Check wheel speed sensor wiring and ABS module communication.",
-  },
-];
 
 const faqItems = [
   {
@@ -282,37 +242,6 @@ function FeatureCard({ card }: { card: ContentCard }) {
   );
 }
 
-function ProductPreview() {
-  return (
-    <div className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
-      <div className="rounded-3xl border border-[var(--fleet-outline)] bg-white p-6 shadow-[var(--fleet-shadow)]">
-        <p className="text-xs font-black uppercase tracking-[0.18em] text-[#A04100]">Driver report</p>
-        <p className="mt-4 text-lg leading-8 text-[#00263F]">
-          "ABS warning light on. Brake pedal feels normal. Truck completed route yesterday."
-        </p>
-        <div className="mt-6 rounded-2xl bg-[#F6F8FC] p-5">
-          <div className="flex items-center gap-2 text-sm font-bold text-[#00263F]">
-            <BrainCircuit className="h-4 w-4 text-[#E32636]" />
-            AI repair decision report
-          </div>
-          <ul className="mt-4 space-y-3 text-sm leading-7 text-[#42474E]">
-            <li>Severity: attention before next dispatch</li>
-            <li>Likely causes: wheel speed sensor wiring or ABS communication issue</li>
-            <li>Next action: inspect before dispatch and send report to the repair shop</li>
-          </ul>
-        </div>
-      </div>
-      <div className="grid gap-4">
-        {demoWorkflow.map((item) => (
-          <div key={item.label} className="rounded-3xl border border-[var(--fleet-outline)] bg-[#00263F] p-6 text-white shadow-[var(--fleet-shadow)]">
-            <p className="text-xs font-black uppercase tracking-[0.18em] text-[#FFB693]">{item.label}</p>
-            <p className="mt-3 text-base leading-8 text-blue-100">{item.body}</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 function DemoRequestForm() {
   const leadMutation = trpc.leads.submitDemoRequest.useMutation();
@@ -791,73 +720,6 @@ export default function LandingSaaS() {
           </div>
         </section>
 
-        <section id="dashboard" className="border-b border-[var(--fleet-outline)] bg-white px-4 py-8 sm:px-6">
-          <div className="mx-auto flex max-w-[1200px] flex-col items-start justify-between gap-5 rounded-3xl border border-[var(--fleet-outline)] bg-[#F6F8FC] p-6 shadow-[var(--fleet-shadow)] md:flex-row md:items-center">
-            <div>
-              <p className="font-['Manrope'] text-xl font-black text-[#00263F]">Already using TruckFixr?</p>
-              <p className="mt-2 text-sm leading-7 text-[#42474E]">
-                Access your fleet dashboard, vehicles, inspections, diagnostics, service history, and account settings.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <Button asChild className="rounded-full bg-[#00263F] px-6 font-['Manrope'] font-bold text-white hover:bg-[#0B3C5D]">
-                <a href="/auth/email">Go to Dashboard</a>
-              </Button>
-              <Button asChild variant="outline" className="rounded-full border-[#00263F] px-6 font-['Manrope'] font-bold text-[#00263F] hover:bg-[#00263F] hover:text-white">
-                <a href="/access/pilot-code">Enter Pilot Code</a>
-              </Button>
-            </div>
-          </div>
-        </section>
-
-        <section id="icp" className="border-b border-[var(--fleet-outline)] bg-white px-4 py-16 sm:px-6 lg:py-24">
-          <div className="mx-auto grid max-w-[1200px] gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
-            <SectionHeading
-              eyebrow="Built for the owner-led fleet"
-              title="Built for owner-led trucking fleets that need maintenance decisions, not more guesswork."
-              description="TruckFixr is designed for fleets managing 2-25 trucks and trailers, where maintenance information is often scattered across calls, texts, paper inspections, spreadsheets, driver notes, and repair invoices."
-            />
-            <motion.div {...fadeUp} className="rounded-[2rem] border border-[var(--fleet-outline)] bg-[#F6F8FC] p-6 shadow-[var(--fleet-shadow)] sm:p-8">
-              <p className="font-['Manrope'] text-lg font-black text-[#00263F]">Also supports the full TruckFixr user base</p>
-              <p className="mt-4 text-sm leading-7 text-[#42474E]">
-                TruckFixr also supports owner-operators, fleet managers, drivers, repair shops, and growing fleets that need a simple way to manage inspections, diagnostics, maintenance, and repair history.
-              </p>
-              <div className="mt-6 grid gap-3 sm:grid-cols-2">
-                {[
-                  "Owner-operators",
-                  "Fleet managers",
-                  "Drivers",
-                  "Repair shops",
-                  "Growing fleets",
-                  "Existing dashboard users",
-                ].map((item) => (
-                  <div key={item} className="flex items-center gap-2 text-sm font-semibold text-[#00263F]">
-                    <Check className="h-4 w-4 text-[#E32636]" />
-                    {item}
-                  </div>
-                ))}
-              </div>
-            </motion.div>
-          </div>
-        </section>
-
-        <section id="problem" className="border-b border-[var(--fleet-outline)] bg-white px-4 py-16 sm:px-6 lg:py-24">
-          <div className="mx-auto max-w-[1200px]">
-            <SectionHeading
-              title="Your trucks give warning signs before they fail. The problem is that those signs are scattered."
-              description="Drivers notice smoke, warning lights, vibration, air leaks, brake concerns, loss of power, overheating, DEF/DPF problems, and trailer issues. But those signals often stay buried in texts, inspection forms, phone calls, or repair invoices. TruckFixr brings those signals together and helps you decide what needs attention now, what can wait, and when a truck should stop before a small issue becomes a major breakdown."
-              center
-            />
-            <div className="mt-12 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
-              {painPoints.map((card, index) => (
-                <motion.div key={card.title} {...fadeUp} transition={{ ...revealTransition, delay: index * 0.05 }}>
-                  <FeatureCard card={card} />
-                </motion.div>
-              ))}
-            </div>
-          </div>
-        </section>
-
         <section id="solution" className="bg-[var(--fleet-surface)] px-4 py-16 sm:px-6 lg:py-24">
           <div className="mx-auto max-w-[1200px]">
             <SectionHeading
@@ -931,27 +793,6 @@ export default function LandingSaaS() {
           </div>
         </section>
 
-        <section id="demo" className="px-4 py-16 sm:px-6 lg:py-24">
-          <div className="mx-auto max-w-[1200px]">
-            <SectionHeading
-              title="See how TruckFixr turns a driver report into a maintenance decision."
-              center
-            />
-            <div className="mt-12">
-              <ProductPreview />
-            </div>
-            <div className="mt-8 text-center">
-              <Button
-                asChild
-                size="lg"
-                className="rounded-full bg-[#E32636] px-8 font-['Manrope'] font-bold text-white shadow-[0_18px_35px_-22px_rgba(227,38,54,0.72)] hover:bg-[#BC1E2C]"
-              >
-                <a href="#book-demo" onClick={() => handleLeadCtaClick("demo_preview")}>Apply for the Pilot</a>
-              </Button>
-            </div>
-          </div>
-        </section>
-
         <section id="difference" className="border-y border-[var(--fleet-outline)] bg-[#F6F8FC] px-4 py-16 sm:px-6 lg:py-24">
           <div className="mx-auto max-w-[1200px]">
             <SectionHeading
@@ -1010,42 +851,6 @@ export default function LandingSaaS() {
           </div>
         </section>
 
-        <section className="border-y border-[var(--fleet-outline)] bg-white px-4 py-16 sm:px-6 lg:py-24">
-          <div className="mx-auto max-w-[1200px]">
-            <SectionHeading
-              eyebrow="Why TruckFixr"
-              title="Built by people who understand truck repair pressure."
-              center
-            />
-            <div className="mt-12 grid gap-6 lg:grid-cols-3">
-              <div className="rounded-3xl border border-[var(--fleet-outline)] bg-[var(--fleet-surface)] p-6 shadow-[var(--fleet-shadow)]">
-                <Wrench className="h-6 w-6 text-[#E32636]" />
-                <h3 className="mt-4 font-['Manrope'] text-lg font-black text-[#00263F]">Real repair shop DNA</h3>
-                <p className="mt-3 text-sm leading-7 text-[#42474E]">
-                  Developed from real commercial truck repair experience at Mr. Diesel Inc., an Ontario truck and trailer repair shop. Not generic AI pasted onto fleet maintenance.
-                </p>
-              </div>
-              <div className="rounded-3xl border border-[var(--fleet-outline)] bg-[var(--fleet-surface)] p-6 shadow-[var(--fleet-shadow)]">
-                <ShieldCheck className="h-6 w-6 text-[#E32636]" />
-                <h3 className="mt-4 font-['Manrope'] text-lg font-black text-[#00263F]">Ontario and Canada ready</h3>
-                <p className="mt-3 text-sm leading-7 text-[#42474E]">
-                  CVOR-aware workflows, MTO inspection expectations, Canadian winters, and local repair conditions shape how TruckFixr presents fleet health and maintenance readiness.
-                </p>
-              </div>
-              <div className="rounded-3xl border border-[var(--fleet-outline)] bg-[var(--fleet-surface)] p-6 shadow-[var(--fleet-shadow)]">
-                <Sparkles className="h-6 w-6 text-[#E32636]" />
-                <h3 className="mt-4 font-['Manrope'] text-lg font-black text-[#00263F]">For managers, drivers, and techs</h3>
-                <p className="mt-3 text-sm leading-7 text-[#42474E]">
-                  Fleet managers get visibility. Drivers get simple inspections and issue reporting. Technicians get the symptom story and repair context before the truck reaches the bay.
-                </p>
-              </div>
-            </div>
-            <p className="mx-auto mt-8 max-w-2xl text-center text-sm leading-7 text-[#6B7280]">
-              TruckFixr supports maintenance and inspection readiness; it does not replace professional judgment, licensed inspections, or regulatory compliance obligations.
-            </p>
-          </div>
-        </section>
-
         <section id="book-demo" className="px-4 py-16 sm:px-6 lg:py-24">
           <div className="mx-auto grid max-w-[1200px] gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
             <SectionHeading
@@ -1056,22 +861,6 @@ export default function LandingSaaS() {
             <div className="rounded-[2rem] border border-[var(--fleet-outline)] bg-white p-6 shadow-[var(--fleet-shadow)] sm:p-8">
               <DemoRequestForm />
             </div>
-          </div>
-        </section>
-
-        <section className="border-t border-[var(--fleet-outline)] bg-[#F6F8FC] px-4 py-16 sm:px-6 lg:py-24">
-          <div className="mx-auto flex max-w-[1200px] flex-col items-start justify-between gap-6 rounded-[2rem] border border-[var(--fleet-outline)] bg-white p-6 shadow-[var(--fleet-shadow)] sm:p-8 lg:flex-row lg:items-center">
-            <div>
-              <h2 className="font-['Manrope'] text-2xl font-black tracking-[-0.03em] text-[#00263F]">
-                Already managing your fleet with TruckFixr?
-              </h2>
-              <p className="mt-3 max-w-2xl text-sm leading-7 text-[#42474E]">
-                Your current tools remain available, including fleet dashboard, diagnostics, vehicles and trailers, inspections, maintenance reminders, repair history, account settings, and subscription tools.
-              </p>
-            </div>
-            <Button asChild size="lg" className="rounded-full bg-[#00263F] px-8 font-['Manrope'] font-bold text-white hover:bg-[#0B3C5D]">
-              <a href="/auth/email">Open TruckFixr Dashboard</a>
-            </Button>
           </div>
         </section>
 
