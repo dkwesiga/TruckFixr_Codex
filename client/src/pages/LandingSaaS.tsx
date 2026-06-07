@@ -766,6 +766,31 @@ export default function LandingSaaS() {
           </div>
         </section>
 
+        <section className="border-b border-[var(--fleet-outline)] bg-white px-4 py-5 sm:px-6">
+          <div className="mx-auto flex max-w-[1200px] flex-col items-center gap-3 sm:flex-row sm:gap-6">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-[#42474E]">Supported by</p>
+            <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-3 sm:justify-start">
+              <a
+                href="https://dmz.torontomu.ca/black-innovation-summit"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm font-bold text-[#00263F] transition-colors hover:text-[#E32636]"
+              >
+                DMZ · Toronto Metropolitan University
+              </a>
+              <span className="hidden text-[#C2C7CE] sm:inline">|</span>
+              <a
+                href="https://entrepreneurs.utoronto.ca/for-entrepreneurs/bfn-scale/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm font-bold text-[#00263F] transition-colors hover:text-[#E32636]"
+              >
+                BFN Scale · University of Toronto
+              </a>
+            </div>
+          </div>
+        </section>
+
         <section id="dashboard" className="border-b border-[var(--fleet-outline)] bg-white px-4 py-8 sm:px-6">
           <div className="mx-auto flex max-w-[1200px] flex-col items-start justify-between gap-5 rounded-3xl border border-[var(--fleet-outline)] bg-[#F6F8FC] p-6 shadow-[var(--fleet-shadow)] md:flex-row md:items-center">
             <div>
