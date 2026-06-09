@@ -63,6 +63,7 @@ import {
   CarFront,
   ChevronRight,
   Clock3,
+  LayoutDashboard,
   LogOut,
   MapPin,
   Plus,
@@ -831,6 +832,18 @@ function ManagerDashboardFixedContent() {
               <BookOpenCheck className="mr-2 h-4 w-4" />
               Quick Start Guides
             </DropdownMenuItem>
+            {user?.internalAdminRole ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="cursor-pointer rounded-xl"
+                  onClick={() => navigate("/admin/metrics")}
+                >
+                  <LayoutDashboard className="mr-2 h-4 w-4" />
+                  Admin dashboard
+                </DropdownMenuItem>
+              </>
+            ) : null}
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={logout}
