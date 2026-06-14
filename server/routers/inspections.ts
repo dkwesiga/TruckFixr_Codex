@@ -85,6 +85,8 @@ import { ENV } from "../_core/env";
 import { storagePut } from "../storage";
 import {
   buildEvidencePhotoStorageKey,
+  classifyEvidencePhotoSource,
+  normalizeSubmittedEvidencePhotoUrls,
   parseEvidenceImageDataUrl,
 } from "../services/evidencePhotos";
 
@@ -1429,7 +1431,7 @@ export const inspectionsRouter = router({
       );
 
       const photoRows = input.checklistResponses.flatMap((item) =>
-        item.photoUrls.map((imageUrl) => ({
+        normalizeSubmittedEvidencePhotoUrls(item.photoUrls).map((imageUrl) => ({
           inspectionId: input.inspectionId,
           fleetId: inspection.fleetId,
           vehicleId: inspection.vehicleId,
@@ -1437,23 +1439,25 @@ export const inspectionsRouter = router({
           checklistItemId: item.itemId,
           photoType: "defect",
           imageUrl,
-          source: "upload",
+          source: classifyEvidencePhotoSource(imageUrl),
           notes: item.note ?? null,
         }))
       );
       const proofPhotoRows = input.proofPhotos
         .filter((item) => item.photoUrl)
-        .map((item) => ({
-          inspectionId: input.inspectionId,
-          fleetId: inspection.fleetId,
-          vehicleId: inspection.vehicleId,
-          driverId: inspection.driverId,
-          checklistItemId: item.proofItem,
-          photoType: "random_proof",
-          imageUrl: item.photoUrl!,
-          source: "upload",
-          notes: `Random proof: ${item.proofItem}`,
-        }));
+        .flatMap((item) =>
+          normalizeSubmittedEvidencePhotoUrls([item.photoUrl]).map((imageUrl) => ({
+            inspectionId: input.inspectionId,
+            fleetId: inspection.fleetId,
+            vehicleId: inspection.vehicleId,
+            driverId: inspection.driverId,
+            checklistItemId: item.proofItem,
+            photoType: "random_proof",
+            imageUrl,
+            source: classifyEvidencePhotoSource(imageUrl),
+            notes: `Random proof: ${item.proofItem}`,
+          }))
+        );
 
       if (photoRows.length + proofPhotoRows.length > 0) {
         await db.insert(inspectionPhotos).values([...photoRows, ...proofPhotoRows]);
@@ -1880,17 +1884,19 @@ export const inspectionsRouter = router({
             );
             const proofPhotoRows = input.proofPhotos
               .filter((p) => p.photoUrl)
-              .map((p) => ({
-                inspectionId: inspectionResult.id,
-                fleetId: input.fleetId,
-                vehicleId: normalizedVehicleId,
-                driverId: ctx.user.id,
-                checklistItemId: p.proofItem,
-                photoType: "random_proof",
-                imageUrl: p.photoUrl!,
-                source: "upload",
-                notes: `Random proof: ${p.proofLabel ?? p.proofItem}`,
-              }));
+              .flatMap((p) =>
+                normalizeSubmittedEvidencePhotoUrls([p.photoUrl]).map((imageUrl) => ({
+                  inspectionId: inspectionResult.id,
+                  fleetId: input.fleetId,
+                  vehicleId: normalizedVehicleId,
+                  driverId: ctx.user.id,
+                  checklistItemId: p.proofItem,
+                  photoType: "random_proof",
+                  imageUrl,
+                  source: classifyEvidencePhotoSource(imageUrl),
+                  notes: `Random proof: ${p.proofLabel ?? p.proofItem}`,
+                }))
+              );
             if (proofPhotoRows.length > 0) {
               await db.insert(inspectionPhotos).values(proofPhotoRows);
             }

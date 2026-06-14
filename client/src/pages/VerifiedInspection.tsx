@@ -716,6 +716,9 @@ function VerifiedInspectionContent() {
                           <Camera className="mr-2 h-4 w-4" />
                           Take photo
                         </Button>
+                        <p className="text-xs text-slate-500">
+                          Only upload inspection-related evidence. These photos are kept for fleet safety, compliance, and follow-up review.
+                        </p>
                         {response.photoUrls.length > 0 && (
                           <p className="text-xs font-medium text-emerald-700">Defect photo attached</p>
                         )}

@@ -8,6 +8,7 @@ import App from "./App";
 import { getLoginUrl } from "./const";
 import { getApiUrl } from "./lib/api";
 import { initializeAnalytics } from "./lib/analytics";
+import { initializeClientObservability } from "./lib/observability";
 import { attemptChunkReload, clearChunkReloadParam } from "./lib/chunkRecovery";
 import "./index.css";
 
@@ -101,6 +102,12 @@ try {
   initializeAnalytics();
 } catch (error) {
   console.error("[Bootstrap] Analytics initialization failed", error);
+}
+
+try {
+  initializeClientObservability();
+} catch (error) {
+  console.error("[Bootstrap] Observability initialization failed", error);
 }
 
 const queryClient = new QueryClient();

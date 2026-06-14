@@ -1,5 +1,5 @@
 import { useAuthContext } from "@/hooks/useAuthContext";
-import { isOwnerOperatorEnabled } from "@/lib/ownerOperator";
+import { hasRoleBasedAccess } from "@/lib/roleBasedAccess";
 import { Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useEffect } from "react";
@@ -113,13 +113,7 @@ export function RoleBasedRoute({
     );
   }
 
-  const isOwnerOperator = isOwnerOperatorEnabled(user);
-  const requiresDriverAccess = Boolean(requiredRoles?.includes("driver"));
-  const requiresOwnerOperatorAccess = Boolean(requiredRoles?.includes("owner_operator"));
-  const hasOwnerOperatorAccess =
-    user?.role === "owner" && isOwnerOperator && (requiresDriverAccess || requiresOwnerOperatorAccess);
-
-  if (requiredRoles && user && !requiredRoles.includes(user.role as any) && !hasOwnerOperatorAccess) {
+  if (!hasRoleBasedAccess({ user, requiredRoles })) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">

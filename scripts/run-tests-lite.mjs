@@ -125,7 +125,12 @@ async function main() {
   const { hasRoleBasedAccess } = roleBasedAccess;
 
   const evidencePhotos = await import("../server/services/evidencePhotos.ts");
-  const { buildEvidencePhotoStorageKey, parseEvidenceImageDataUrl } = evidencePhotos;
+  const {
+    buildEvidencePhotoStorageKey,
+    classifyEvidencePhotoSource,
+    normalizeSubmittedEvidencePhotoUrls,
+    parseEvidenceImageDataUrl,
+  } = evidencePhotos;
 
   const tests = [
     {
@@ -331,6 +336,12 @@ async function main() {
         assert.ok(key.startsWith("inspection-evidence/company-123/"), "key should be scoped to company folder");
         assert.ok(key.includes("/vehicle-456/defect/"), "key should include vehicle and kind");
         assert.ok(key.endsWith(".png"), "key should include extension");
+        assert.equal(classifyEvidencePhotoSource(dataUrl), "inline_data_url");
+        assert.equal(classifyEvidencePhotoSource("https://cdn.truckfixr.test/evidence/photo.png"), "upload");
+        assert.deepEqual(normalizeSubmittedEvidencePhotoUrls([dataUrl, dataUrl, " https://cdn.truckfixr.test/evidence/photo.png "]), [
+          dataUrl,
+          "https://cdn.truckfixr.test/evidence/photo.png",
+        ]);
       },
     },
   ];

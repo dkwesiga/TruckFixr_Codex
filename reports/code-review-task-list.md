@@ -1,6 +1,6 @@
 # TruckFixr Fleet AI Code Review Task List
 
-Last updated: 2026-05-29
+Last updated: 2026-06-12
 
 ## Open Tasks
 
@@ -9,7 +9,7 @@ Last updated: 2026-05-29
   - Category: Knowledge base/history growth
   - Severity: High
   - First discovered date: 2026-05-11
-  - Last seen date: 2026-05-27
+  - Last seen date: 2026-06-09
   - Affected files: `server/routers/diagnostics.ts`, `server/services/diagnosisWorkflow.ts`, `server/services/aiQualityReviewLog.ts`, `server/services/tadisCore.ts`, `drizzle/schema.ts`, `repairOutcomes`, `aiQualityReviews`
   - Status: Open (improved; local static retrieval proof green, live same-fleet proof outstanding)
   - Recommended fix: Batch G - verify repair outcomes are retrieved correctly as similar past cases within the same fleet and confirm manager/mechanic AI-correctness feedback is persisted with reusable structure.
@@ -31,7 +31,7 @@ Last updated: 2026-05-29
   - Category: Daily inspection workflow
   - Severity: Medium
   - First discovered date: 2026-05-11
-  - Last seen date: 2026-05-27
+  - Last seen date: 2026-06-12
   - Affected files: `server/routers/diagnostics.ts`, `server/routers/inspections.ts`, related tests
   - Status: Open
   - Recommended fix: Batch D - add happy-path tests for inspection submit/review, diagnosis, offline queue flush, and idempotency.
@@ -53,11 +53,11 @@ Last updated: 2026-05-29
   - Category: Observability, logging & error monitoring
   - Severity: Medium
   - First discovered date: 2026-05-12
-  - Last seen date: 2026-05-27
-  - Affected files: backend services, deployment/runtime configuration, browser runtime hooks
-  - Status: Open
+  - Last seen date: 2026-06-14
+  - Affected files: `server/services/observability.ts`, `server/services/observability.test.ts`, `server/_core/env.ts`, `server/_core/index.ts`, `server/_core/stripeBillingRoutes.ts`, `server/services/aiOrchestrator.ts`, `server/routers/admin.ts`, `client/src/lib/observability.ts`, `client/src/main.tsx`
+  - Status: In Progress (implemented; staging verification pending)
   - Recommended fix: Add production-safe redacted monitoring for backend/API, AI provider, Supabase, Stripe, browser runtime errors, and workflow latency.
-  - Verification command or check required: Trigger safe test errors/timeouts and verify redacted monitoring events.
+  - Verification command or check required: Trigger safe test errors/timeouts and verify redacted monitoring events. Latest evidence: 2026-06-14 founder-approved build added a self-contained redacted observability module (severity/category events, email/VIN/phone/token/JWT/data-URL redaction, bounded in-memory ring buffer + counters, console sink plus optional `OBSERVABILITY_WEBHOOK_URL`). Wired into tRPC `onError` (backend/Supabase/Stripe split), AI orchestrator call summaries + failed attempts, slow-route timing, Stripe webhook failures, server startup errors, and a redacted client beacon (`/api/observability/client`) fed by `client/src/lib/observability.ts`. Staff-only `admin.observability` summary endpoint added. `pnpm run check` passed, `server/services/observability.test.ts` passed 15/15, affected service tests passed 29/29, `node scripts/run-tests-lite.mjs` passed 9/9, and `pnpm run build:server` succeeded. Remaining: trigger real redacted events in staging and decide whether to add a persistent sink/log drain beyond the in-memory buffer.
 
 - Task ID: TFX-CR-0018
   - Task: Enforce demo/test data exclusion from production analytics, diagnostic learning, billing, and customer reports.
@@ -99,31 +99,31 @@ Last updated: 2026-05-29
   - First discovered date: 2026-05-14
   - Last seen date: 2026-05-27
   - Affected files: `vite.config.mjs`, `client/src/App.tsx`, shared dashboard/auth/vendor bundles
-  - Status: Open (bundle split implemented; real mobile timing outstanding)
+  - Status: Open (bundle split implemented; 2026-06-12 review still only had stale `dist/public` snapshot evidence; real mobile timing still outstanding)
   - Recommended fix: Run a real Android Chrome/Brave or throttled mobile-browser timing pass against the production build and record route-level load measurements.
-  - Verification command or check required: Mobile/browser timing for initial shell, login, driver dashboard, manager dashboard, inspection start, diagnosis routes. Latest evidence: 2026-05-27 `pnpm build:client` reports `vendor-shared-BU_WnMg_.js` at 125.65 KB gzip.
+  - Verification command or check required: Mobile/browser timing for initial shell, login, driver dashboard, manager dashboard, inspection start, diagnosis routes. Latest evidence: 2026-06-12 daily review again could not run a fresh client build due spawn restrictions; the existing `dist/public` snapshot still showed 70 files / 1,938,365 bytes, including `vendor-shared-BU_WnMg_.js` at 381,154 raw bytes.
 
 - Task ID: TFX-CR-0023
   - Task: Restore trustworthy verification across sandbox/CI environments so browser smoke, demo-seed validation, dependency audit, full Vitest, and end-to-end release checks are not blocked by environment restrictions.
   - Category: Developer experience / verification reliability
   - Severity: High
   - First discovered date: 2026-05-18
-  - Last seen date: 2026-05-27
+  - Last seen date: 2026-06-12
   - Affected files: `scripts/run-vitest.mjs`, `scripts/run-build-client.mjs`, `scripts/run-validate-demo-seed.mjs`, `scripts/verify/browser-smoke-lite.ts`, Vite/Vitest/esbuild/tsx/Playwright toolchain
-  - Status: Open (improved; capable-environment proof green, packaged browser smoke still a lite probe)
+  - Status: Open (improved; restricted-shell lite fallback now passes and `pnpm run test` exits `0`, but browser/demo/client-build checks still degrade to spawn-blocked skips)
   - Recommended fix: Batch I - keep the CI/non-restricted verification path and replace the placeholder browser smoke probe with real route checks when practical.
-  - Verification command or check required: In a CI-capable environment, full Vitest, real browser smoke, demo validation, audit, and release builds pass end-to-end. Latest evidence: 2026-05-27 elevated final full Vitest passed 34 files / 237 tests, elevated `pnpm validate:demo-seed` passed, browser route smoke loaded landing/signup/auth with zero app console errors, and audit passed threshold with no Critical/High advisories.
+  - Verification command or check required: In a CI-capable environment, full Vitest, real browser smoke, demo validation, audit, and release builds pass end-to-end. Latest evidence: 2026-06-12 approved Batch I restored the spawn-safe path: `node scripts/run-tests-lite.mjs` passed 9/9 checks, `node scripts/run-vitest.mjs` exited `0`, and `pnpm run test` now exits `0` after the spawn-blocked fallback; `pnpm run build:client`, `pnpm run validate:demo-seed`, and `pnpm run verify:browser-smoke` still return spawn-blocked skip results in this shell.
 
 - Task ID: TFX-CR-0024
   - Task: Review and harden the internal admin metrics/dashboard feature.
   - Category: Security / internal tooling & operations
   - Severity: High
   - First discovered date: 2026-05-22
-  - Last seen date: 2026-05-27
-  - Affected files: `server/routers/admin.ts`, `server/services/adminMetrics.ts`, `client/src/pages/AdminMetricsDashboard.tsx`, `client/src/pages/AdminFleetDetail.tsx`, `drizzle/0024_admin_metrics_dashboard.sql`
-  - Status: Open
+  - Last seen date: 2026-06-12
+  - Affected files: `server/routers/admin.ts`, `server/services/adminMetrics.ts`, `client/src/pages/AdminMetricsDashboard.tsx`, `client/src/pages/AdminFleetDetail.tsx`, `client/src/pages/ManagerDashboardFixed.tsx`, `drizzle/0024_admin_metrics_dashboard.sql`
+  - Status: Open (improved; read-only viewer PII masking and staff-verified menu visibility landed, but staging authz/export proof is still outstanding)
   - Recommended fix: Batch B - ensure admin endpoints remain TruckFixr-internal-only in production, exports are super-admin-only, metrics queries are bounded/optimized, and PII is redacted where appropriate.
-  - Verification command or check required: Unit tests for role gates/export permissions, staging non-admin denial checks, and query performance checks for largest filters.
+  - Verification command or check required: Unit tests for role gates/export permissions, staging non-admin denial checks, and query performance checks for largest filters. Latest evidence: 2026-06-12 approved Batch B added server-side `canViewPii` handling, masked member/invite emails plus VINs for `read_only_viewer`, and changed the manager-menu admin link to follow `trpc.admin.me` instead of only `user.internalAdminRole`; staging non-admin denial and large-filter performance proof still pending.
 
 ## Supabase / Database Tasks
 
@@ -132,11 +132,11 @@ Last updated: 2026-05-29
   - Category: Supabase database, RLS, storage & data safety
   - Severity: High
   - First discovered date: 2026-05-27
-  - Last seen date: 2026-05-29
+  - Last seen date: 2026-06-12
   - Affected files/tables/policies/buckets/functions: `client/src/pages/DriverInspectionNSC.tsx`, `client/src/pages/VerifiedInspection.tsx`, `drizzle/0007_verified_inspections.sql`, `inspectionPhotos`, `defects.photoUrls`, `server/storage.ts`, `docs/supabase-storage-privacy-plan.md`, `server/storagePolicies.test.ts`, `supabase/migrations/20260527113000_storage_privacy_policies.sql`
-  - Status: In Progress (repo-level migration + static policy proof present; online evidence upload path added; live/local/staging storage behavior proof pending)
+  - Status: In Progress (repo-level migration + static policy proof present; online evidence upload path added; source classification and malformed photo-URL rejection landed; live/local/staging storage behavior proof pending)
   - Recommended fix: Apply `supabase/migrations/20260527113000_storage_privacy_policies.sql` only to a verified local/staging Supabase project, then decide whether pilot photos stay as limited data URLs or move to private Supabase Storage. Before real fleet use, prove private buckets, tenant-aware path/metadata rules, MIME/size limits, signed URL rules, orphan cleanup, and cross-company storage denial.
-  - Verification command or check required: In local/staging, upload files as Company A driver/manager and prove Company B users cannot read/list/signed-url them; verify file metadata links company, vehicle, inspection, defect, user, and repair records. Latest evidence: 2026-05-27 targeted storage/RLS/support Vitest passed 3 files / 24 tests and final full Vitest passed 35 files / 243 tests. Supabase CLI was unavailable, so no live/local/staging storage policy application was performed.
+  - Verification command or check required: In local/staging, upload files as Company A driver/manager and prove Company B users cannot read/list/signed-url them; verify file metadata links company, vehicle, inspection, defect, user, and repair records. Latest evidence: 2026-06-12 approved Batch K added server-side evidence source classification plus malformed photo-URL rejection in inspection submission paths, and the spawn-safe lite harness now asserts the scoped key + source normalization rules; fresh local/staging storage-behavior proof is still missing.
   - Related batch: Batch K
   - Cross-reference batch if applicable: Batch B, Batch F
 
@@ -145,11 +145,11 @@ Last updated: 2026-05-29
   - Category: Daily inspection workflow / data safety
   - Severity: High
   - First discovered date: 2026-05-29
-  - Last seen date: 2026-05-29
+  - Last seen date: 2026-06-12
   - Affected files/tables/policies/buckets/functions: inspection/defect photo capture flows, `server/routers/inspections.ts`, `server/routers/vehicles.ts`, `dist/public/*` client assets, and Storage policies/migrations related to `TFX-CR-0031`
-  - Status: Open
+  - Status: Open (improved; inspection and verified-inspection photo flows now include explicit evidence/consent disclosure copy, but end-to-end fleet privacy proof is still missing)
   - Recommended fix: In a verified staging/local environment, validate upload/view/delete flows across multiple fleets/users; confirm “proof photo” UX disclosure and consent; confirm Storage object paths + policy enforcement deny cross-fleet list/read/signed-url; confirm orphan cleanup.
-  - Verification command or check required: Spawn-capable browser smoke + manual staging/local evidence run; optionally pair with `TFX-CR-0031` storage-policy proof steps.
+  - Verification command or check required: Spawn-capable browser smoke + manual staging/local evidence run; optionally pair with `TFX-CR-0031` storage-policy proof steps. Latest evidence: 2026-06-12 approved Batch K added explicit “inspection-related evidence only” disclosure copy to the driver and verified-inspection photo capture UI, but browser/staging confirmation of the full consent and privacy flow remains outstanding.
   - Related batch: Batch K
 
 - Task ID: TFX-CR-0032
@@ -185,7 +185,7 @@ Last updated: 2026-05-29
   - Category: Security & access control / role gating
   - Severity: High
   - First discovered date: 2026-05-28
-  - Last seen date: 2026-05-29
+  - Last seen date: 2026-06-09
   - Affected files: `client/src/components/OwnerOperatorGate.tsx`, `client/src/components/RoleBasedRoute.tsx`, `client/src/lib/roleBasedAccess.ts`, `client/src/lib/ownerOperator.ts`, `scripts/verify/owner-operator.ts`, `reports/batch-oo-owner-operator-staging-proof.md`, `package.json`, `server/services/ownerOperator.ts`, `server/routers/vehicleAccess.ts`, `server/services/ownerOperator.test.ts`, `server/ownerOperatorAccessControl.test.ts`, `server/routers/auth.ts`, `server/_core/localUsers.ts`, `drizzle/0028_owner_operator_mode.sql`
   - Status: In Progress (server endpoints tightened; server authz tests added; full browser/staging flow proof pending)
   - Recommended fix: Finish staged verification (local/staging) proving direct-route access control, correct fleet/membership invariants on toggle, and no cross-fleet read/write in owner-operator mode.
@@ -198,11 +198,11 @@ Last updated: 2026-05-29
   - Category: AI diagnosis workflow / reliability
   - Severity: Medium/High
   - First discovered date: 2026-05-29
-  - Last seen date: 2026-05-29
+  - Last seen date: 2026-06-12
   - Affected files: `server/services/diagnosisWorkflow.ts`, `server/services/diagnosisWorkflow.test.ts`, `scripts/admin/probe-diagnosis-ai-health.ts`
   - Status: In Progress (enum coercion summaries now recorded and surfaced; staging run + alerting proof pending)
   - Recommended fix: Confirm drift-handled enum coercions are visible in staging telemetry and do not silently hide invalid final states; keep a tight threshold for “defaulted” enum coercions.
-  - Verification command or check required: Run `scripts/admin/probe-diagnosis-ai-health.ts` in staging and confirm recent diagnosis sessions surface `enumCoercions` evidence (non-zero when drift occurs; zero when outputs are clean).
+  - Verification command or check required: Run `scripts/admin/probe-diagnosis-ai-health.ts` in staging and confirm recent diagnosis sessions surface `enumCoercions` evidence (non-zero when drift occurs; zero when outputs are clean). Latest evidence: 2026-06-12 review found no repo-level regression signal, but also no fresh staging probe output.
 
 ## In Progress Tasks
 
@@ -358,11 +358,11 @@ Last updated: 2026-05-29
 
 | Order | Workstream / Batch | Current Priority | Why It Matters | Status | Dependencies | Last Updated |
 |---:|---|---|---|---|---|---|
-| 1 | Supabase Storage privacy and file-access proof (`TFX-CR-0031`, Batch K/B) | High | Protects inspection/defect/customer file privacy | Repo-level migration and static policy proof implemented; live/local/staging behavior proof pending | Verified local/staging Supabase target and storage direction decision | 2026-05-27 |
-| 2 | Verification reliability across environments (`TFX-CR-0023`, Batch I) | Critical | Full tests, real browser smoke, demo validation, and audit evidence are needed before reliable pilot expansion | Improved; capable-environment proof green, packaged browser smoke still lite | CI/spawn-capable and network-capable verification path | 2026-05-27 |
+| 1 | Supabase Storage privacy and file-access proof (`TFX-CR-0031`, Batch K/B) | High | Protects inspection/defect/customer file privacy | Repo-level migration and static policy proof implemented; source classification/disclosure improved on 2026-06-12, but no fresh local/staging proof exists yet | Verified local/staging Supabase target and storage direction decision | 2026-06-12 |
+| 2 | Verification reliability across environments (`TFX-CR-0023`, Batch I) | Critical | Full tests, real browser smoke, demo validation, and audit evidence are needed before reliable pilot expansion | Restricted-shell `pnpm run test` now succeeds via the lite fallback; browser smoke and other spawn-dependent checks still need a capable environment | CI/spawn-capable and network-capable verification path | 2026-06-12 |
 | 3 | Current linked-vehicle/dialog WIP deploy decision (`TFX-CR-0027`, Batch A) | High | Prevents local/demo/deploy mismatch on active manager/driver vehicle flows | Resolved by commit `6813d08`; deploy decision remains separate | None | 2026-05-27 |
-| 4 | Real Android/mobile timing proof (`TFX-CR-0022`, Batch E) | High | Confirms bundle split improves field loading behavior | Bundle split implemented; timing outstanding | Browser/mobile run | 2026-05-27 |
-| 5 | Admin metrics authz hardening (`TFX-CR-0024`, Batch B) | High | Protects internal/customer operational data | Open | None | 2026-05-27 |
+| 4 | Real Android/mobile timing proof (`TFX-CR-0022`, Batch E) | High | Confirms bundle split improves field loading behavior | Bundle split implemented; 2026-06-12 review still only had stale bundle snapshot evidence | Browser/mobile run | 2026-06-12 |
+| 5 | Admin metrics authz hardening (`TFX-CR-0024`, Batch B) | High | Protects internal/customer operational data | Improved on 2026-06-12 with viewer PII masking and staff-verified menu visibility; staging authz/perf proof still open | None | 2026-06-12 |
 | 6 | Support/admin recovery verification (`TFX-CR-0020`, Batch J) | High | Controlled pilots need safe recovery and auditable remediation | Improved; staff-only audit-list query and non-staff denial proof green, live audit-write proof pending | Verified staging DB | 2026-05-27 |
 | 7 | Revenue/billing readiness (`TFX-CR-0021`, Batch I) | Medium/High | Enables pilot-to-paid conversion without account-state drift | Improved; pilot-to-paid conversion marker covered, full Stripe replay pending | Stripe staging access | 2026-05-27 |
 | 8 | Knowledge base/history and TADIS learning data (`TFX-CR-0003`, Batch G) | Medium/High | Builds long-term product advantage from confirmed outcomes | Improved; local retrieval guardrail proof green | Stable verification path | 2026-05-27 |

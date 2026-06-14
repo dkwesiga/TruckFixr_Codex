@@ -96,4 +96,10 @@ export const ENV = {
   diagnosisDisableOpenAi: readEnv("DIAGNOSIS_DISABLE_OPENAI"),
   diagnosisDisableGemini: readEnv("DIAGNOSIS_DISABLE_GEMINI"),
   diagnosisDisableAnthropic: readEnv("DIAGNOSIS_DISABLE_ANTHROPIC"),
+  // Redacted production observability (TFX-CR-0017). Enabled by default;
+  // structured events go to host logs and, optionally, a self-hosted webhook.
+  observabilityEnabled: !/^(0|false|no|off)$/i.test(readEnv("OBSERVABILITY_ENABLED") || "true"),
+  observabilityMinSeverity: readEnv("OBSERVABILITY_MIN_SEVERITY") || "info",
+  observabilityWebhookUrl: readEnv("OBSERVABILITY_WEBHOOK_URL"),
+  observabilityClientSampleRate: readEnv("OBSERVABILITY_CLIENT_SAMPLE_RATE"),
 };
