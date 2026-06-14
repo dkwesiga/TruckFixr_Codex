@@ -5,6 +5,7 @@ import {
   addAdminFleetNote,
   assertAdminCanExport,
   assertAdminCanWrite,
+  canViewAdminPii,
   getAdminFleetDetail,
   getAdminFleetExport,
   getAdminMetrics,
@@ -12,6 +13,7 @@ import {
   updateAdminFleetAccountType,
   updateAdminFleetFollowUp,
 } from "../services/adminMetrics";
+import { getObservabilitySummary } from "../services/observability";
 
 const accountTypeSchema = z.enum(["production", "demo", "internal_test", "archived"]);
 const riskStatusSchema = z.enum([
@@ -64,8 +66,16 @@ export const adminRouter = router({
       role,
       canWrite: assertAdminCanWrite(role),
       canExport: assertAdminCanExport(role),
+      canViewPii: canViewAdminPii(role),
     };
   }),
+
+  observability: staffProcedure
+    .input(z.object({ limit: z.number().int().min(1).max(200).optional() }).optional())
+    .query(({ input, ctx }) => {
+      requireInternalRole(ctx.user);
+      return getObservabilitySummary(input?.limit ?? 50);
+    }),
 
   metrics: staffProcedure
     .input(filtersSchema)
@@ -76,6 +86,7 @@ export const adminRouter = router({
           role,
           canWrite: assertAdminCanWrite(role),
           canExport: assertAdminCanExport(role),
+          canViewPii: canViewAdminPii(role),
         },
         ...(await getAdminMetrics(input)),
       };
@@ -92,8 +103,8 @@ export const adminRouter = router({
   fleetDetail: staffProcedure
     .input(z.object({ fleetId: z.number().int().positive(), filters: filtersSchema.optional() }))
     .query(async ({ input, ctx }) => {
-      requireInternalRole(ctx.user);
-      const detail = await getAdminFleetDetail(input.fleetId, input.filters ?? {});
+      const role = requireInternalRole(ctx.user);
+      const detail = await getAdminFleetDetail(input.fleetId, input.filters ?? {}, { viewerRole: role });
       if (!detail) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Fleet not found" });
       }

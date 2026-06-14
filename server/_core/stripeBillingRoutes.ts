@@ -15,6 +15,7 @@ import { getStripeAdminReadinessSummary } from "../services/stripeReadiness";
 import { findUserIdByStripeReference, getSubscriptionState, syncSubscriptionState } from "../services/subscriptions";
 import { hasPaidAccess, type BillingStatus, type SubscriptionTier } from "../../shared/billing";
 import { markPilotAccessConvertedToPaid } from "../services/pilotAccess";
+import { recordObservabilityEvent } from "../services/observability";
 
 const processedWebhookEventIds = new Set<string>();
 
@@ -320,6 +321,12 @@ export function registerStripeBillingRoutes(app: Express) {
 
         res.json({ received: true });
       } catch (error) {
+        recordObservabilityEvent({
+          category: "stripe",
+          event: "stripe_webhook_failed",
+          severity: "error",
+          message: error instanceof Error ? error.message : String(error),
+        });
         console.error("[Stripe Webhook] Failed to process event:", error);
         res.status(400).json({
           error: error instanceof Error ? error.message : "Webhook processing failed",

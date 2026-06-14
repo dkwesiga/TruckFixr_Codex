@@ -78,6 +78,7 @@ export default function AdminFleetDetail() {
   const adminQuery = trpc.admin.me.useQuery(undefined, { retry: false });
   const canWrite = Boolean(adminQuery.data?.canWrite);
   const canChangeAccountType = adminQuery.data?.role === "super_admin";
+  const canViewPii = adminQuery.data?.canViewPii !== false;
   const [note, setNote] = useState("");
   const [followUpStatus, setFollowUpStatus] = useState("healthy");
   const [riskStatus, setRiskStatus] = useState("healthy");
@@ -131,6 +132,11 @@ export default function AdminFleetDetail() {
   return (
     <AdminLayout>
       <div className="mx-auto max-w-[1500px] space-y-6">
+        {!canViewPii ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            Read-only viewer mode masks member emails, invite emails, and VINs.
+          </div>
+        ) : null}
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div>
             <Button variant="outline" className="mb-4" onClick={() => navigate("/admin/metrics")}>

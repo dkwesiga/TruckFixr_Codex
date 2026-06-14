@@ -14,6 +14,11 @@ import { getStripeReadinessReport } from "../services/stripeReadiness";
 import { ENV } from "./env";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
+import {
+  categorizeErrorSource,
+  normalizeSeverity,
+  recordObservabilityEvent,
+} from "../services/observability";
 
 function normalizeOrigin(value: string) {
   try {
@@ -94,11 +99,14 @@ function applyRequestTiming(app: express.Express) {
       const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
 
       if (req.path.startsWith("/api/") && durationMs >= 2_000) {
-        console.warn("[Performance] Slow API route", {
-          method: req.method,
-          path: req.path,
+        recordObservabilityEvent({
+          category: "performance",
+          event: "slow_api_route",
+          severity: durationMs >= 8_000 ? "error" : "warning",
+          route: req.path,
           statusCode: res.statusCode,
-          durationMs: Math.round(durationMs),
+          durationMs,
+          context: { method: req.method },
         });
       }
     });
@@ -159,6 +167,14 @@ async function getPortConflictHint(port: number) {
 }
 
 async function handleStartupError(error: NodeJS.ErrnoException, port: number) {
+  recordObservabilityEvent({
+    category: "startup",
+    event: "server_startup_error",
+    severity: "critical",
+    message: error.message,
+    context: { code: error.code },
+  });
+
   if (error.code === "EADDRINUSE") {
     const hint = await getPortConflictHint(port);
 
@@ -244,6 +260,45 @@ async function startServer() {
     });
   });
 
+  // Redacted browser runtime error / slow-load beacon (TFX-CR-0017).
+  // Intentionally unauthenticated (errors can happen pre-login) and always
+  // answers 204 so a misbehaving client can never be told anything useful.
+  app.post("/api/observability/client", (req, res) => {
+    try {
+      const sampleRate = Number.parseFloat(ENV.observabilityClientSampleRate);
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const severity = normalizeSeverity(body.severity, "error");
+      const isFailure = severity === "error" || severity === "critical";
+      const effectiveRate = Number.isFinite(sampleRate) ? sampleRate : 1;
+
+      if (!isFailure && Math.random() > effectiveRate) {
+        res.status(204).end();
+        return;
+      }
+
+      recordObservabilityEvent({
+        category: "browser",
+        event: typeof body.event === "string" ? body.event.slice(0, 80) : "client_error",
+        severity,
+        message: typeof body.message === "string" ? body.message : undefined,
+        route: typeof body.route === "string" ? body.route : undefined,
+        durationMs: typeof body.durationMs === "number" ? body.durationMs : undefined,
+        context: {
+          userAgent:
+            typeof req.headers["user-agent"] === "string"
+              ? req.headers["user-agent"].slice(0, 200)
+              : undefined,
+          source: typeof body.source === "string" ? body.source.slice(0, 200) : undefined,
+          stack: typeof body.stack === "string" ? body.stack : undefined,
+        },
+      });
+    } catch {
+      /* never surface ingestion failures to the browser */
+    }
+
+    res.status(204).end();
+  });
+
   app.get("/api/ai/provider-status", async (req, res) => {
     if (ENV.isProduction && process.env.ENABLE_AI_PROVIDER_STATUS_ENDPOINT !== "true") {
       res.status(404).json({ error: "Not found" });
@@ -284,6 +339,31 @@ async function startServer() {
     createExpressMiddleware({
       router: appRouter,
       createContext,
+      onError({ error, path, type }) {
+        // Expected client-side outcomes (auth, validation, not-found) are
+        // recorded at low severity so failure-rate funnels can still see them
+        // without polluting real server-error counts.
+        const expected =
+          error.code === "UNAUTHORIZED" ||
+          error.code === "FORBIDDEN" ||
+          error.code === "BAD_REQUEST" ||
+          error.code === "NOT_FOUND" ||
+          error.code === "TOO_MANY_REQUESTS";
+        const causeMessage =
+          error.cause instanceof Error ? error.cause.message : undefined;
+        recordObservabilityEvent({
+          category: expected ? "backend" : categorizeErrorSource(causeMessage ?? error.message),
+          event: "trpc_error",
+          severity: expected ? "info" : "error",
+          message: error.message,
+          route: path ? `trpc/${path}` : "trpc",
+          context: {
+            code: error.code,
+            type,
+            cause: causeMessage,
+          },
+        });
+      },
     })
   );
 
@@ -327,6 +407,12 @@ async function startServer() {
 }
 
 startServer().catch((error) => {
+  recordObservabilityEvent({
+    category: "startup",
+    event: "server_start_failed",
+    severity: "critical",
+    message: error instanceof Error ? error.message : String(error),
+  });
   console.error("[Server] Failed to start", error);
   process.exit(1);
 });

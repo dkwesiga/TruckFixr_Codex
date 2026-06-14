@@ -304,7 +304,7 @@ function mapVehicleRow(
   };
 }
 
-function ManagerDashboardFixedContent() {
+function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole?: string | null }) {
   const { user, logout, isLoading: isAuthLoading } = useAuthContext();
   const utils = trpc.useUtils();
   const [, navigate] = useLocation();
@@ -832,7 +832,7 @@ function ManagerDashboardFixedContent() {
               <BookOpenCheck className="mr-2 h-4 w-4" />
               Quick Start Guides
             </DropdownMenuItem>
-            {user?.internalAdminRole ? (
+            {internalAdminRole ? (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
@@ -2360,9 +2360,11 @@ function ManagerDashboardFixedContent() {
 }
 
 export default function ManagerDashboardFixed() {
+  const internalAdminQuery = trpc.admin.me.useQuery(undefined, { retry: false });
+
   return (
     <RoleBasedRoute requiredRoles={["owner", "manager"]}>
-      <ManagerDashboardFixedContent />
+      <ManagerDashboardFixedContent internalAdminRole={internalAdminQuery.data?.role ?? null} />
     </RoleBasedRoute>
   );
 }

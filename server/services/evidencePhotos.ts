@@ -9,6 +9,7 @@ const mimeToExtension: Record<string, string> = {
 };
 
 export type EvidencePhotoKind = "defect" | "proof";
+export type EvidencePhotoSource = "upload" | "inline_data_url";
 
 export type ParsedEvidenceDataUrl = {
   bytes: Buffer;
@@ -42,6 +43,35 @@ export function parseEvidenceImageDataUrl(dataUrl: string): ParsedEvidenceDataUr
   }
 
   return { bytes, mimeType, extension, sizeBytes: bytes.length };
+}
+
+export function classifyEvidencePhotoSource(photoUrl: string): EvidencePhotoSource {
+  const trimmed = String(photoUrl ?? "").trim();
+  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(trimmed)) {
+    return "inline_data_url";
+  }
+  if (/^https?:\/\//i.test(trimmed)) {
+    return "upload";
+  }
+  throw new Error("Unsupported evidence photo URL. Expected a secure upload URL or image data URL.");
+}
+
+export function normalizeSubmittedEvidencePhotoUrls(photoUrls: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const photoUrl of photoUrls) {
+    const trimmed = String(photoUrl ?? "").trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+
+    classifyEvidencePhotoSource(trimmed);
+    seen.add(trimmed);
+    normalized.push(trimmed);
+  }
+
+  return normalized;
 }
 
 export function buildEvidencePhotoStorageKey(input: {

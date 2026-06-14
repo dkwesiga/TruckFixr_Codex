@@ -215,6 +215,36 @@ export function assertAdminCanExport(role: InternalAdminRole) {
   return role === "super_admin";
 }
 
+export function canViewAdminPii(role: InternalAdminRole) {
+  return role === "super_admin" || role === "admin";
+}
+
+export function redactEmailAddress(value: string | null | undefined) {
+  if (!value) return null;
+
+  const trimmed = value.trim();
+  const atIndex = trimmed.indexOf("@");
+  if (atIndex <= 1) {
+    return "***";
+  }
+
+  const local = trimmed.slice(0, atIndex);
+  const domain = trimmed.slice(atIndex + 1);
+  const visibleLocal = local.slice(0, 2);
+  return `${visibleLocal}${"*".repeat(Math.max(local.length - visibleLocal.length, 1))}@${domain}`;
+}
+
+export function redactVin(value: string | null | undefined) {
+  if (!value) return null;
+
+  const trimmed = value.trim();
+  if (trimmed.length <= 6) {
+    return `${trimmed.slice(0, 1)}***${trimmed.slice(-1)}`;
+  }
+
+  return `${trimmed.slice(0, 3)}***${trimmed.slice(-4)}`;
+}
+
 function isTrailer(row: typeof vehicles.$inferSelect) {
   return row.isTrailer || row.assetCategory === "trailer" || String(row.assetType).includes("trailer");
 }
@@ -825,11 +855,16 @@ export async function getAdminMetrics(filters: AdminMetricsFilters) {
   return buildMetricsFromRows(filters, await loadMetricRows());
 }
 
-export async function getAdminFleetDetail(fleetId: number, filters: AdminMetricsFilters) {
+export async function getAdminFleetDetail(
+  fleetId: number,
+  filters: AdminMetricsFilters,
+  options?: { viewerRole?: InternalAdminRole | null }
+) {
   const rows = await loadMetricRows();
   const metrics = buildMetricsFromRows({ ...filters, accountType: "all" }, rows);
   const fleet = rows.fleetRows.find((item) => item.id === fleetId);
   if (!fleet) return null;
+  const revealPii = options?.viewerRole ? canViewAdminPii(options.viewerRole) : true;
 
   const row = metrics.tables.fleetRows.find((item) => item.fleetId === fleetId);
   const fleetVehicles = rows.vehicleRows.filter((vehicle) => vehicle.fleetId === fleetId);
@@ -842,7 +877,7 @@ export async function getAdminFleetDetail(fleetId: number, filters: AdminMetrics
         ? {
             id: user.id,
             name: user.name,
-            email: user.email,
+            email: revealPii ? user.email : redactEmailAddress(user.email),
             role: membership.role,
             membershipStatus: membership.status,
             lastActiveAt: formatDate(user.lastAuthAt ?? user.lastSignedIn),
@@ -863,14 +898,17 @@ export async function getAdminFleetDetail(fleetId: number, filters: AdminMetrics
     .sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0))
     .map((note) => {
       const author = rows.userRows.find((user) => user.id === note.createdByUserId);
-      return {
-        id: note.id,
-        note: note.note,
-        noteType: note.noteType,
-        createdAt: formatDate(note.createdAt),
-        createdByName: author?.name ?? author?.email ?? "TruckFixr admin",
-      };
-    });
+        return {
+          id: note.id,
+          note: note.note,
+          noteType: note.noteType,
+          createdAt: formatDate(note.createdAt),
+          createdByName:
+            author?.name ??
+            (revealPii ? author?.email : null) ??
+            (revealPii ? "TruckFixr admin" : "Internal admin"),
+        };
+      });
 
   return {
     summary: {
@@ -917,7 +955,7 @@ export async function getAdminFleetDetail(fleetId: number, filters: AdminMetrics
         .map((vehicle) => ({
           id: vehicle.id,
           unitNumber: vehicle.unitNumber,
-          vin: vehicle.vin,
+          vin: revealPii ? vehicle.vin : redactVin(vehicle.vin),
           assetType: vehicle.assetType,
           status: vehicle.status,
           createdAt: formatDate(vehicle.createdAt),
@@ -927,7 +965,7 @@ export async function getAdminFleetDetail(fleetId: number, filters: AdminMetrics
       members: fleetUsers,
       invitations: fleetInvitations.map((invite) => ({
         id: invite.id,
-        email: invite.email,
+        email: revealPii ? invite.email : redactEmailAddress(invite.email),
         name: invite.name,
         role: invite.role,
         status: invite.status,
