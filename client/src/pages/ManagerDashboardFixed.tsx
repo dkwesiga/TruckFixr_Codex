@@ -66,6 +66,7 @@ import {
   LayoutDashboard,
   LogOut,
   MapPin,
+  Menu,
   Plus,
   Search,
   ShieldCheck,
