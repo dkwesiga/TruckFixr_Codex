@@ -98,8 +98,9 @@ Last updated: 2026-06-12
   - Severity: Medium
   - First discovered date: 2026-05-14
   - Last seen date: 2026-05-27
-  - Affected files: `vite.config.mjs`, `client/src/App.tsx`, shared dashboard/auth/vendor bundles
-  - Status: Open (bundle split implemented; 2026-06-12 review still only had stale `dist/public` snapshot evidence; real mobile timing still outstanding)
+  - Affected files: `vite.config.mjs`, `client/src/App.tsx`, `client/src/pages/Pricing.tsx`, shared dashboard/auth/vendor bundles
+  - Status: In Progress (Rec #5 landed the Pricing comparison-table mobile fix + a fresh bundle snapshot; real device timing still outstanding)
+  - 2026-06-14 (Rec #5): made the Pricing comparison table scroll horizontally inside its own container with a pinned Feature column + a small-screen "Swipe to compare plans" hint, so the 6-column table no longer crushes columns or forces page-level horizontal scroll on 360-390px. Produced a fresh production bundle via `pnpm run build:client` (exit 0): largest assets vendor-shared 381.15 kB / gzip 125.65 kB, vendor-charts 275.72 kB / gzip 63.08 kB. Device-timing + responsive checklist added at `reports/batch-mobile-timing-checklist.md`. The client observability beacon now auto-reports loads over 6s (`slow_page_load`). `pnpm run check` passed. Still outstanding: real Android Chrome/Brave route-level FCP/LCP/TTI capture (needs a device/throttled browser).
   - Recommended fix: Run a real Android Chrome/Brave or throttled mobile-browser timing pass against the production build and record route-level load measurements.
   - Verification command or check required: Mobile/browser timing for initial shell, login, driver dashboard, manager dashboard, inspection start, diagnosis routes. Latest evidence: 2026-06-12 daily review again could not run a fresh client build due spawn restrictions; the existing `dist/public` snapshot still showed 70 files / 1,938,365 bytes, including `vendor-shared-BU_WnMg_.js` at 381,154 raw bytes.
 
