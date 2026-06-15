@@ -137,6 +137,10 @@
     font-family: "Inter", sans-serif;
     background-image: linear-gradient(180deg, #f8f9ff 0%, #eff4ff 100%);
     min-height: 100vh;
+    /* Use the dynamic viewport height on mobile so the Android/Chrome address
+       bar collapsing does not leave content under the browser chrome. Falls
+       back to 100vh on browsers without dvh support. */
+    min-height: 100dvh;
   }
   h1,
   h2,
