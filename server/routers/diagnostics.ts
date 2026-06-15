@@ -42,6 +42,18 @@ import {
   type MinimalDiagnosisContext,
 } from "../services/diagnosisWorkflow";
 import { preprocessDiagnosticInput } from "../services/faultCodeReferences";
+import {
+  buildConfirmedOutcomeReferences,
+  getStoredSolvedCaseSignals,
+  jaccardSimilarity,
+  scoreHistoricalDiagnosticCase,
+  tokenizeDiagnosticText,
+} from "../services/confirmedOutcomes";
+import { recordObservabilityEvent } from "../services/observability";
+
+// Re-exported for backward compatibility with existing importers/tests that
+// pull these TADIS scoring helpers from the diagnostics router.
+export { jaccardSimilarity, scoreHistoricalDiagnosticCase, tokenizeDiagnosticText };
 
 const recentPartKeywords = [
   "hose",
@@ -72,84 +84,6 @@ const recentPartKeywords = [
 function extractRecentParts(description: string | null | undefined) {
   const normalized = description?.toLowerCase() ?? "";
   return recentPartKeywords.filter((part) => normalized.includes(part));
-}
-
-export function tokenizeDiagnosticText(text: string) {
-  return new Set(
-    text
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, " ")
-      .split(/\s+/)
-      .filter((word) => word.length > 2)
-  );
-}
-
-export function jaccardSimilarity(a: Set<string>, b: Set<string>) {
-  if (a.size === 0 || b.size === 0) return 0;
-
-  let intersection = 0;
-  for (const token of Array.from(a)) {
-    if (b.has(token)) intersection += 1;
-  }
-
-  const union = a.size + b.size - intersection;
-  return union > 0 ? intersection / union : 0;
-}
-
-export function scoreHistoricalDiagnosticCase(input: {
-  caseSignals: string[];
-  caseFaultCodes: string[];
-  currentSymptoms: string[];
-  currentFaultCodes: string[];
-}) {
-  const symptomScore = jaccardSimilarity(
-    tokenizeDiagnosticText(input.caseSignals.join(" ")),
-    tokenizeDiagnosticText(input.currentSymptoms.join(" "))
-  );
-
-  const normalizedCaseCodes = new Set(normalizeFaultCodes(input.caseFaultCodes));
-  const normalizedCurrentCodes = new Set(normalizeFaultCodes(input.currentFaultCodes));
-  let codeMatches = 0;
-  for (const code of Array.from(normalizedCaseCodes)) {
-    if (normalizedCurrentCodes.has(code)) codeMatches += 1;
-  }
-  const codeUnion = normalizedCaseCodes.size + normalizedCurrentCodes.size - codeMatches;
-  const codeScore = codeUnion > 0 ? codeMatches / codeUnion : 0;
-
-  return Math.min(1, symptomScore * 0.7 + codeScore * 0.3);
-}
-
-function stringArrayFromUnknown(value: unknown) {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
-    : [];
-}
-
-function getStoredSolvedCaseSignals(metadata: Record<string, unknown> | null | undefined) {
-  const diagnosisContext =
-    metadata?.diagnosisContext && typeof metadata.diagnosisContext === "object"
-      ? (metadata.diagnosisContext as Record<string, unknown>)
-      : {};
-  const feedback =
-    metadata?.feedback && typeof metadata.feedback === "object"
-      ? (metadata.feedback as Record<string, unknown>)
-      : {};
-
-  const symptoms = stringArrayFromUnknown(diagnosisContext.symptoms);
-  const faultCodes = normalizeFaultCodes(stringArrayFromUnknown(diagnosisContext.faultCodes));
-  const partsReplaced = stringArrayFromUnknown(feedback.partsReplaced);
-  const cause = typeof feedback.cause === "string" ? feedback.cause : "";
-  const confirmedFix = typeof feedback.confirmedFix === "string" ? feedback.confirmedFix : "";
-  const summary = [cause, confirmedFix, ...partsReplaced].filter(Boolean).join(" - ");
-
-  return {
-    symptoms,
-    faultCodes,
-    partsReplaced,
-    cause,
-    confirmedFix,
-    summary,
-  };
 }
 
 function getVehicleLifecycleStatus(complianceStatus: "green" | "yellow" | "red") {
@@ -1230,55 +1164,35 @@ async function buildMinimalDiagnosisContext(input: {
     })
     .filter((row) => row.summary);
 
-  const normalizedRepairReferences = repairOutcomeRows
-    .map((row) => {
-      const review = row.diagnosticCaseId ? reviewMap.get(row.diagnosticCaseId) : null;
-      const storedSignals = getStoredSolvedCaseSignals(
-        review?.metadata && typeof review.metadata === "object"
-          ? (review.metadata as Record<string, unknown>)
-          : null
-      );
-      const parts = Array.isArray(row.partsReplaced)
-        ? row.partsReplaced.filter((value): value is string => typeof value === "string")
-        : [];
-      const partsSummary = parts.length > 0 ? ` Parts: ${parts.join(", ")}.` : "";
-      const aiAccuracy =
-        row.aiDiagnosisCorrect && row.aiDiagnosisCorrect !== "unknown"
-          ? ` AI diagnosis: ${row.aiDiagnosisCorrect}.`
-          : "";
-      const caseLink = row.diagnosticCaseId ? ` Case: ${row.diagnosticCaseId}.` : "";
-      const similarity = scoreHistoricalDiagnosticCase({
-        caseSignals: [
-          ...storedSignals.symptoms,
-          row.confirmedFault,
-          row.repairPerformed,
-          row.repairNotes ?? "",
-          ...storedSignals.partsReplaced,
-          ...parts,
-        ].filter(Boolean),
-        caseFaultCodes: storedSignals.faultCodes,
-        currentSymptoms: input.symptoms,
-        currentFaultCodes: normalizeFaultCodes(input.faultCodes),
-      });
+  const { references: confirmedOutcomeReferences, droppedForeignFleetCount } =
+    buildConfirmedOutcomeReferences({
+      fleetId: input.fleetId,
+      repairOutcomeRows,
+      reviewMetadataByCaseId: new Map(
+        Array.from(reviewMap.entries()).map(([caseId, review]) => [
+          caseId,
+          review?.metadata && typeof review.metadata === "object"
+            ? (review.metadata as Record<string, unknown>)
+            : null,
+        ])
+      ),
+      currentSymptoms: input.symptoms,
+      currentFaultCodes: normalizeFaultCodes(input.faultCodes),
+      confirmedFeedbackReferences,
+      limit: 3,
+    });
 
-      return {
-        date:
-          row.returnedToServiceAt?.toISOString?.().slice(0, 10) ??
-          row.createdAt?.toISOString?.().slice(0, 10) ??
-          "",
-        summary: `${row.confirmedFault}: ${row.repairPerformed}.${partsSummary}${aiAccuracy}${caseLink}`.slice(0, 180),
-        similarity,
-      };
-    })
-    .filter((row) => row.summary)
-    .sort((left, right) => right.similarity - left.similarity)
-    .slice(0, 3)
-    .map(({ date, summary }) => ({ date, summary }));
-
-  const confirmedOutcomeReferences = [
-    ...normalizedRepairReferences,
-    ...confirmedFeedbackReferences,
-  ].slice(0, 3);
+  // Defense in depth: the SQL above is fleet-scoped, but if a future query
+  // regression ever loads another fleet's outcomes, the guard above drops them
+  // before they reach the AI prompt. Surface any such drop as a signal.
+  if (droppedForeignFleetCount > 0) {
+    recordObservabilityEvent({
+      category: "workflow",
+      event: "cross_fleet_outcome_filtered",
+      severity: "warning",
+      context: { fleetId: input.fleetId, dropped: droppedForeignFleetCount },
+    });
+  }
 
   return {
     ...baseContext,

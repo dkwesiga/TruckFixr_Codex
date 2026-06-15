@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { exitCodeForStatus, requireFullVerification } from "./lib/verify-report.mjs";
 
 function formatError(error) {
   if (error instanceof Error) {
@@ -314,6 +315,22 @@ async function main() {
             }
           }
         ),
+    },
+    {
+      name: "verifyReport: skip fails only when full verification is required",
+      fn: () => {
+        assert.equal(exitCodeForStatus("passed", false), 0);
+        assert.equal(exitCodeForStatus("failed", false), 1);
+        assert.equal(exitCodeForStatus("failed", true), 1);
+        // A skip passes locally but must fail when full verification is required.
+        assert.equal(exitCodeForStatus("skipped", false), 0);
+        assert.equal(exitCodeForStatus("skipped", true), 1);
+        // Unknown statuses fail closed.
+        assert.equal(exitCodeForStatus("weird", false), 1);
+        assert.equal(requireFullVerification({ CI: "true" }), true);
+        assert.equal(requireFullVerification({ TFX_REQUIRE_SPAWN: "true" }), true);
+        assert.equal(requireFullVerification({}), false);
+      },
     },
     {
       name: "evidencePhotos: parses image data URLs and builds scoped keys",

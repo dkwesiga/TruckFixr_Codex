@@ -1,120 +1,22 @@
-import childProcess from "node:child_process";
 import path from "node:path";
+import { isSpawnRestricted, patchWindowsViteExecProbe } from "./lib/spawn-env.mjs";
+import { finishVerification } from "./lib/verify-report.mjs";
 
 process.env.NODE_ENV = process.env.NODE_ENV || "production";
 
 const root = path.resolve(import.meta.dirname, "..");
 
-async function shouldSkipForSpawnRestrictions() {
-  try {
-    const esbuild = await import("esbuild");
-    await esbuild.transform("const x: number = 1", { loader: "ts" });
-    return false;
-  } catch (error) {
-    const code = error?.code || error?.cause?.code;
-    if (code === "EPERM") {
-      return true;
-    }
-    return false;
-  }
-}
-
-function isWindowsNetUseProbe(command, args = []) {
-  if (typeof command !== "string") {
-    return false;
-  }
-
-  if (/^\s*net\s+use\s*$/i.test(command)) {
-    return true;
-  }
-
-  if (!/cmd(.exe)?$/i.test(command)) {
-    return false;
-  }
-
-  const joinedArgs = args.filter((value) => typeof value === "string").join(" ");
-  return /\bnet\s+use\b/i.test(joinedArgs);
-}
-
-function createFakeChild() {
-  return {
-    pid: 0,
-    kill: () => false,
-    on() {
-      return this;
-    },
-    once(event, callback) {
-      if (event === "exit" || event === "close") {
-        queueMicrotask(() => callback?.(1));
-      }
-      return this;
-    },
-    stdout: null,
-    stderr: null,
-  };
-}
-
-function patchWindowsViteExecProbe() {
-  if (process.platform !== "win32") {
-    return;
-  }
-
-  if (childProcess.exec.__truckfixrPatched) {
-    return;
-  }
-
-  const originalExec = childProcess.exec.bind(childProcess);
-  const originalExecFile = childProcess.execFile.bind(childProcess);
-  const originalSpawn = childProcess.spawn.bind(childProcess);
-
-  childProcess.exec = Object.assign((command, ...args) => {
-    if (isWindowsNetUseProbe(command)) {
-      const callback = [...args].reverse().find((value) => typeof value === "function");
-      queueMicrotask(() => {
-        callback?.(Object.assign(new Error("Skipped Windows network drive probe"), { code: "EPERM" }), "", "");
-      });
-      return createFakeChild();
-    }
-
-    return originalExec(command, ...args);
-  }, { __truckfixrPatched: true });
-
-  childProcess.execFile = (file, args, ...rest) => {
-    const normalizedArgs = Array.isArray(args) ? args : [];
-    const remaining = Array.isArray(args) ? rest : [args, ...rest];
-    if (isWindowsNetUseProbe(file, normalizedArgs)) {
-      const callback = [...remaining].reverse().find((value) => typeof value === "function");
-      queueMicrotask(() => {
-        callback?.(Object.assign(new Error("Skipped Windows network drive probe"), { code: "EPERM" }), "", "");
-      });
-      return createFakeChild();
-    }
-
-    return Array.isArray(args)
-      ? originalExecFile(file, args, ...rest)
-      : originalExecFile(file, args, ...rest);
-  };
-
-  childProcess.spawn = (command, args = [], options) => {
-    if (isWindowsNetUseProbe(command, args)) {
-      return createFakeChild();
-    }
-
-    return originalSpawn(command, args, options);
-  };
-}
-
 patchWindowsViteExecProbe();
 
-if (await shouldSkipForSpawnRestrictions()) {
-  console.warn(
-    "[truckfixr] SKIP: `pnpm build:client` requires child-process spawning (esbuild/Vite) but this environment returns EPERM on spawn."
+if (await isSpawnRestricted()) {
+  process.exit(
+    finishVerification({
+      check: "build:client",
+      mode: "full",
+      status: "skipped",
+      reason: "spawn restricted (esbuild/Vite returns EPERM); run the client build in a non-restricted shell/host",
+    })
   );
-  console.warn("[truckfixr] Run the client build in a non-restricted shell/host, or allow child-process spawning for Node.");
-  if (process.env.CI || process.env.TFX_REQUIRE_SPAWN === "true") {
-    process.exit(1);
-  }
-  process.exit(0);
 }
 
 const [{ build }, { default: viteConfig }] = await Promise.all([
@@ -128,3 +30,5 @@ await build({
   configFile: false,
   mode: "production",
 });
+
+process.exit(finishVerification({ check: "build:client", mode: "full", status: "passed" }));

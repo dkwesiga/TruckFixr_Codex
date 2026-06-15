@@ -6,6 +6,10 @@ const diagnosticsRouterSource = readFileSync(
   resolve(process.cwd(), "server/routers/diagnostics.ts"),
   "utf8"
 );
+const confirmedOutcomesSource = readFileSync(
+  resolve(process.cwd(), "server/services/confirmedOutcomes.ts"),
+  "utf8"
+);
 const schemaSource = readFileSync(resolve(process.cwd(), "drizzle/schema.ts"), "utf8");
 const mvpHardeningMigration = readFileSync(
   resolve(process.cwd(), "drizzle/0019_mvp_readiness_hardening.sql"),
@@ -36,6 +40,14 @@ describe("diagnostic feedback persistence guardrails", () => {
     expect(diagnosticsRouterSource).toContain('.where(eq(repairOutcomes.fleetId, fleetId))');
     expect(diagnosticsRouterSource).toContain('.where(eq(repairOutcomes.fleetId, input.fleetId))');
     expect(diagnosticsRouterSource).toContain("solved diagnostic reviews");
-    expect(diagnosticsRouterSource).toContain("scoreHistoricalDiagnosticCase({");
+    // Selection/ranking now lives in the dedicated confirmed-outcomes service.
+    expect(diagnosticsRouterSource).toContain("buildConfirmedOutcomeReferences({");
+    expect(confirmedOutcomesSource).toContain("scoreHistoricalDiagnosticCase({");
+  });
+
+  it("guards against cross-fleet outcome leakage in the confirmed-outcome builder", () => {
+    expect(confirmedOutcomesSource).toContain("droppedForeignFleetCount");
+    expect(confirmedOutcomesSource).toContain("String(row.fleetId) === requestedFleetId");
+    expect(diagnosticsRouterSource).toContain("cross_fleet_outcome_filtered");
   });
 });
