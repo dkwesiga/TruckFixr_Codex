@@ -248,22 +248,12 @@ async function startServer() {
   registerBillingRoutes(app);
   applyCors(app);
 
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
-
-  app.get("/healthz", (_req, res) => {
-    res.status(200).json({
-      ok: true,
-      service: "truckfixr-api",
-      uptimeSeconds: Math.round(process.uptime()),
-      environment: process.env.NODE_ENV || "development",
-    });
-  });
-
   // Redacted browser runtime error / slow-load beacon (TFX-CR-0017).
   // Intentionally unauthenticated (errors can happen pre-login) and always
   // answers 204 so a misbehaving client can never be told anything useful.
-  app.post("/api/observability/client", (req, res) => {
+  // Registered BEFORE the global 50mb JSON parser with its own small limit so
+  // an anonymous client cannot push a multi-MB body through redaction (DoS).
+  app.post("/api/observability/client", express.json({ limit: "16kb" }), (req, res) => {
     try {
       const sampleRate = Number.parseFloat(ENV.observabilityClientSampleRate);
       const body = (req.body ?? {}) as Record<string, unknown>;
@@ -276,20 +266,22 @@ async function startServer() {
         return;
       }
 
+      // Truncate before handing to redaction so regex work stays bounded even
+      // within the 16kb cap.
+      const clip = (value: unknown, max: number) =>
+        typeof value === "string" ? value.slice(0, max) : undefined;
+
       recordObservabilityEvent({
         category: "browser",
         event: typeof body.event === "string" ? body.event.slice(0, 80) : "client_error",
         severity,
-        message: typeof body.message === "string" ? body.message : undefined,
-        route: typeof body.route === "string" ? body.route : undefined,
+        message: clip(body.message, 1_000),
+        route: clip(body.route, 300),
         durationMs: typeof body.durationMs === "number" ? body.durationMs : undefined,
         context: {
-          userAgent:
-            typeof req.headers["user-agent"] === "string"
-              ? req.headers["user-agent"].slice(0, 200)
-              : undefined,
-          source: typeof body.source === "string" ? body.source.slice(0, 200) : undefined,
-          stack: typeof body.stack === "string" ? body.stack : undefined,
+          userAgent: clip(req.headers["user-agent"], 200),
+          source: clip(body.source, 300),
+          stack: clip(body.stack, 2_000),
         },
       });
     } catch {
@@ -297,6 +289,18 @@ async function startServer() {
     }
 
     res.status(204).end();
+  });
+
+  app.use(express.json({ limit: "50mb" }));
+  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+  app.get("/healthz", (_req, res) => {
+    res.status(200).json({
+      ok: true,
+      service: "truckfixr-api",
+      uptimeSeconds: Math.round(process.uptime()),
+      environment: process.env.NODE_ENV || "development",
+    });
   });
 
   app.get("/api/ai/provider-status", async (req, res) => {

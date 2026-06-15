@@ -16,6 +16,7 @@ import { getApiUrl } from "./api";
 const SLOW_LOAD_THRESHOLD_MS = 6_000;
 const MAX_MESSAGE_LENGTH = 600;
 const DEDUPE_WINDOW_MS = 10_000;
+const MAX_DEDUPE_ENTRIES = 100;
 
 let initialized = false;
 const recentlySent = new Map<string, number>();
@@ -74,6 +75,15 @@ export function reportClientObservability(event: ClientObservabilityEvent) {
       return;
     }
     recentlySent.set(dedupeKey, now);
+    // Bound the dedupe map so a long-lived session with many distinct events
+    // cannot grow it without limit. Map preserves insertion order, so the first
+    // key is the oldest.
+    if (recentlySent.size > MAX_DEDUPE_ENTRIES) {
+      const oldestKey = recentlySent.keys().next().value;
+      if (oldestKey !== undefined) {
+        recentlySent.delete(oldestKey);
+      }
+    }
 
     const payload = {
       event: event.event,

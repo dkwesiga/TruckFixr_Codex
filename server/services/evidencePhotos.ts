@@ -66,7 +66,15 @@ export function normalizeSubmittedEvidencePhotoUrls(photoUrls: Array<string | nu
       continue;
     }
 
-    classifyEvidencePhotoSource(trimmed);
+    // Drop unsupported/malformed entries (e.g. blob:, relative, javascript:)
+    // rather than throwing — a single bad URL must not abort the whole
+    // inspection submit and lose the driver's other valid evidence.
+    try {
+      classifyEvidencePhotoSource(trimmed);
+    } catch {
+      continue;
+    }
+
     seen.add(trimmed);
     normalized.push(trimmed);
   }
