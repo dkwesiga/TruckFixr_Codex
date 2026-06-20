@@ -18,14 +18,21 @@ const TruckDetail = lazy(() => import("./pages/TruckDetail"));
 const Pricing = lazy(() => import("./pages/Pricing"));
 const EmailAuth = lazy(() => import("./pages/EmailAuth"));
 const UserProfile = lazy(() => import("./pages/UserProfile"));
-const AdminBillingDashboard = lazy(() => import("./pages/AdminBillingDashboard"));
-const FaultCodeReviewDashboard = lazy(() => import("./pages/FaultCodeReviewDashboard"));
+const AdminBillingDashboard = lazy(
+  () => import("./pages/AdminBillingDashboard")
+);
+const FaultCodeReviewDashboard = lazy(
+  () => import("./pages/FaultCodeReviewDashboard")
+);
 const InspectionReportDvir = lazy(() => import("./pages/InspectionReportDvir"));
 const AccessGateway = lazy(() => import("./pages/AccessGateway"));
 const AccessStartTrial = lazy(() => import("./pages/AccessStartTrial"));
 const AccessPilotCode = lazy(() => import("./pages/AccessPilotCode"));
 const AccessDriverInvite = lazy(() => import("./pages/AccessDriverInvite"));
 const PilotRedirect = lazy(() => import("./pages/PilotRedirect"));
+const FleetDowntimeCostCalculator = lazy(
+  () => import("./pages/FleetDowntimeCostCalculator")
+);
 
 function RouteFallback() {
   return (
@@ -55,12 +62,22 @@ function Router() {
         <Route path={"/driver"} component={DriverDashboardSaaS} />
         <Route path={"/diagnosis"} component={DriverDiagnosis} />
         <Route path={"/inspection"} component={VerifiedInspection} />
-        <Route path={"/inspection-report/:id"} component={InspectionReportDvir} />
+        <Route
+          path={"/inspection-report/:id"}
+          component={InspectionReportDvir}
+        />
         <Route path={"/defect/:id"} component={DefectDetail} />
         <Route path={"/truck/:id"} component={TruckDetail} />
         <Route path={"/pricing"} component={Pricing} />
+        <Route
+          path={"/fleet-downtime-cost-calculator"}
+          component={FleetDowntimeCostCalculator}
+        />
         <Route path={"/admin/billing"} component={AdminBillingDashboard} />
-        <Route path={"/admin/fault-codes"} component={FaultCodeReviewDashboard} />
+        <Route
+          path={"/admin/fault-codes"}
+          component={FaultCodeReviewDashboard}
+        />
         <Route path={"/404"} component={NotFound} />
         <Route path={"/"} component={LandingSaaS} />
         <Route component={NotFound} />
