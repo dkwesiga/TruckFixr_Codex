@@ -11,6 +11,7 @@ import { subscriptionsRouter } from "./routers/subscriptions";
 import { vehicleAccessRouter } from "./routers/vehicleAccess";
 import { companyRouter } from "./routers/company";
 import { leadsRouter } from "./routers/leads";
+import { downtimeCalculatorRouter } from "./routers/downtimeCalculator";
 import { accessRouter } from "./routers/access";
 import { faultCodeReferencesRouter } from "./routers/faultCodeReferences";
 import { supportRecoveryRouter } from "./routers/supportRecovery";
@@ -30,6 +31,7 @@ export const appRouter = router({
   vehicleAccess: vehicleAccessRouter,
   company: companyRouter,
   leads: leadsRouter,
+  downtimeCalculator: downtimeCalculatorRouter,
   access: accessRouter,
   faultCodeReferences: faultCodeReferencesRouter,
   supportRecovery: supportRecoveryRouter,
