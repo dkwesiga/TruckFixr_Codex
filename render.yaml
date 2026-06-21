@@ -70,6 +70,9 @@ services:
       - path: /pricing
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
+      - path: /fleet-downtime-cost-calculator
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
       - path: /admin
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
@@ -142,6 +145,9 @@ services:
         destination: /index.html
       - type: rewrite
         source: /pricing
+        destination: /index.html
+      - type: rewrite
+        source: /fleet-downtime-cost-calculator
         destination: /index.html
       - type: rewrite
         source: /admin
