@@ -728,7 +728,7 @@ export default function LandingSaaS() {
                 AI.
               </p>
               <h1 className="mt-6 font-['Manrope'] text-5xl font-black leading-[0.95] tracking-[-0.06em] text-[#00263F] sm:text-6xl lg:text-7xl">
-                AI-powered fleet maintenance intelligence for small commercial
+                AI-powered fleet maintenance intelligence for medium commercial
                 fleets.
               </h1>
               <p className="mt-6 max-w-xl text-lg leading-8 text-[#42474E]">
@@ -921,7 +921,7 @@ export default function LandingSaaS() {
             <SectionHeading
               eyebrow="The problem"
               title="Downtime does not start when the truck stops. It starts when warning signs get missed."
-              description="Small fleets lose time and money when maintenance decisions are scattered across paper inspections, text messages, driver memory, fault codes, and previous repair invoices."
+              description="Medium-sized fleets lose time and money when maintenance decisions are scattered across paper inspections, text messages, driver memory, fault codes, and previous repair invoices."
               center
             />
             <div className="mt-12 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
