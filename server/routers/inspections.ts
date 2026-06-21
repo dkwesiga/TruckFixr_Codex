@@ -1801,11 +1801,19 @@ export const inspectionsRouter = router({
           managerUserId: ctx.user.managerUserId,
         });
 
+        // Carrier/operator details for the DVIR header, from the fleet record.
+        const [reportFleet] = await db
+          .select({ name: fleets.name, address: fleets.address })
+          .from(fleets)
+          .where(eq(fleets.id, input.fleetId))
+          .limit(1);
+
         const reportDelivery = await createInspectionReportDelivery({
           prepared,
           inspectionId: inspectionResult.id,
           recipients: reportRecipients.recipients,
           vehicle,
+          carrier: { name: reportFleet?.name ?? null, address: reportFleet?.address ?? null },
           input: {
             ...input,
             ...(odometerReading != null ? { odometer: odometerReading } : {}),
