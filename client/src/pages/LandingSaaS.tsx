@@ -564,19 +564,19 @@ export default function LandingSaaS() {
           <div className="mx-auto grid min-h-[calc(100svh-4rem)] max-w-[1200px] items-center gap-12 px-4 py-16 sm:px-6 lg:grid-cols-[1fr_1fr] lg:py-20">
             <motion.div {...fadeUp} className="max-w-2xl">
               <p className="inline-flex rounded-full bg-[#00263F] px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-white">
-                AI breakdown prevention for small trucking fleets
+                AI breakdown prevention for medium-sized trucking fleets
               </p>
               <h1 className="mt-6 font-['Manrope'] text-5xl font-black leading-[0.95] tracking-[-0.06em] text-[#00263F] sm:text-6xl lg:text-7xl">
                 Stop surprise truck breakdowns before they cost you money.
               </h1>
               <p className="mt-6 max-w-xl text-lg leading-8 text-[#42474E]">
-                TruckFixr Fleet AI helps small trucking fleets turn driver reports, inspections, photos, fault codes, and repair history into clear repair decisions before minor issues become expensive downtime.
+                TruckFixr Fleet AI helps medium-sized trucking fleets turn driver reports, inspections, photos, fault codes, and repair history into clear repair decisions before minor issues become expensive downtime.
               </p>
-              <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <div className="mt-8 flex flex-col flex-wrap gap-3 sm:flex-row">
                 <Button
                   asChild
                   size="lg"
-                  className="rounded-full bg-[#E32636] px-8 py-3 font-['Manrope'] text-base font-bold text-white shadow-[0_18px_35px_-22px_rgba(227,38,54,0.72)] hover:bg-[#BC1E2C] h-auto whitespace-normal text-center leading-snug"
+                  className="h-auto w-full whitespace-normal rounded-full bg-[#E32636] px-8 py-3 text-center font-['Manrope'] text-base font-bold leading-snug text-white shadow-[0_18px_35px_-22px_rgba(227,38,54,0.72)] hover:bg-[#BC1E2C] sm:w-auto"
                 >
                   <a href="#pilot" onClick={() => handleLeadCtaClick("hero_pilot")}>Start a 90-Day Breakdown Reduction Pilot</a>
                 </Button>
@@ -584,17 +584,17 @@ export default function LandingSaaS() {
                   asChild
                   size="lg"
                   variant="outline"
-                  className="rounded-full border-2 border-[#00263F] bg-transparent px-8 font-['Manrope'] text-base font-bold text-[#00263F] hover:bg-[#00263F] hover:text-white"
+                  className="h-auto w-full whitespace-normal rounded-full border-2 border-[#00263F] bg-transparent px-8 py-3 text-center font-['Manrope'] text-base font-bold leading-snug text-[#00263F] hover:bg-[#00263F] hover:text-white sm:w-auto"
                 >
                   <a href="/auth/email">Log In to Your Dashboard</a>
                 </Button>
               </div>
               <p className="mt-5 text-sm font-semibold text-[#00263F]">
-                Built from real heavy-truck repair workflows for small fleets that cannot afford downtime.
+                Built from real heavy-truck repair workflows for medium-sized fleets that cannot afford downtime.
               </p>
               <div className="mt-8 grid gap-3 text-sm text-[#42474E] sm:grid-cols-2">
                 {[
-                  "Owner-led fleets with 2-25 trucks",
+                  "Fleets with 25-100 trucks",
                   "Driver symptom + inspection intelligence",
                   "Shop-ready AI repair reports",
                   "Dashboard, inspections, history, and access preserved",
@@ -724,7 +724,7 @@ export default function LandingSaaS() {
           <div className="mx-auto max-w-[1200px]">
             <SectionHeading
               eyebrow="The AI repair decision engine"
-              title="The AI repair decision engine for small trucking fleets."
+              title="The AI repair decision engine for medium-sized trucking fleets."
               description="When a driver reports a problem, TruckFixr asks follow-up questions, scores issue severity, ranks likely causes, recommends the next action, and creates a shop-ready repair report."
               center
             />
@@ -908,7 +908,7 @@ export default function LandingSaaS() {
                   Know which truck is becoming risky before it breaks down.
                 </h2>
                 <p className="mt-4 text-base leading-8 text-blue-100">
-                  TruckFixr helps small trucking fleets detect, diagnose, and act on vehicle issues before they become expensive downtime.
+                  TruckFixr helps medium-sized trucking fleets detect, diagnose, and act on vehicle issues before they become expensive downtime.
                 </p>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row lg:justify-end">
