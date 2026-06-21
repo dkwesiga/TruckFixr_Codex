@@ -872,6 +872,20 @@ export const leadSubmissions = pgTable("lead_submissions", {
   updatedAt: dateTimestamp().defaultNow().notNull(),
 });
 
+// Privacy-first funnel events. Intentionally anonymous: an opaque client
+// session id (not a user identity), the page path (query string stripped), and
+// a server-redacted properties bag with no PII. See drizzle/0019 for RLS.
+export const analyticsEvents = pgTable("analytics_events", {
+  id: serial("id").primaryKey(),
+  createdAt: dateTimestamp().defaultNow().notNull(),
+  name: varchar("name", { length: 120 }).notNull(),
+  sessionId: varchar("session_id", { length: 64 }),
+  path: varchar("path", { length: 255 }),
+  role: varchar("role", { length: 32 }),
+  fleetId: integer("fleet_id"),
+  properties: jsonb("properties"),
+});
+
 // Leads from the public Fleet Downtime Cost Calculator. Stored server-side only;
 // see drizzle/0017_downtime_calculator_leads.sql for RLS (no public read).
 export const downtimeCalculatorLeads = pgTable("downtime_calculator_leads", {

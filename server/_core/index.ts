@@ -7,7 +7,11 @@ import { registerEmailAuthRoutes } from "./emailAuthRoutes";
 import { registerStripeBillingRoutes } from "./stripeBillingRoutes";
 import { registerBillingRoutes } from "./billingRoutes";
 import { registerVehicleLookupRoutes } from "./vehicleLookupRoutes";
-import { getAiProviderStatus, probeAiProviderStatus } from "../services/aiOrchestrator";
+import {
+  getAiProviderStatus,
+  probeAiProviderStatus,
+} from "../services/aiOrchestrator";
+import { recordAnalyticsEvent } from "../services/analyticsEvents";
 import { ENV } from "./env";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
@@ -34,14 +38,17 @@ function getAllowedOrigins() {
     origins.add(ENV.appBaseUrl);
   }
 
-  return new Set(Array.from(origins).map((origin) => normalizeOrigin(origin)));
+  return new Set(Array.from(origins).map(origin => normalizeOrigin(origin)));
 }
 
 function applyCors(app: express.Express) {
   const allowedOrigins = getAllowedOrigins();
 
   app.use((req, res, next) => {
-    const requestOrigin = typeof req.headers.origin === "string" ? normalizeOrigin(req.headers.origin) : "";
+    const requestOrigin =
+      typeof req.headers.origin === "string"
+        ? normalizeOrigin(req.headers.origin)
+        : "";
     const isAllowedOrigin = requestOrigin && allowedOrigins.has(requestOrigin);
 
     if (isAllowedOrigin) {
@@ -50,7 +57,10 @@ function applyCors(app: express.Express) {
       res.setHeader("Vary", "Origin");
     }
 
-    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+    );
 
     const requestedHeaders =
       typeof req.headers["access-control-request-headers"] === "string"
@@ -114,7 +124,9 @@ async function getPortConflictHint(port: number) {
 
     if (payload.service === "truckfixr-api") {
       const environment =
-        typeof payload.environment === "string" ? ` (${payload.environment})` : "";
+        typeof payload.environment === "string"
+          ? ` (${payload.environment})`
+          : "";
       return `TruckFixr already appears to be running at http://localhost:${port}/${environment}.`;
     }
 
@@ -157,13 +169,19 @@ async function startServer() {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Frame-Options", "SAMEORIGIN");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-    res.setHeader("Permissions-Policy", "camera=(self), microphone=(), geolocation=(self)");
+    res.setHeader(
+      "Permissions-Policy",
+      "camera=(self), microphone=(), geolocation=(self)"
+    );
     res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
     res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
     res.setHeader("X-DNS-Prefetch-Control", "off");
 
     if (!isDevelopment) {
-      res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+      res.setHeader(
+        "Strict-Transport-Security",
+        "max-age=31536000; includeSubDomains"
+      );
       res.setHeader(
         "Content-Security-Policy",
         [
@@ -201,7 +219,10 @@ async function startServer() {
   });
 
   app.get("/api/ai/provider-status", async (req, res) => {
-    if (ENV.isProduction && process.env.ENABLE_AI_PROVIDER_STATUS_ENDPOINT !== "true") {
+    if (
+      ENV.isProduction &&
+      process.env.ENABLE_AI_PROVIDER_STATUS_ENDPOINT !== "true"
+    ) {
       res.status(404).json({ error: "Not found" });
       return;
     }
@@ -228,6 +249,22 @@ async function startServer() {
       ...status,
       probed: true,
       probe,
+    });
+  });
+
+  // Privacy-first funnel events. Public, fire-and-forget (sendBeacon-friendly):
+  // always returns 204 and never blocks the client, even on bad input. The
+  // service allowlists event names and redacts PII before storing.
+  app.post("/api/events", (req, res) => {
+    res.status(204).end();
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    void recordAnalyticsEvent({
+      name: body.name,
+      sessionId: body.sessionId,
+      path: body.path,
+      role: body.role,
+      fleetId: body.fleetId,
+      properties: body.properties,
     });
   });
 
@@ -260,7 +297,7 @@ async function startServer() {
     });
   }
 
-  server.once("error", (error) => {
+  server.once("error", error => {
     void handleStartupError(error as NodeJS.ErrnoException, port);
   });
 
@@ -274,7 +311,7 @@ async function startServer() {
   });
 }
 
-startServer().catch((error) => {
+startServer().catch(error => {
   console.error("[Server] Failed to start", error);
   process.exit(1);
 });
