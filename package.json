@@ -13,6 +13,7 @@
     "check": "tsc --noEmit",
     "format": "prettier --write .",
     "test": "vitest run",
+    "check:mobile-overflow": "node scripts/mobile-overflow-check.mjs",
     "db:push": "drizzle-kit generate && drizzle-kit migrate",
     "seed:fault-codes": "tsx scripts/seed-fault-code-references.ts",
     "seed:demo": "tsx scripts/seed-demo-data.ts",

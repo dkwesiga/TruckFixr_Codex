@@ -34,6 +34,8 @@ Test matrix — run each flow on every column:
 | 6 | Daily inspection capture (`/inspection`) | ☐ | ☐ | ☐ | ☐ | ☐ |
 | 7 | Manager dashboard (`/manager`) | ☐ | ☐ | ☐ | ☐ | ☐ |
 | 8 | Defect detail + resolve (`/defect/:id`) | ☐ | ☐ | ☐ | ☐ | ☐ |
+| 9 | Downtime calculator modal (landing → "Calculate Downtime Cost") | ☐ | ☐ | ☐ | ☐ | ☐ |
+| 10 | Downtime calculator page (`/fleet-downtime-cost-calculator`) | ☐ | ☐ | ☐ | ☐ | ☐ |
 
 ### Pass criteria (every cell)
 
@@ -47,7 +49,26 @@ Test matrix — run each flow on every column:
 - [ ] No layout-breaking JavaScript/console errors.
 - [ ] Tap targets for primary actions are comfortably tappable (~44px).
 
-### How to run the mobile-viewport column without hardware
+### Automated 360px overflow guard (public routes + calculator modal)
+
+An automatable slice of the "Mobile viewport" column now ships as a script:
+
+```bash
+pnpm dev                    # terminal 1 (or set BASE_URL to a deployed URL)
+pnpm check:mobile-overflow  # terminal 2
+```
+
+It loads `/`, `/fleet-downtime-cost-calculator`, `/pricing`, `/access`,
+`/signup`, and the landing calculator modal at 360×800 and fails on horizontal
+overflow or layout-breaking `console.error`s. It uses a system Chrome/Edge
+binary (override with `CHROME_PATH` / `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`).
+
+**Scope limit:** the guard cannot cover authenticated flows (dashboard,
+diagnosis, inspection, defect detail) because they need a session, and it is not
+a substitute for real Android Chrome/Brave/WebView testing. Those rows stay
+manual.
+
+### How to run the mobile-viewport column manually
 
 1. `pnpm dev`, open the app in Chrome/Edge.
 2. DevTools → device toolbar (Ctrl/Cmd+Shift+M) → "Responsive" at 360×800.
@@ -60,5 +81,5 @@ Test matrix — run each flow on every column:
   `DriverInspectionNSC.tsx`, `ManagerDashboardFixed.tsx`,
   `ManagerDashboardSaaS.tsx`, `DriverDashboard.tsx`); confirm-and-remove in a
   dedicated cleanup. They are not routed in `client/src/App.tsx`.
-- Consider a small overflow guard in CI (Playwright at 360px asserting no
-  horizontal scroll) to keep this from regressing.
+- Wire `pnpm check:mobile-overflow` into CI against a preview deploy once one is
+  available, and extend it to authenticated flows with a seeded test session.
