@@ -8,29 +8,66 @@ import { lazyWithChunkRecovery } from "./lib/chunkRecovery";
 
 const NotFound = lazyWithChunkRecovery(() => import("./pages/NotFound"));
 const LandingSaaS = lazyWithChunkRecovery(() => import("./pages/LandingSaaS"));
-const VerifiedInspection = lazyWithChunkRecovery(() => import("./pages/VerifiedInspection"));
+const VerifiedInspection = lazyWithChunkRecovery(
+  () => import("./pages/VerifiedInspection")
+);
 const Home = lazyWithChunkRecovery(() => import("./pages/Home"));
-const ManagerDashboard = lazyWithChunkRecovery(() => import("./pages/ManagerDashboard"));
-const DriverDashboardSaaS = lazyWithChunkRecovery(() => import("./pages/DriverDashboardSaaS"));
-const DriverDiagnosis = lazyWithChunkRecovery(() => import("./pages/DriverDiagnosis"));
+const ManagerDashboard = lazyWithChunkRecovery(
+  () => import("./pages/ManagerDashboard")
+);
+const DriverDashboardSaaS = lazyWithChunkRecovery(
+  () => import("./pages/DriverDashboardSaaS")
+);
+const DriverDiagnosis = lazyWithChunkRecovery(
+  () => import("./pages/DriverDiagnosis")
+);
 const Onboarding = lazyWithChunkRecovery(() => import("./pages/Onboarding"));
-const DefectDetail = lazyWithChunkRecovery(() => import("./pages/DefectDetail"));
+const DefectDetail = lazyWithChunkRecovery(
+  () => import("./pages/DefectDetail")
+);
 const TruckDetail = lazyWithChunkRecovery(() => import("./pages/TruckDetail"));
 const Pricing = lazyWithChunkRecovery(() => import("./pages/Pricing"));
 const EmailAuth = lazyWithChunkRecovery(() => import("./pages/EmailAuth"));
 const UserProfile = lazyWithChunkRecovery(() => import("./pages/UserProfile"));
-const AdminBillingDashboard = lazyWithChunkRecovery(() => import("./pages/AdminBillingDashboard"));
-const FaultCodeReviewDashboard = lazyWithChunkRecovery(() => import("./pages/FaultCodeReviewDashboard"));
-const AdminMetricsDashboard = lazyWithChunkRecovery(() => import("./pages/AdminMetricsDashboard"));
-const AdminFleetDetail = lazyWithChunkRecovery(() => import("./pages/AdminFleetDetail"));
-const InspectionReportDvir = lazyWithChunkRecovery(() => import("./pages/InspectionReportDvir"));
-const DriverInspectionNSC = lazyWithChunkRecovery(() => import("./pages/DriverInspectionNSC"));
-const AccessGateway = lazyWithChunkRecovery(() => import("./pages/AccessGateway"));
-const AccessStartTrial = lazyWithChunkRecovery(() => import("./pages/AccessStartTrial"));
-const AccessPilotCode = lazyWithChunkRecovery(() => import("./pages/AccessPilotCode"));
-const AccessDriverInvite = lazyWithChunkRecovery(() => import("./pages/AccessDriverInvite"));
-const PilotRedirect = lazyWithChunkRecovery(() => import("./pages/PilotRedirect"));
-const QuickStartGuides = lazyWithChunkRecovery(() => import("./pages/QuickStartGuides"));
+const AdminBillingDashboard = lazyWithChunkRecovery(
+  () => import("./pages/AdminBillingDashboard")
+);
+const FaultCodeReviewDashboard = lazyWithChunkRecovery(
+  () => import("./pages/FaultCodeReviewDashboard")
+);
+const AdminMetricsDashboard = lazyWithChunkRecovery(
+  () => import("./pages/AdminMetricsDashboard")
+);
+const AdminFleetDetail = lazyWithChunkRecovery(
+  () => import("./pages/AdminFleetDetail")
+);
+const InspectionReportDvir = lazyWithChunkRecovery(
+  () => import("./pages/InspectionReportDvir")
+);
+const DriverInspectionNSC = lazyWithChunkRecovery(
+  () => import("./pages/DriverInspectionNSC")
+);
+const AccessGateway = lazyWithChunkRecovery(
+  () => import("./pages/AccessGateway")
+);
+const AccessStartTrial = lazyWithChunkRecovery(
+  () => import("./pages/AccessStartTrial")
+);
+const AccessPilotCode = lazyWithChunkRecovery(
+  () => import("./pages/AccessPilotCode")
+);
+const AccessDriverInvite = lazyWithChunkRecovery(
+  () => import("./pages/AccessDriverInvite")
+);
+const PilotRedirect = lazyWithChunkRecovery(
+  () => import("./pages/PilotRedirect")
+);
+const QuickStartGuides = lazyWithChunkRecovery(
+  () => import("./pages/QuickStartGuides")
+);
+const FleetDowntimeCostCalculator = lazyWithChunkRecovery(
+  () => import("./pages/FleetDowntimeCostCalculator")
+);
 
 function RouteFallback() {
   return (
@@ -59,30 +96,61 @@ function Router() {
         <Route path={"/onboarding/guides"} component={QuickStartGuides} />
         <Route path={"/onboarding/my-guide"} component={QuickStartGuides} />
         <Route path={"/onboarding/driver"} component={QuickStartGuides} />
-        <Route path={"/onboarding/owner-operator"} component={QuickStartGuides} />
-        <Route path={"/onboarding/fleet-manager"} component={QuickStartGuides} />
+        <Route
+          path={"/onboarding/owner-operator"}
+          component={QuickStartGuides}
+        />
+        <Route
+          path={"/onboarding/fleet-manager"}
+          component={QuickStartGuides}
+        />
         <Route path={"/onboarding/fleet-owner"} component={QuickStartGuides} />
         <Route path={"/quick-start-guides"} component={QuickStartGuides} />
-        <Route path={"/quick-start-guides/my-guide"} component={QuickStartGuides} />
-        <Route path={"/quick-start-guides/driver"} component={QuickStartGuides} />
-        <Route path={"/quick-start-guides/owner-operator"} component={QuickStartGuides} />
-        <Route path={"/quick-start-guides/fleet-manager"} component={QuickStartGuides} />
-        <Route path={"/quick-start-guides/fleet-owner"} component={QuickStartGuides} />
+        <Route
+          path={"/quick-start-guides/my-guide"}
+          component={QuickStartGuides}
+        />
+        <Route
+          path={"/quick-start-guides/driver"}
+          component={QuickStartGuides}
+        />
+        <Route
+          path={"/quick-start-guides/owner-operator"}
+          component={QuickStartGuides}
+        />
+        <Route
+          path={"/quick-start-guides/fleet-manager"}
+          component={QuickStartGuides}
+        />
+        <Route
+          path={"/quick-start-guides/fleet-owner"}
+          component={QuickStartGuides}
+        />
         <Route path={"/manager"} component={ManagerDashboard} />
         <Route path={"/driver"} component={DriverDashboardSaaS} />
         <Route path={"/diagnosis"} component={DriverDiagnosis} />
         <Route path={"/inspection"} component={DriverInspectionNSC} />
         <Route path={"/inspection/verified"} component={VerifiedInspection} />
-        <Route path={"/inspection-report/:id"} component={InspectionReportDvir} />
+        <Route
+          path={"/inspection-report/:id"}
+          component={InspectionReportDvir}
+        />
         <Route path={"/defect/:id"} component={DefectDetail} />
         <Route path={"/truck/:id"} component={TruckDetail} />
         <Route path={"/pricing"} component={Pricing} />
+        <Route
+          path={"/fleet-downtime-cost-calculator"}
+          component={FleetDowntimeCostCalculator}
+        />
         <Route path={"/admin"} component={AdminMetricsDashboard} />
         <Route path={"/admin/metrics"} component={AdminMetricsDashboard} />
         <Route path={"/admin/fleets"} component={AdminMetricsDashboard} />
         <Route path={"/admin/fleets/:fleetId"} component={AdminFleetDetail} />
         <Route path={"/admin/billing"} component={AdminBillingDashboard} />
-        <Route path={"/admin/fault-codes"} component={FaultCodeReviewDashboard} />
+        <Route
+          path={"/admin/fault-codes"}
+          component={FaultCodeReviewDashboard}
+        />
         <Route path={"/404"} component={NotFound} />
         <Route path={"/"} component={LandingSaaS} />
         <Route component={NotFound} />

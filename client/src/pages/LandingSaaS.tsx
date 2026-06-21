@@ -1,4 +1,10 @@
-import { useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import {
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+} from "react";
 import { motion, type Transition } from "framer-motion";
 import AppLogo from "@/components/AppLogo";
 import { Button } from "@/components/ui/button";
@@ -7,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { trackEvent } from "@/lib/analytics";
+import FleetDowntimeCalculatorModal from "@/components/calculators/FleetDowntimeCalculatorModal";
 import {
   ArrowRight,
   BrainCircuit,
@@ -37,7 +44,6 @@ type ContentCard = {
   title: string;
   description: string;
 };
-
 
 const solutionCards: ContentCard[] = [
   {
@@ -172,7 +178,6 @@ const pilotIncludes = [
   "End-of-pilot review",
 ];
 
-
 const faqItems = [
   {
     question: "Who is TruckFixr built for?",
@@ -190,7 +195,8 @@ const faqItems = [
       "TruckFixr combines symptoms, fault codes, vehicle context, inspections, and maintenance signals to suggest urgency and likely next actions. Final judgment stays with your team or repair shop.",
   },
   {
-    question: "Does this replace a licensed inspection or a mechanic's judgment?",
+    question:
+      "Does this replace a licensed inspection or a mechanic's judgment?",
     answer:
       "No. TruckFixr supports maintenance and inspection readiness; it does not replace professional judgment, licensed inspections, or regulatory compliance obligations.",
   },
@@ -220,14 +226,23 @@ function SectionHeading({
   center?: boolean;
 }) {
   return (
-    <motion.div {...fadeUp} className={center ? "mx-auto max-w-3xl text-center" : "max-w-3xl"}>
+    <motion.div
+      {...fadeUp}
+      className={center ? "mx-auto max-w-3xl text-center" : "max-w-3xl"}
+    >
       {eyebrow ? (
-        <p className="text-xs font-black uppercase tracking-[0.18em] text-[#A04100]">{eyebrow}</p>
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-[#A04100]">
+          {eyebrow}
+        </p>
       ) : null}
-      <h2 className={`${eyebrow ? "mt-3" : ""} font-['Manrope'] text-3xl font-black tracking-[-0.03em] text-[#00263F] sm:text-4xl`}>
+      <h2
+        className={`${eyebrow ? "mt-3" : ""} font-['Manrope'] text-3xl font-black tracking-[-0.03em] text-[#00263F] sm:text-4xl`}
+      >
         {title}
       </h2>
-      {description ? <p className="mt-4 text-base leading-8 text-[#42474E]">{description}</p> : null}
+      {description ? (
+        <p className="mt-4 text-base leading-8 text-[#42474E]">{description}</p>
+      ) : null}
     </motion.div>
   );
 }
@@ -236,12 +251,15 @@ function FeatureCard({ card }: { card: ContentCard }) {
   return (
     <div className="h-full rounded-2xl border border-[var(--fleet-outline)] bg-white p-6 shadow-[var(--fleet-shadow)]">
       <card.icon className="h-8 w-8 text-[#E32636]" />
-      <h3 className="mt-5 font-['Manrope'] text-xl font-black text-[#00263F]">{card.title}</h3>
-      <p className="mt-3 text-sm leading-7 text-[#42474E]">{card.description}</p>
+      <h3 className="mt-5 font-['Manrope'] text-xl font-black text-[#00263F]">
+        {card.title}
+      </h3>
+      <p className="mt-3 text-sm leading-7 text-[#42474E]">
+        {card.description}
+      </p>
     </div>
   );
 }
-
 
 function DemoRequestForm() {
   const leadMutation = trpc.leads.submitDemoRequest.useMutation();
@@ -257,7 +275,9 @@ function DemoRequestForm() {
     biggestMaintenanceChallenge: "",
     website: "",
   });
-  const challengeTooShort = form.biggestMaintenanceChallenge.trim().length > 0 && form.biggestMaintenanceChallenge.trim().length < 10;
+  const challengeTooShort =
+    form.biggestMaintenanceChallenge.trim().length > 0 &&
+    form.biggestMaintenanceChallenge.trim().length < 10;
 
   const trackingContext = useMemo(() => {
     if (typeof window === "undefined") {
@@ -298,7 +318,7 @@ function DemoRequestForm() {
     markStarted();
     setErrorMessage(null);
     setSuccessMessage(null);
-    setForm((current) => ({ ...current, [field]: value }));
+    setForm(current => ({ ...current, [field]: value }));
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -307,7 +327,9 @@ function DemoRequestForm() {
 
     if (form.biggestMaintenanceChallenge.trim().length < 10) {
       setSuccessMessage(null);
-      setErrorMessage("Please describe your biggest maintenance challenge in at least 10 characters.");
+      setErrorMessage(
+        "Please describe your biggest maintenance challenge in at least 10 characters."
+      );
       return;
     }
 
@@ -370,7 +392,7 @@ function DemoRequestForm() {
         autoComplete="off"
         className="absolute left-[-9999px] h-px w-px opacity-0"
         name="website"
-        onChange={(event) => handleChange("website", event.target.value)}
+        onChange={event => handleChange("website", event.target.value)}
         value={form.website}
       />
 
@@ -382,7 +404,7 @@ function DemoRequestForm() {
           <Input
             id="fullName"
             value={form.fullName}
-            onChange={(event) => handleChange("fullName", event.target.value)}
+            onChange={event => handleChange("fullName", event.target.value)}
             className="border-[#BFD0E7] bg-[#F8FAFD]"
             placeholder="Jordan Smith"
             required
@@ -395,7 +417,7 @@ function DemoRequestForm() {
           <Input
             id="companyName"
             value={form.companyName}
-            onChange={(event) => handleChange("companyName", event.target.value)}
+            onChange={event => handleChange("companyName", event.target.value)}
             className="border-[#BFD0E7] bg-[#F8FAFD]"
             placeholder="Brampton Freight Inc."
             required
@@ -412,7 +434,7 @@ function DemoRequestForm() {
             id="email"
             type="email"
             value={form.email}
-            onChange={(event) => handleChange("email", event.target.value)}
+            onChange={event => handleChange("email", event.target.value)}
             className="border-[#BFD0E7] bg-[#F8FAFD]"
             placeholder="name@company.com"
             required
@@ -425,7 +447,7 @@ function DemoRequestForm() {
           <select
             id="fleetSize"
             value={form.fleetSize}
-            onChange={(event) => handleChange("fleetSize", event.target.value)}
+            onChange={event => handleChange("fleetSize", event.target.value)}
             className="h-11 w-full rounded-lg border border-[#BFD0E7] bg-[#F8FAFD] px-3 text-sm text-[#0B1C30]"
             required
           >
@@ -447,19 +469,26 @@ function DemoRequestForm() {
         <Textarea
           id="biggestMaintenanceChallenge"
           value={form.biggestMaintenanceChallenge}
-          onChange={(event) => handleChange("biggestMaintenanceChallenge", event.target.value)}
+          onChange={event =>
+            handleChange("biggestMaintenanceChallenge", event.target.value)
+          }
           className="min-h-28 border-[#BFD0E7] bg-[#F8FAFD]"
           placeholder="What is creating breakdowns, repeat repairs, inspection follow-up headaches, or repair-decision delays?"
           required
           minLength={10}
         />
-        <p className={`text-xs ${challengeTooShort ? "text-[#BC1E2C]" : "text-[#6B7280]"}`}>
-          Please use at least 10 characters so we can understand the issue clearly.
+        <p
+          className={`text-xs ${challengeTooShort ? "text-[#BC1E2C]" : "text-[#6B7280]"}`}
+        >
+          Please use at least 10 characters so we can understand the issue
+          clearly.
         </p>
       </div>
 
       <div className="rounded-2xl border border-[#D8E2F0] bg-[#F8FAFD] p-4 text-sm text-[#42474E]">
-        {hasStarted ? "Thanks for taking a look. We'll follow up within one business day." : "Tell us about your fleet and we'll follow up about the 90-day pilot or a product demo."}
+        {hasStarted
+          ? "Thanks for taking a look. We'll follow up within one business day."
+          : "Tell us about your fleet and we'll follow up about the 90-day pilot or a product demo."}
       </div>
 
       {successMessage ? (
@@ -495,11 +524,17 @@ function DemoRequestForm() {
 
 export default function LandingSaaS() {
   const [expandedFaq, setExpandedFaq] = useState<number | null>(0);
+  const [calculatorOpen, setCalculatorOpen] = useState(false);
 
   const handleLeadCtaClick = (location: string) => {
     trackEvent("book_demo_cta_clicked", {
       cta_location: location,
     });
+  };
+
+  const openCalculator = (location: string) => {
+    trackEvent("downtime_calculator_cta_clicked", { cta_location: location });
+    setCalculatorOpen(true);
   };
 
   return (
@@ -552,7 +587,9 @@ export default function LandingSaaS() {
               asChild
               className="rounded-full bg-[#E32636] px-3 font-['Manrope'] text-xs font-bold text-white hover:bg-[#BC1E2C] sm:px-5 sm:text-sm"
             >
-              <a href="#pilot" onClick={() => handleLeadCtaClick("nav_pilot")}>Start Pilot</a>
+              <a href="#pilot" onClick={() => handleLeadCtaClick("nav_pilot")}>
+                Start Pilot
+              </a>
             </Button>
           </div>
         </div>
@@ -570,7 +607,10 @@ export default function LandingSaaS() {
                 Stop surprise truck breakdowns before they cost you money.
               </h1>
               <p className="mt-6 max-w-xl text-lg leading-8 text-[#42474E]">
-                TruckFixr Fleet AI helps medium-sized trucking fleets turn driver reports, inspections, photos, fault codes, and repair history into clear repair decisions before minor issues become expensive downtime.
+                TruckFixr Fleet AI helps medium-sized trucking fleets turn
+                driver reports, inspections, photos, fault codes, and repair
+                history into clear repair decisions before minor issues become
+                expensive downtime.
               </p>
               <div className="mt-8 flex flex-col flex-wrap gap-3 sm:flex-row">
                 <Button
@@ -578,7 +618,12 @@ export default function LandingSaaS() {
                   size="lg"
                   className="h-auto w-full whitespace-normal rounded-full bg-[#E32636] px-8 py-3 text-center font-['Manrope'] text-base font-bold leading-snug text-white shadow-[0_18px_35px_-22px_rgba(227,38,54,0.72)] hover:bg-[#BC1E2C] sm:w-auto"
                 >
-                  <a href="#pilot" onClick={() => handleLeadCtaClick("hero_pilot")}>Start a 90-Day Breakdown Reduction Pilot</a>
+                  <a
+                    href="#pilot"
+                    onClick={() => handleLeadCtaClick("hero_pilot")}
+                  >
+                    Start a 90-Day Breakdown Reduction Pilot
+                  </a>
                 </Button>
                 <Button
                   asChild
@@ -588,9 +633,19 @@ export default function LandingSaaS() {
                 >
                   <a href="/auth/email">Log In to Your Dashboard</a>
                 </Button>
+                <Button
+                  type="button"
+                  size="lg"
+                  variant="outline"
+                  onClick={() => openCalculator("hero")}
+                  className="h-auto w-full whitespace-normal rounded-full border-2 border-[#00263F] bg-transparent px-8 py-3 text-center font-['Manrope'] text-base font-bold leading-snug text-[#00263F] hover:bg-[#00263F] hover:text-white sm:w-auto"
+                >
+                  Calculate Downtime Cost
+                </Button>
               </div>
               <p className="mt-5 text-sm font-semibold text-[#00263F]">
-                Built from real heavy-truck repair workflows for medium-sized fleets that cannot afford downtime.
+                Built from real heavy-truck repair workflows for medium-sized
+                fleets that cannot afford downtime.
               </p>
               <div className="mt-8 grid gap-3 text-sm text-[#42474E] sm:grid-cols-2">
                 {[
@@ -598,7 +653,7 @@ export default function LandingSaaS() {
                   "Driver symptom + inspection intelligence",
                   "Shop-ready AI repair reports",
                   "Dashboard, inspections, history, and access preserved",
-                ].map((item) => (
+                ].map(item => (
                   <div key={item} className="flex items-center gap-2">
                     <Check className="h-4 w-4 text-[#E32636]" />
                     <span>{item}</span>
@@ -607,7 +662,10 @@ export default function LandingSaaS() {
               </div>
             </motion.div>
 
-            <motion.div {...fadeUp} transition={{ ...revealTransition, delay: 0.08 }}>
+            <motion.div
+              {...fadeUp}
+              transition={{ ...revealTransition, delay: 0.08 }}
+            >
               <div className="relative mx-auto max-w-[620px]">
                 <div className="absolute -inset-5 rounded-[2rem] bg-[#E32636]/10 blur-3xl" />
                 <div className="relative overflow-hidden rounded-[2rem] border border-[#7FA7CD]/30 bg-[#0B3C5D] p-2 shadow-[0_34px_80px_-40px_rgba(0,38,63,0.85)]">
@@ -633,9 +691,16 @@ export default function LandingSaaS() {
                           ["3", "High-risk issues"],
                           ["7", "Inspections due"],
                         ].map(([value, label]) => (
-                          <div key={label} className="rounded-xl border border-white/10 bg-white/[0.06] p-4">
-                            <p className="font-['Manrope'] text-3xl font-black text-white">{value}</p>
-                            <p className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-300">{label}</p>
+                          <div
+                            key={label}
+                            className="rounded-xl border border-white/10 bg-white/[0.06] p-4"
+                          >
+                            <p className="font-['Manrope'] text-3xl font-black text-white">
+                              {value}
+                            </p>
+                            <p className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-300">
+                              {label}
+                            </p>
                           </div>
                         ))}
                       </div>
@@ -643,24 +708,47 @@ export default function LandingSaaS() {
                       <div className="rounded-xl border border-white/10 bg-white/[0.06] p-4">
                         <div className="flex items-center justify-between gap-4">
                           <div>
-                            <p className="font-['Manrope'] text-sm font-bold text-white">Repair decision queue</p>
-                            <p className="text-xs text-slate-300">Trucks affecting dispatch readiness</p>
+                            <p className="font-['Manrope'] text-sm font-bold text-white">
+                              Repair decision queue
+                            </p>
+                            <p className="text-xs text-slate-300">
+                              Trucks affecting dispatch readiness
+                            </p>
                           </div>
                           <Gauge className="h-5 w-5 text-[#E32636]" />
                         </div>
                         <div className="mt-4 space-y-3">
                           {[
-                            ["Unit 487964", "Cooling fault", "Hold dispatch", "Critical"],
-                            ["Unit 330184", "Inspection due", "Driver follow-up", "Attention"],
-                            ["Unit 219782", "Battery voltage", "Monitor", "Stable"],
+                            [
+                              "Unit 487964",
+                              "Cooling fault",
+                              "Hold dispatch",
+                              "Critical",
+                            ],
+                            [
+                              "Unit 330184",
+                              "Inspection due",
+                              "Driver follow-up",
+                              "Attention",
+                            ],
+                            [
+                              "Unit 219782",
+                              "Battery voltage",
+                              "Monitor",
+                              "Stable",
+                            ],
                           ].map(([unit, issue, action, level]) => (
                             <div
                               key={unit}
                               className="grid grid-cols-[1fr_auto] gap-3 rounded-lg border border-white/10 bg-[#0B1C30]/70 px-3 py-3"
                             >
                               <div>
-                                <p className="text-sm font-bold text-white">{unit}</p>
-                                <p className="text-xs text-slate-300">{issue}</p>
+                                <p className="text-sm font-bold text-white">
+                                  {unit}
+                                </p>
+                                <p className="text-xs text-slate-300">
+                                  {issue}
+                                </p>
                               </div>
                               <div className="text-right">
                                 <span
@@ -674,7 +762,9 @@ export default function LandingSaaS() {
                                 >
                                   {level}
                                 </span>
-                                <p className="mt-2 text-xs text-slate-400">{action}</p>
+                                <p className="mt-2 text-xs text-slate-400">
+                                  {action}
+                                </p>
                               </div>
                             </div>
                           ))}
@@ -685,7 +775,9 @@ export default function LandingSaaS() {
                     <div className="mt-5 flex items-start gap-3 rounded-xl border border-white/10 bg-[#00263F] px-4 py-4">
                       <BrainCircuit className="mt-1 h-5 w-5 text-[#E32636]" />
                       <p className="text-sm leading-6 text-slate-200">
-                        TruckFixr AI flags a likely cooling-system risk. Hold dispatch, inspect coolant level, belt tension, fan response, and recent repair history.
+                        TruckFixr AI flags a likely cooling-system risk. Hold
+                        dispatch, inspect coolant level, belt tension, fan
+                        response, and recent repair history.
                       </p>
                     </div>
                   </div>
@@ -697,7 +789,9 @@ export default function LandingSaaS() {
 
         <section className="border-b border-[var(--fleet-outline)] bg-white px-4 py-5 sm:px-6">
           <div className="mx-auto flex max-w-[1200px] flex-col items-center gap-3 sm:flex-row sm:gap-6">
-            <p className="text-xs font-black uppercase tracking-[0.18em] text-[#42474E]">Supported by</p>
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-[#42474E]">
+              Supported by
+            </p>
             <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-3 sm:justify-start">
               <a
                 href="https://dmz.torontomu.ca/black-innovation-summit"
@@ -720,7 +814,10 @@ export default function LandingSaaS() {
           </div>
         </section>
 
-        <section id="solution" className="bg-[var(--fleet-surface)] px-4 py-16 sm:px-6 lg:py-24">
+        <section
+          id="solution"
+          className="bg-[var(--fleet-surface)] px-4 py-16 sm:px-6 lg:py-24"
+        >
           <div className="mx-auto max-w-[1200px]">
             <SectionHeading
               eyebrow="The AI repair decision engine"
@@ -728,21 +825,33 @@ export default function LandingSaaS() {
               description="When a driver reports a problem, TruckFixr asks follow-up questions, scores issue severity, ranks likely causes, recommends the next action, and creates a shop-ready repair report."
               center
             />
-            <motion.div {...fadeUp} className="mt-10 rounded-[2rem] border border-[var(--fleet-outline)] bg-white p-5 shadow-[var(--fleet-shadow)]">
+            <motion.div
+              {...fadeUp}
+              className="mt-10 rounded-[2rem] border border-[var(--fleet-outline)] bg-white p-5 shadow-[var(--fleet-shadow)]"
+            >
               <div className="grid gap-3 md:grid-cols-7">
                 {repairDecisionSteps.map((step, index) => (
-                  <div key={step} className="relative rounded-2xl bg-[#F6F8FC] p-4 text-center">
+                  <div
+                    key={step}
+                    className="relative rounded-2xl bg-[#F6F8FC] p-4 text-center"
+                  >
                     <div className="mx-auto flex h-8 w-8 items-center justify-center rounded-full bg-[#E32636] font-['Manrope'] text-sm font-black text-white">
                       {index + 1}
                     </div>
-                    <p className="mt-3 text-sm font-bold text-[#00263F]">{step}</p>
+                    <p className="mt-3 text-sm font-bold text-[#00263F]">
+                      {step}
+                    </p>
                   </div>
                 ))}
               </div>
             </motion.div>
             <div className="mt-12 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
               {solutionCards.map((card, index) => (
-                <motion.div key={card.title} {...fadeUp} transition={{ ...revealTransition, delay: index * 0.04 }}>
+                <motion.div
+                  key={card.title}
+                  {...fadeUp}
+                  transition={{ ...revealTransition, delay: index * 0.04 }}
+                >
                   <FeatureCard card={card} />
                 </motion.div>
               ))}
@@ -750,7 +859,10 @@ export default function LandingSaaS() {
           </div>
         </section>
 
-        <section id="features" className="border-y border-[var(--fleet-outline)] bg-white px-4 py-16 sm:px-6 lg:py-24">
+        <section
+          id="features"
+          className="border-y border-[var(--fleet-outline)] bg-white px-4 py-16 sm:px-6 lg:py-24"
+        >
           <div className="mx-auto max-w-[1200px]">
             <SectionHeading
               eyebrow="Full platform"
@@ -760,7 +872,11 @@ export default function LandingSaaS() {
             />
             <div className="mt-12 grid gap-6 md:grid-cols-2 xl:grid-cols-3">
               {platformFeatures.map((card, index) => (
-                <motion.div key={card.title} {...fadeUp} transition={{ ...revealTransition, delay: index * 0.03 }}>
+                <motion.div
+                  key={card.title}
+                  {...fadeUp}
+                  transition={{ ...revealTransition, delay: index * 0.03 }}
+                >
                   <FeatureCard card={card} />
                 </motion.div>
               ))}
@@ -768,7 +884,10 @@ export default function LandingSaaS() {
           </div>
         </section>
 
-        <section id="how-it-works" className="bg-[#00263F] px-4 py-16 text-white sm:px-6 lg:py-24">
+        <section
+          id="how-it-works"
+          className="bg-[#00263F] px-4 py-16 text-white sm:px-6 lg:py-24"
+        >
           <div className="mx-auto max-w-[1200px]">
             <motion.div {...fadeUp} className="mx-auto max-w-3xl text-center">
               <p className="text-xs font-black uppercase tracking-[0.18em] text-[#FFB693]">
@@ -781,28 +900,47 @@ export default function LandingSaaS() {
             <div className="relative mt-14 grid gap-8 md:grid-cols-3">
               <div className="absolute left-0 right-0 top-8 hidden h-px bg-white/15 md:block" />
               {steps.map((item, index) => (
-                <motion.div key={item.title} {...fadeUp} transition={{ ...revealTransition, delay: index * 0.08 }} className="relative text-center">
+                <motion.div
+                  key={item.title}
+                  {...fadeUp}
+                  transition={{ ...revealTransition, delay: index * 0.08 }}
+                  className="relative text-center"
+                >
                   <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-[#E32636] text-white shadow-[0_0_0_8px_#00263F]">
-                    <span className="font-['Manrope'] text-xl font-black">{item.step}</span>
+                    <span className="font-['Manrope'] text-xl font-black">
+                      {item.step}
+                    </span>
                   </div>
-                  <h3 className="mt-5 font-['Manrope'] text-lg font-black">{item.title}</h3>
-                  <p className="mt-2 text-sm leading-6 text-blue-100/80">{item.description}</p>
+                  <h3 className="mt-5 font-['Manrope'] text-lg font-black">
+                    {item.title}
+                  </h3>
+                  <p className="mt-2 text-sm leading-6 text-blue-100/80">
+                    {item.description}
+                  </p>
                 </motion.div>
               ))}
             </div>
           </div>
         </section>
 
-        <section id="difference" className="border-y border-[var(--fleet-outline)] bg-[#F6F8FC] px-4 py-16 sm:px-6 lg:py-24">
+        <section
+          id="difference"
+          className="border-y border-[var(--fleet-outline)] bg-[#F6F8FC] px-4 py-16 sm:px-6 lg:py-24"
+        >
           <div className="mx-auto max-w-[1200px]">
             <SectionHeading
               eyebrow="Clear differentiation"
               title="Traditional fleet software records problems. TruckFixr helps you decide what to do next."
               center
             />
-            <motion.div {...fadeUp} className="mt-12 overflow-hidden rounded-[2rem] border border-[var(--fleet-outline)] bg-white shadow-[var(--fleet-shadow)]">
+            <motion.div
+              {...fadeUp}
+              className="mt-12 overflow-hidden rounded-[2rem] border border-[var(--fleet-outline)] bg-white shadow-[var(--fleet-shadow)]"
+            >
               <div className="grid bg-[#00263F] text-sm font-black uppercase tracking-[0.12em] text-white md:grid-cols-2">
-                <div className="border-b border-white/10 p-5 md:border-b-0 md:border-r md:border-white/10">Traditional fleet apps</div>
+                <div className="border-b border-white/10 p-5 md:border-b-0 md:border-r md:border-white/10">
+                  Traditional fleet apps
+                </div>
                 <div className="p-5">TruckFixr Fleet AI</div>
               </div>
               <div className="divide-y divide-[#E0E7F1]">
@@ -829,22 +967,58 @@ export default function LandingSaaS() {
               title="90-Day AI Breakdown Reduction Pilot"
               description="In 90 days, TruckFixr helps your fleet capture driver issues earlier, identify high-risk vehicles, prioritize repairs, and reduce surprise downtime."
             />
-            <motion.div {...fadeUp} className="rounded-[2rem] border border-[var(--fleet-outline)] bg-white p-6 shadow-[var(--fleet-shadow)] sm:p-8">
-              <h3 className="font-['Manrope'] text-2xl font-black text-[#00263F]">Pilot includes</h3>
+            <motion.div
+              {...fadeUp}
+              className="rounded-[2rem] border border-[var(--fleet-outline)] bg-white p-6 shadow-[var(--fleet-shadow)] sm:p-8"
+            >
+              <h3 className="font-['Manrope'] text-2xl font-black text-[#00263F]">
+                Pilot includes
+              </h3>
               <div className="mt-6 grid gap-3 sm:grid-cols-2">
-                {pilotIncludes.map((item) => (
-                  <div key={item} className="flex items-start gap-3 rounded-2xl bg-[#F6F8FC] p-4 text-sm font-semibold text-[#00263F]">
+                {pilotIncludes.map(item => (
+                  <div
+                    key={item}
+                    className="flex items-start gap-3 rounded-2xl bg-[#F6F8FC] p-4 text-sm font-semibold text-[#00263F]"
+                  >
                     <Check className="mt-0.5 h-4 w-4 shrink-0 text-[#E32636]" />
                     {item}
                   </div>
                 ))}
               </div>
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-                <Button asChild size="lg" className="rounded-full bg-[#E32636] px-8 font-['Manrope'] font-bold text-white hover:bg-[#BC1E2C]">
-                  <a href="#book-demo" onClick={() => handleLeadCtaClick("pilot_primary")}>Apply for the 90-Day Pilot</a>
+                <Button
+                  asChild
+                  size="lg"
+                  className="rounded-full bg-[#E32636] px-8 font-['Manrope'] font-bold text-white hover:bg-[#BC1E2C]"
+                >
+                  <a
+                    href="#book-demo"
+                    onClick={() => handleLeadCtaClick("pilot_primary")}
+                  >
+                    Apply for the 90-Day Pilot
+                  </a>
                 </Button>
-                <Button asChild size="lg" variant="outline" className="rounded-full border-2 border-[#00263F] px-8 py-3 font-['Manrope'] font-bold text-[#00263F] hover:bg-[#00263F] hover:text-white h-auto whitespace-normal text-center leading-snug">
-                  <a href="#book-demo" onClick={() => handleLeadCtaClick("pilot_health_check")}>Run a Free AI Truck Health Check</a>
+                <Button
+                  asChild
+                  size="lg"
+                  variant="outline"
+                  className="rounded-full border-2 border-[#00263F] px-8 py-3 font-['Manrope'] font-bold text-[#00263F] hover:bg-[#00263F] hover:text-white h-auto whitespace-normal text-center leading-snug"
+                >
+                  <a
+                    href="#book-demo"
+                    onClick={() => handleLeadCtaClick("pilot_health_check")}
+                  >
+                    Run a Free AI Truck Health Check
+                  </a>
+                </Button>
+                <Button
+                  type="button"
+                  size="lg"
+                  variant="outline"
+                  onClick={() => openCalculator("pilot")}
+                  className="h-auto whitespace-normal rounded-full border-2 border-[#00263F] px-8 py-3 text-center font-['Manrope'] font-bold leading-snug text-[#00263F] hover:bg-[#00263F] hover:text-white"
+                >
+                  Estimate Your Downtime Cost
                 </Button>
               </div>
             </motion.div>
@@ -864,7 +1038,10 @@ export default function LandingSaaS() {
           </div>
         </section>
 
-        <section id="faq" className="border-t border-[var(--fleet-outline)] bg-white px-4 py-16 sm:px-6 lg:py-24">
+        <section
+          id="faq"
+          className="border-t border-[var(--fleet-outline)] bg-white px-4 py-16 sm:px-6 lg:py-24"
+        >
           <div className="mx-auto max-w-[1200px]">
             <SectionHeading
               title="Common questions from fleet operators."
@@ -884,10 +1061,18 @@ export default function LandingSaaS() {
                   >
                     <div className="flex items-start justify-between gap-6">
                       <div>
-                        <p className="font-['Manrope'] text-lg font-black text-[#00263F]">{faq.question}</p>
-                        {isOpen ? <p className="mt-3 text-sm leading-7 text-[#42474E]">{faq.answer}</p> : null}
+                        <p className="font-['Manrope'] text-lg font-black text-[#00263F]">
+                          {faq.question}
+                        </p>
+                        {isOpen ? (
+                          <p className="mt-3 text-sm leading-7 text-[#42474E]">
+                            {faq.answer}
+                          </p>
+                        ) : null}
                       </div>
-                      <ChevronDown className={`mt-1 h-5 w-5 shrink-0 text-[#A04100] transition-transform ${isOpen ? "rotate-180" : ""}`} />
+                      <ChevronDown
+                        className={`mt-1 h-5 w-5 shrink-0 text-[#A04100] transition-transform ${isOpen ? "rotate-180" : ""}`}
+                      />
                     </div>
                   </motion.button>
                 );
@@ -908,14 +1093,30 @@ export default function LandingSaaS() {
                   Know which truck is becoming risky before it breaks down.
                 </h2>
                 <p className="mt-4 text-base leading-8 text-blue-100">
-                  TruckFixr helps medium-sized trucking fleets detect, diagnose, and act on vehicle issues before they become expensive downtime.
+                  TruckFixr helps medium-sized trucking fleets detect, diagnose,
+                  and act on vehicle issues before they become expensive
+                  downtime.
                 </p>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row lg:justify-end">
-                <Button asChild size="lg" className="rounded-full bg-[#E32636] px-8 font-['Manrope'] font-bold text-white hover:bg-[#BC1E2C]">
-                  <a href="#pilot" onClick={() => handleLeadCtaClick("final_cta_pilot")}>Start a 90-Day Pilot</a>
+                <Button
+                  asChild
+                  size="lg"
+                  className="rounded-full bg-[#E32636] px-8 font-['Manrope'] font-bold text-white hover:bg-[#BC1E2C]"
+                >
+                  <a
+                    href="#pilot"
+                    onClick={() => handleLeadCtaClick("final_cta_pilot")}
+                  >
+                    Start a 90-Day Pilot
+                  </a>
                 </Button>
-                <Button asChild size="lg" variant="outline" className="rounded-full border-2 border-white/25 bg-transparent px-8 font-['Manrope'] font-bold text-white hover:bg-white hover:text-[#00263F]">
+                <Button
+                  asChild
+                  size="lg"
+                  variant="outline"
+                  className="rounded-full border-2 border-white/25 bg-transparent px-8 font-['Manrope'] font-bold text-white hover:bg-white hover:text-[#00263F]"
+                >
                   <a href="/auth/email">Log In</a>
                 </Button>
               </div>
@@ -926,7 +1127,9 @@ export default function LandingSaaS() {
 
       <section className="border-t border-[var(--fleet-outline)] bg-[#F6F8FC]">
         <div className="mx-auto flex max-w-[1200px] flex-col items-center gap-4 px-4 py-10 text-center sm:px-6">
-          <h3 className="font-['Manrope'] text-lg font-bold text-[#00263F]">Already have access?</h3>
+          <h3 className="font-['Manrope'] text-lg font-bold text-[#00263F]">
+            Already have access?
+          </h3>
           <div className="flex flex-wrap items-center justify-center gap-4">
             <a
               href="/auth/email"
@@ -954,16 +1157,35 @@ export default function LandingSaaS() {
         <div className="mx-auto flex max-w-[1200px] flex-col gap-5 px-4 py-8 text-sm text-[#42474E] sm:px-6 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-3">
             <AppLogo imageClassName="h-8" frameClassName="rounded p-1.5" />
-            <span className="font-['Manrope'] font-black text-[#00263F]">TruckFixr Fleet AI</span>
+            <span className="font-['Manrope'] font-black text-[#00263F]">
+              TruckFixr Fleet AI
+            </span>
           </div>
           <div className="flex flex-wrap gap-5">
-            <a href="#features" className="hover:text-[#E32636]">Features</a>
-            <a href="#pilot" className="hover:text-[#E32636]">Pilot</a>
-            <a href="/pricing" className="hover:text-[#E32636]">Pricing</a>
-            <a href="mailto:info@truckfixr.com" className="hover:text-[#E32636]">info@truckfixr.com</a>
+            <a href="#features" className="hover:text-[#E32636]">
+              Features
+            </a>
+            <a href="#pilot" className="hover:text-[#E32636]">
+              Pilot
+            </a>
+            <a href="/pricing" className="hover:text-[#E32636]">
+              Pricing
+            </a>
+            <a
+              href="mailto:info@truckfixr.com"
+              className="hover:text-[#E32636]"
+            >
+              info@truckfixr.com
+            </a>
           </div>
         </div>
       </footer>
+
+      <FleetDowntimeCalculatorModal
+        open={calculatorOpen}
+        onOpenChange={setCalculatorOpen}
+        sourcePagePath="/"
+      />
     </div>
   );
 }
