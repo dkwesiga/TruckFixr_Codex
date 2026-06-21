@@ -1,13 +1,26 @@
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDistanceKm } from "@/lib/vehicleDisplay";
 import { trpc } from "@/lib/trpc";
-import { AlertCircle, CheckCircle, Clock, User, MessageSquare, FileText } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle,
+  Clock,
+  User,
+  MessageSquare,
+  FileText,
+} from "lucide-react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
 
@@ -18,14 +31,23 @@ function DefectDetailContent() {
     return match ? Number(match[1]) : 1;
   }, []);
   const defectQuery = trpc.defects.getById.useQuery({ defectId });
+  const fleetId = defectQuery.data?.defect?.fleetId;
+  const agreementQuery = trpc.repairOutcomes.agreementStats.useQuery(
+    { fleetId: fleetId as number },
+    { enabled: typeof fleetId === "number" }
+  );
   const utils = trpc.useUtils();
   const [managerNote, setManagerNote] = useState("");
-  const recordRepairOutcomeMutation = trpc.inspections.recordRepairOutcome.useMutation({
-    onSuccess: async () => {
-      await utils.defects.getById.invalidate({ defectId });
-      toast.success("Repair outcome recorded");
-    },
-  });
+  const recordRepairOutcomeMutation =
+    trpc.inspections.recordRepairOutcome.useMutation({
+      onSuccess: async () => {
+        await utils.defects.getById.invalidate({ defectId });
+        if (typeof fleetId === "number") {
+          await utils.repairOutcomes.agreementStats.invalidate({ fleetId });
+        }
+        toast.success("Repair outcome recorded");
+      },
+    });
   const updateStatusMutation = trpc.defects.updateStatus.useMutation({
     onSuccess: async () => {
       await utils.defects.getById.invalidate({ defectId });
@@ -57,7 +79,9 @@ function DefectDetailContent() {
         reportedBy: `Driver ${liveDefect.driverId}`,
         reportedAt: new Date(liveDefect.createdAt),
         status: liveDefect.status || "open",
-        photoUrls: Array.isArray(liveDefect.photoUrls) ? liveDefect.photoUrls : [],
+        photoUrls: Array.isArray(liveDefect.photoUrls)
+          ? liveDefect.photoUrls
+          : [],
       }
     : {
         id: defectId,
@@ -73,7 +97,10 @@ function DefectDetailContent() {
   const tadisAnalysis = {
     urgency: liveAlert?.urgency ?? "Attention",
     recommendedAction: liveAlert?.recommendedAction ?? "Inspect Soon",
-    likelyCause: liveAlert?.likelyCause ?? liveDefect?.aiSummary ?? "Manager review required",
+    likelyCause:
+      liveAlert?.likelyCause ??
+      liveDefect?.aiSummary ??
+      "Manager review required",
     reasoning:
       liveAlert?.reasoning ??
       liveDefect?.aiSummary ??
@@ -83,7 +110,9 @@ function DefectDetailContent() {
       ? (() => {
           try {
             const parsed = JSON.parse(liveAlert.reasoning);
-            return Array.isArray(parsed.recommended_tests) ? parsed.recommended_tests : ["Review defect and record repair outcome"];
+            return Array.isArray(parsed.recommended_tests)
+              ? parsed.recommended_tests
+              : ["Review defect and record repair outcome"];
           } catch {
             return ["Review defect and record repair outcome"];
           }
@@ -109,7 +138,10 @@ function DefectDetailContent() {
   ];
 
   const submitRepairOutcome = async () => {
-    if (!repairForm.confirmedFault.trim() || !repairForm.repairPerformed.trim()) {
+    if (
+      !repairForm.confirmedFault.trim() ||
+      !repairForm.repairPerformed.trim()
+    ) {
       toast.error("Enter the confirmed fault and repair performed.");
       return;
     }
@@ -120,7 +152,7 @@ function DefectDetailContent() {
       repairPerformed: repairForm.repairPerformed.trim(),
       partsReplaced: repairForm.partsReplaced
         .split(",")
-        .map((part) => part.trim())
+        .map(part => part.trim())
         .filter(Boolean),
       aiDiagnosisCorrect: repairForm.aiDiagnosisCorrect,
       returnedToServiceAt: new Date().toISOString(),
@@ -129,7 +161,10 @@ function DefectDetailContent() {
     });
   };
 
-  const submitStatusUpdate = async (status: "open" | "acknowledged" | "assigned" | "resolved", options?: { assignedTo?: number }) => {
+  const submitStatusUpdate = async (
+    status: "open" | "acknowledged" | "assigned" | "resolved",
+    options?: { assignedTo?: number }
+  ) => {
     if (!liveDefect) return;
     await updateStatusMutation.mutateAsync({
       defectId: defect.id,
@@ -154,10 +189,16 @@ function DefectDetailContent() {
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex items-start justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">Defect Details</h1>
-              <p className="text-slate-600 mt-1">Truck #42 - License ABC-1234</p>
+              <h1 className="text-2xl font-bold text-slate-900">
+                Defect Details
+              </h1>
+              <p className="text-slate-600 mt-1">
+                Truck #42 - License ABC-1234
+              </p>
             </div>
-            <Button variant="outline" onClick={() => navigate("/manager")}>Back to Queue</Button>
+            <Button variant="outline" onClick={() => navigate("/manager")}>
+              Back to Queue
+            </Button>
           </div>
         </div>
       </header>
@@ -171,7 +212,9 @@ function DefectDetailContent() {
             <Card>
               <CardHeader>
                 <CardTitle>{defect.title}</CardTitle>
-                <CardDescription>Reported {defect.reportedAt.toLocaleString()}</CardDescription>
+                <CardDescription>
+                  Reported {defect.reportedAt.toLocaleString()}
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div>
@@ -181,7 +224,9 @@ function DefectDetailContent() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <p className="text-xs text-slate-600 mb-1">Reported By</p>
-                    <p className="font-medium text-slate-900">{defect.reportedBy}</p>
+                    <p className="font-medium text-slate-900">
+                      {defect.reportedBy}
+                    </p>
                   </div>
                   <div>
                     <p className="text-xs text-slate-600 mb-1">Status</p>
@@ -202,11 +247,15 @@ function DefectDetailContent() {
                       <AlertCircle className="w-5 h-5 text-red-600" />
                       TruckFixr AI Analysis
                     </CardTitle>
-                    <CardDescription>AI-powered diagnostic assessment</CardDescription>
+                    <CardDescription>
+                      AI-powered diagnostic assessment
+                    </CardDescription>
                   </div>
                   <div className="text-right">
                     <p className="text-xs text-slate-600">Confidence</p>
-                    <p className="text-lg font-bold text-slate-900">{Math.round(tadisAnalysis.confidence * 100)}%</p>
+                    <p className="text-lg font-bold text-slate-900">
+                      {Math.round(tadisAnalysis.confidence * 100)}%
+                    </p>
                   </div>
                 </div>
               </CardHeader>
@@ -214,37 +263,58 @@ function DefectDetailContent() {
                 {/* Urgency & Action */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="p-4 bg-red-100 rounded-lg border border-red-300">
-                    <p className="text-xs text-red-700 font-semibold mb-1">URGENCY</p>
-                    <p className="text-2xl font-bold text-red-600">{tadisAnalysis.urgency}</p>
+                    <p className="text-xs text-red-700 font-semibold mb-1">
+                      URGENCY
+                    </p>
+                    <p className="text-2xl font-bold text-red-600">
+                      {tadisAnalysis.urgency}
+                    </p>
                   </div>
                   <div className="p-4 bg-red-100 rounded-lg border border-red-300">
-                    <p className="text-xs text-red-700 font-semibold mb-1">ACTION</p>
-                    <p className="text-lg font-bold text-red-600">{tadisAnalysis.recommendedAction}</p>
+                    <p className="text-xs text-red-700 font-semibold mb-1">
+                      ACTION
+                    </p>
+                    <p className="text-lg font-bold text-red-600">
+                      {tadisAnalysis.recommendedAction}
+                    </p>
                   </div>
                 </div>
 
                 {/* Likely Cause */}
                 <div>
-                  <p className="text-sm font-semibold text-slate-900 mb-2">Likely Cause</p>
+                  <p className="text-sm font-semibold text-slate-900 mb-2">
+                    Likely Cause
+                  </p>
                   <p className="text-slate-700">{tadisAnalysis.likelyCause}</p>
                 </div>
 
                 {/* Reasoning */}
                 <div>
-                  <p className="text-sm font-semibold text-slate-900 mb-2">Reasoning</p>
+                  <p className="text-sm font-semibold text-slate-900 mb-2">
+                    Reasoning
+                  </p>
                   <p className="text-slate-700">{tadisAnalysis.reasoning}</p>
                 </div>
 
                 {/* Next Steps */}
                 <div>
-                  <p className="text-sm font-semibold text-slate-900 mb-3">Recommended Next Steps</p>
+                  <p className="text-sm font-semibold text-slate-900 mb-3">
+                    Recommended Next Steps
+                  </p>
                   <ol className="space-y-2">
-                    {tadisAnalysis.nextSteps.map((step: string, idx: number) => (
-                      <li key={idx} className="flex gap-3 text-sm text-slate-700">
-                        <span className="font-semibold text-slate-900">{idx + 1}.</span>
-                        <span>{step}</span>
-                      </li>
-                    ))}
+                    {tadisAnalysis.nextSteps.map(
+                      (step: string, idx: number) => (
+                        <li
+                          key={idx}
+                          className="flex gap-3 text-sm text-slate-700"
+                        >
+                          <span className="font-semibold text-slate-900">
+                            {idx + 1}.
+                          </span>
+                          <span>{step}</span>
+                        </li>
+                      )
+                    )}
                   </ol>
                 </div>
               </CardContent>
@@ -254,7 +324,9 @@ function DefectDetailContent() {
             <Card>
               <CardHeader>
                 <CardTitle>Action Log</CardTitle>
-                <CardDescription>Timeline of all actions on this defect</CardDescription>
+                <CardDescription>
+                  Timeline of all actions on this defect
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
@@ -268,13 +340,23 @@ function DefectDetailContent() {
                             <CheckCircle className="w-4 h-4 text-blue-600" />
                           )}
                         </div>
-                        {idx < actionLog.length - 1 && <div className="w-0.5 h-12 bg-slate-200 mt-2" />}
+                        {idx < actionLog.length - 1 && (
+                          <div className="w-0.5 h-12 bg-slate-200 mt-2" />
+                        )}
                       </div>
                       <div className="flex-1 pb-4">
-                        <p className="font-medium text-slate-900">{log.action}</p>
+                        <p className="font-medium text-slate-900">
+                          {log.action}
+                        </p>
                         <p className="text-xs text-slate-600">{log.actor}</p>
-                        <p className="text-xs text-slate-500 mt-1">{log.timestamp.toLocaleString()}</p>
-                        {log.notes && <p className="text-sm text-slate-700 mt-2">{log.notes}</p>}
+                        <p className="text-xs text-slate-500 mt-1">
+                          {log.timestamp.toLocaleString()}
+                        </p>
+                        {log.notes && (
+                          <p className="text-sm text-slate-700 mt-2">
+                            {log.notes}
+                          </p>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -288,7 +370,7 @@ function DefectDetailContent() {
             {/* Manager Actions Card */}
             <Card>
               <CardHeader>
-              <CardTitle>Manager Actions</CardTitle>
+                <CardTitle>Manager Actions</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="space-y-2">
@@ -296,7 +378,7 @@ function DefectDetailContent() {
                   <Textarea
                     id="managerNote"
                     value={managerNote}
-                    onChange={(event) => setManagerNote(event.target.value)}
+                    onChange={event => setManagerNote(event.target.value)}
                     placeholder="Optional note for the driver or mechanic"
                   />
                 </div>
@@ -322,7 +404,15 @@ function DefectDetailContent() {
                   className="w-full"
                   variant="outline"
                   disabled={updateStatusMutation.isPending}
-                  onClick={() => void submitStatusUpdate((liveDefect?.status ?? "open") as "open" | "acknowledged" | "assigned" | "resolved")}
+                  onClick={() =>
+                    void submitStatusUpdate(
+                      (liveDefect?.status ?? "open") as
+                        | "open"
+                        | "acknowledged"
+                        | "assigned"
+                        | "resolved"
+                    )
+                  }
                 >
                   <MessageSquare className="w-4 h-4 mr-2" />
                   Add Note
@@ -342,7 +432,9 @@ function DefectDetailContent() {
             <Card>
               <CardHeader>
                 <CardTitle>Repair Outcome</CardTitle>
-                <CardDescription>Save confirmed repair feedback for future AI context.</CardDescription>
+                <CardDescription>
+                  Save confirmed repair feedback for future AI context.
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div>
@@ -350,8 +442,11 @@ function DefectDetailContent() {
                   <Input
                     id="confirmedFault"
                     value={repairForm.confirmedFault}
-                    onChange={(event) =>
-                      setRepairForm((current) => ({ ...current, confirmedFault: event.target.value }))
+                    onChange={event =>
+                      setRepairForm(current => ({
+                        ...current,
+                        confirmedFault: event.target.value,
+                      }))
                     }
                     placeholder="Leaking oil cooler"
                   />
@@ -361,8 +456,11 @@ function DefectDetailContent() {
                   <Textarea
                     id="repairPerformed"
                     value={repairForm.repairPerformed}
-                    onChange={(event) =>
-                      setRepairForm((current) => ({ ...current, repairPerformed: event.target.value }))
+                    onChange={event =>
+                      setRepairForm(current => ({
+                        ...current,
+                        repairPerformed: event.target.value,
+                      }))
                     }
                     placeholder="Pressure-tested cooling system and replaced oil cooler"
                   />
@@ -372,8 +470,11 @@ function DefectDetailContent() {
                   <Input
                     id="partsReplaced"
                     value={repairForm.partsReplaced}
-                    onChange={(event) =>
-                      setRepairForm((current) => ({ ...current, partsReplaced: event.target.value }))
+                    onChange={event =>
+                      setRepairForm(current => ({
+                        ...current,
+                        partsReplaced: event.target.value,
+                      }))
                     }
                     placeholder="oil cooler, coolant, oil filter"
                   />
@@ -384,10 +485,11 @@ function DefectDetailContent() {
                     id="aiAccuracy"
                     className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                     value={repairForm.aiDiagnosisCorrect}
-                    onChange={(event) =>
-                      setRepairForm((current) => ({
+                    onChange={event =>
+                      setRepairForm(current => ({
                         ...current,
-                        aiDiagnosisCorrect: event.target.value as typeof repairForm.aiDiagnosisCorrect,
+                        aiDiagnosisCorrect: event.target
+                          .value as typeof repairForm.aiDiagnosisCorrect,
                       }))
                     }
                   >
@@ -399,8 +501,11 @@ function DefectDetailContent() {
                 </div>
                 <Textarea
                   value={repairForm.repairNotes}
-                  onChange={(event) =>
-                    setRepairForm((current) => ({ ...current, repairNotes: event.target.value }))
+                  onChange={event =>
+                    setRepairForm(current => ({
+                      ...current,
+                      repairNotes: event.target.value,
+                    }))
                   }
                   placeholder="Repair notes"
                 />
@@ -409,10 +514,63 @@ function DefectDetailContent() {
                   disabled={recordRepairOutcomeMutation.isPending}
                   onClick={submitRepairOutcome}
                 >
-                  {recordRepairOutcomeMutation.isPending ? "Saving..." : "Record repair outcome"}
+                  {recordRepairOutcomeMutation.isPending
+                    ? "Saving..."
+                    : "Record repair outcome"}
                 </Button>
               </CardContent>
             </Card>
+
+            {/* TADIS diagnostic accuracy for this fleet */}
+            {agreementQuery.data && agreementQuery.data.total > 0 ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">
+                    TADIS Diagnostic Accuracy
+                  </CardTitle>
+                  <CardDescription>
+                    AI-vs-confirmed agreement across {agreementQuery.data.total}{" "}
+                    recorded outcome
+                    {agreementQuery.data.total === 1 ? "" : "s"} for this fleet.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-slate-600">Agreement rate</span>
+                    <span className="text-2xl font-bold text-slate-900">
+                      {agreementQuery.data.agreementRate === null
+                        ? "—"
+                        : `${Math.round(agreementQuery.data.agreementRate * 100)}%`}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="rounded-md bg-emerald-50 px-2 py-2">
+                      <p className="text-lg font-bold text-emerald-700">
+                        {agreementQuery.data.correct}
+                      </p>
+                      <p className="text-[11px] text-emerald-700">Correct</p>
+                    </div>
+                    <div className="rounded-md bg-amber-50 px-2 py-2">
+                      <p className="text-lg font-bold text-amber-700">
+                        {agreementQuery.data.partiallyCorrect}
+                      </p>
+                      <p className="text-[11px] text-amber-700">Partial</p>
+                    </div>
+                    <div className="rounded-md bg-red-50 px-2 py-2">
+                      <p className="text-lg font-bold text-red-700">
+                        {agreementQuery.data.incorrect}
+                      </p>
+                      <p className="text-[11px] text-red-700">Incorrect</p>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    Excludes {agreementQuery.data.unknown} outcome
+                    {agreementQuery.data.unknown === 1 ? "" : "s"} marked
+                    unknown. Partial matches count as half credit.
+                  </p>
+                </CardContent>
+              </Card>
+            ) : null}
 
             {/* Quick Info */}
             <Card>
@@ -434,7 +592,9 @@ function DefectDetailContent() {
                 </div>
                 <div>
                   <p className="text-slate-600 mb-1">Distance</p>
-                  <p className="font-medium text-slate-900">{formatDistanceKm(245320)}</p>
+                  <p className="font-medium text-slate-900">
+                    {formatDistanceKm(245320)}
+                  </p>
                 </div>
               </CardContent>
             </Card>

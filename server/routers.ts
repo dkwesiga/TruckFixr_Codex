@@ -12,6 +12,7 @@ import { vehicleAccessRouter } from "./routers/vehicleAccess";
 import { companyRouter } from "./routers/company";
 import { leadsRouter } from "./routers/leads";
 import { downtimeCalculatorRouter } from "./routers/downtimeCalculator";
+import { repairOutcomesRouter } from "./routers/repairOutcomes";
 import { accessRouter } from "./routers/access";
 import { faultCodeReferencesRouter } from "./routers/faultCodeReferences";
 
@@ -29,6 +30,7 @@ export const appRouter = router({
   company: companyRouter,
   leads: leadsRouter,
   downtimeCalculator: downtimeCalculatorRouter,
+  repairOutcomes: repairOutcomesRouter,
   access: accessRouter,
   faultCodeReferences: faultCodeReferencesRouter,
 });
