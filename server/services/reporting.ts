@@ -104,6 +104,36 @@ function truncate(font: PDFFont, text: string, size: number, maxWidth: number) {
   return `${out}…`;
 }
 
+// Word-wrap to fit maxWidth, hard-splitting any single word that is too long.
+function wrapLines(font: PDFFont, value: string, size: number, maxWidth: number): string[] {
+  const safe = (value ?? "").replace(/[^\x20-\x7E]/g, " ");
+  const words = safe.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [""];
+
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (font.widthOfTextAtSize(next, size) <= maxWidth) {
+      current = next;
+      continue;
+    }
+    if (current) lines.push(current);
+    if (font.widthOfTextAtSize(word, size) > maxWidth) {
+      let chunk = word;
+      while (chunk.length > 1 && font.widthOfTextAtSize(chunk, size) > maxWidth) {
+        chunk = chunk.slice(0, -1);
+      }
+      lines.push(chunk);
+      current = word.slice(chunk.length);
+    } else {
+      current = word;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
 function text(ctx: Ctx, value: string, x: number, y: number, opts?: { size?: number; bold?: boolean; color?: typeof INK; maxWidth?: number }) {
   const size = opts?.size ?? 9;
   const font = opts?.bold ? ctx.bold : ctx.font;
@@ -274,41 +304,52 @@ export async function buildInspectionReport(input: ReportInput) {
   const remarksH = Math.max(40, y - 130);
   box(ctx, MARGIN, y, CONTENT_W, remarksH);
   text(ctx, "REMARKS / DEFECT DETAILS", MARGIN + 4, y - 9, { size: 6, color: MUTED });
+  const remarksBottom = y - remarksH + 8;
   let ry = y - 20;
   if (failedItems.length === 0) {
     text(ctx, "No defects reported on this inspection.", MARGIN + 6, ry, { size: 8, color: MUTED });
   } else {
     for (const item of failedItems) {
-      if (ry < y - remarksH + 12) break;
+      if (ry < remarksBottom) break;
       const tag = item.classification === "major" ? "[MAJOR]" : "[minor]";
       const line = `${tag} ${categoryLabel(item.category)}: ${item.label}${item.comment?.trim() ? ` - ${item.comment.trim()}` : ""}`;
-      text(ctx, line, MARGIN + 6, ry, {
-        size: 8,
-        color: item.classification === "major" ? RED : INK,
-        maxWidth: CONTENT_W - 12,
-      });
-      ry -= 12;
+      const wrapped = wrapLines(ctx.font, line, 8, CONTENT_W - 16);
+      for (const wline of wrapped) {
+        if (ry < remarksBottom) break;
+        text(ctx, wline, MARGIN + 6, ry, {
+          size: 8,
+          color: item.classification === "major" ? RED : INK,
+        });
+        ry -= 11;
+      }
+      ry -= 3; // small gap between items
     }
   }
   y -= remarksH + 12;
 
   // ---- Certification ----
-  box(ctx, MARGIN, y, CONTENT_W, 56);
-  text(ctx, "CERTIFICATION", MARGIN + 4, y - 9, { size: 6, color: MUTED });
-  text(
-    ctx,
-    `I certify that the components listed were inspected in accordance with the daily inspection requirements and that this report accurately records their condition.`,
-    MARGIN + 6,
-    y - 20,
-    { size: 8, maxWidth: CONTENT_W - 12 }
+  const certDeclaration = wrapLines(
+    ctx.font,
+    "I certify that the components listed were inspected in accordance with the daily inspection requirements and that this report accurately records their condition.",
+    8,
+    CONTENT_W - 16
   );
+  const certH = 46 + certDeclaration.length * 11;
+  box(ctx, MARGIN, y, CONTENT_W, certH);
+  text(ctx, "CERTIFICATION", MARGIN + 4, y - 9, { size: 6, color: MUTED });
+  let cy = y - 19;
+  for (const line of certDeclaration) {
+    text(ctx, line, MARGIN + 6, cy, { size: 8 });
+    cy -= 11;
+  }
   const sigText =
     input.inspector.signatureMode === "drawn" ? "Signed electronically (drawn signature on file)" : input.inspector.signature || input.inspector.printedName;
-  text(ctx, "Driver signature:", MARGIN + 6, y - 40, { size: 8, color: MUTED });
-  text(ctx, sigText, MARGIN + 96, y - 40, { size: 9, maxWidth: 200 });
-  text(ctx, `Printed name: ${input.inspector.printedName}`, MARGIN + 320, y - 40, { size: 8, maxWidth: CONTENT_W - 320 });
-  text(ctx, `Date: ${formatDate(input.submittedAt)}`, MARGIN + 320, y - 50, { size: 8 });
-  y -= 64;
+  const sigY = cy - 6;
+  text(ctx, "Driver signature:", MARGIN + 6, sigY, { size: 8, color: MUTED });
+  text(ctx, sigText, MARGIN + 96, sigY, { size: 9, maxWidth: 200 });
+  text(ctx, `Printed name: ${input.inspector.printedName}`, MARGIN + 320, sigY, { size: 8, maxWidth: CONTENT_W - 320 });
+  text(ctx, `Date: ${formatDate(input.submittedAt)}`, MARGIN + 320, sigY - 10, { size: 8 });
+  y -= certH + 10;
 
   // ---- Footer disclaimer ----
   text(
