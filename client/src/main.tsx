@@ -32,6 +32,15 @@ window.addEventListener("unhandledrejection", (event) => {
 
 clearChunkReloadParam();
 
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker
+      .register("/sw.js", { scope: "/" })
+      .then((registration) => registration.update())
+      .catch((error) => console.warn("[PWA] Service worker registration failed", error));
+  });
+}
+
 function renderBootError(message: string) {
   const root = document.getElementById("root");
   if (!root) return;

@@ -1,10 +1,12 @@
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { lazyWithChunkRecovery } from "./lib/chunkRecovery";
+import { useAuthContext } from "./hooks/useAuthContext";
+import { useLocation } from "wouter";
 
 const NotFound = lazyWithChunkRecovery(() => import("./pages/NotFound"));
 const LandingSaaS = lazyWithChunkRecovery(() => import("./pages/LandingSaaS"));
@@ -68,6 +70,7 @@ const QuickStartGuides = lazyWithChunkRecovery(
 const FleetDowntimeCostCalculator = lazyWithChunkRecovery(
   () => import("./pages/FleetDowntimeCostCalculator")
 );
+const Offline = lazyWithChunkRecovery(() => import("./pages/Offline"));
 
 function RouteFallback() {
   return (
@@ -79,6 +82,26 @@ function RouteFallback() {
   );
 }
 
+function DashboardRedirect() {
+  const { user, isLoading } = useAuthContext();
+  const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    if (isLoading) return;
+    if (!user) {
+      setLocation("/login?next=%2Fdashboard");
+      return;
+    }
+    if (user.internalAdminRole) {
+      setLocation("/admin/metrics");
+      return;
+    }
+    setLocation(user.role === "manager" || user.role === "owner" ? "/manager" : "/driver");
+  }, [isLoading, setLocation, user]);
+
+  return <RouteFallback />;
+}
+
 function Router() {
   return (
     <Suspense fallback={<RouteFallback />}>
@@ -88,8 +111,12 @@ function Router() {
         <Route path={"/access/driver-invite"} component={AccessDriverInvite} />
         <Route path={"/access"} component={AccessGateway} />
         <Route path={"/pilot"} component={PilotRedirect} />
+        <Route path={"/login"} component={EmailAuth} />
         <Route path={"/signup"} component={EmailAuth} />
+        <Route path={"/forgot-password"} component={EmailAuth} />
         <Route path={"/auth/email"} component={EmailAuth} />
+        <Route path={"/dashboard"} component={DashboardRedirect} />
+        <Route path={"/offline"} component={Offline} />
         <Route path={"/profile"} component={UserProfile} />
         <Route path={"/app"} component={Home} />
         <Route path={"/onboarding"} component={Onboarding} />

@@ -13,9 +13,17 @@ import { trackSignup, trackLogin } from "@/lib/analytics";
 import { splitFullName, validateTruckFixrPassword } from "../../../shared/passwordPolicy";
 import { Eye, EyeOff } from "lucide-react";
 import { loadCompanyName, saveCompanyName } from "@/lib/companyIdentity";
+import { useAuthContext } from "@/hooks/useAuthContext";
+
+function getDashboardPath(user: { role?: string | null; internalAdminRole?: string | null }) {
+  if (user.internalAdminRole) return "/admin/metrics";
+  if (user.role === "manager" || user.role === "owner") return "/manager";
+  return "/driver";
+}
 
 export default function EmailAuth() {
   const [location, setLocation] = useLocation();
+  const { user, isLoading: isAuthLoading } = useAuthContext();
   const [isSignup, setIsSignup] = useState(location === "/signup");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -70,7 +78,15 @@ export default function EmailAuth() {
 
   useEffect(() => {
     setIsSignup(location === "/signup");
+    setIsForgotPasswordMode(location === "/forgot-password");
   }, [location]);
+
+  // Wait for auth.me to settle; a cold PWA launch may have a valid session
+  // cookie that has not been restored yet.
+  useEffect(() => {
+    if (isAuthLoading || !user) return;
+    setLocation(getDashboardPath(user));
+  }, [isAuthLoading, setLocation, user]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -275,13 +291,7 @@ export default function EmailAuth() {
             throw new Error("Sign-in completed, but the authenticated user payload was missing. Please try again.");
           }
 
-          const redirectPath =
-            authenticatedUser.internalAdminRole
-              ? '/admin/metrics'
-              : authenticatedUser.role === 'manager' || authenticatedUser.role === 'owner'
-              ? '/manager'
-              : '/driver';
-          setLocation(redirectPath);
+          window.location.assign("/dashboard");
         }
       }
     } catch (error: any) {
@@ -309,6 +319,13 @@ export default function EmailAuth() {
     }
   };
 
+  if (isAuthLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
+        <p className="text-sm font-medium text-slate-600">Restoring your TruckFixr session…</p>
+      </div>
+    );
+  }
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center p-4">
       <Card className="w-full max-w-md">
