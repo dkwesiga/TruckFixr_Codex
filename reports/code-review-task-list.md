@@ -1,6 +1,6 @@
 # TruckFixr Fleet AI Code Review Task List
 
-Last updated: 2026-06-12
+Last updated: 2026-06-24
 
 ## Open Tasks
 
@@ -128,6 +128,18 @@ Last updated: 2026-06-12
   - Verification command or check required: Unit tests for role gates/export permissions, staging non-admin denial checks, and query performance checks for largest filters. Latest evidence: 2026-06-12 approved Batch B added server-side `canViewPii` handling, masked member/invite emails plus VINs for `read_only_viewer`, and changed the manager-menu admin link to follow `trpc.admin.me` instead of only `user.internalAdminRole`; staging non-admin denial and large-filter performance proof still pending.
 
 ## Supabase / Database Tasks
+
+- Task ID: TFX-CR-0040
+  - Task: Enable Row Level Security (and add `service_role_full_access` + fleet-scoped policies where appropriate) on tables created AFTER migration 0012's global RLS loop. Migration 0012 enables RLS only for tables existing at that time; these later tables are not covered.
+  - Category: Security & access control / Supabase RLS (defense-in-depth)
+  - Severity: High (practical exploitability Low — no browser Supabase client; access is server-only with app-layer fleet scoping)
+  - First discovered date: 2026-06-24
+  - Last seen date: 2026-06-24
+  - Affected files/tables: `inspectionReviewActions` and `inspectionReviewQueueItems` (received policies in `0026` that are INERT without RLS enabled), `adminFleetNotes`, `combinedInspectionSessions`, `lead_submissions`; fix lands in a new `drizzle/0031_*.sql`
+  - Status: Open (repo-only static evidence; live DB RLS state NOT verified this review)
+  - Recommended fix: mirror the `0030`/`0012` pattern — `ALTER TABLE … ENABLE ROW LEVEL SECURITY` + `service_role_full_access` policy, plus authenticated fleet-scoped SELECT where the table is fleet-owned.
+  - Verification command or check required: apply on staging; `SELECT relname, relrowsecurity FROM pg_class WHERE relname IN (...)`; extend `scripts/verify/rls.ts` to assert cross-company denial on these tables.
+  - Related batch: Batch K (cross-ref Batch B)
 
 - Task ID: TFX-CR-0031
   - Task: Verify or implement Supabase Storage privacy for inspection/defect photos and uploaded evidence.
@@ -343,19 +355,38 @@ Last updated: 2026-06-12
   - Reason deferred: Current diagnosis workflow is stable enough for internal testing; higher-priority verification and learning-loop work outstanding.
   - Revisit date or trigger: Revisit when Batch C or Batch G is approved.
 
-## New Tasks From Today
+## New Tasks From Today (2026-06-24)
 
-- Task ID: TFX-CR-0035
-  - Task: Prove inspection/defect photo workflow privacy and consent end-to-end (including “proof photos”) with staging/local evidence.
-  - Category: Daily inspection workflow / data safety
+- Task ID: TFX-CR-0040
+  - Task: Enable RLS on post-0012 tables (see Supabase / Database Tasks for full detail).
+  - Category: Security / Supabase RLS
+  - Severity: High (practical Low — server-only access)
+  - Affected files: `inspectionReviewActions`, `inspectionReviewQueueItems`, `adminFleetNotes`, `combinedInspectionSessions`, `lead_submissions`
+  - Recommended next action: Approve Batch K; add `drizzle/0031_*.sql`; live-verify on staging.
+
+- Task ID: TFX-CR-0037
+  - Task: Clear dev-toolchain dependency advisories: `vitest` <3.2.6 (critical, UI server file read/exec, GHSA-5xrq-8626-4rwp) and `vite` ≤7.3.4 (high, `server.fs.deny` bypass, GHSA-fx2h-pf6j-xcff).
+  - Category: Dependency / Security (dev tooling, NOT production runtime)
+  - Severity: High (tracked) — no production-runtime exposure (Vite dev server / Vitest UI never run in prod)
+  - First discovered date: 2026-06-24 (first successful `pnpm audit` baseline)
+  - Recommended next action: Tooling-only bump `vitest`≥3.2.6, `vite`≥7.3.5 under Batch I; do not run `npm/pnpm audit fix` without approval.
+  - Verification: rerun `pnpm audit --audit-level high`.
+
+- Task ID: TFX-CR-0038
+  - Task: Untracked `client/src/pages/DemoScreenshotStoryboard.tsx` has syntax errors (corrupted JSX). The `App.tsx` lazy import/route was removed on 2026-06-24 to keep the build green; the file must be fixed or deleted before re-adding the `/demo/screenshots` route.
+  - Category: Code quality / build safety
+  - Severity: Medium
+  - First discovered date: 2026-06-24
+  - Recommended next action: Fix or delete the file (Batch I).
+  - Verification: `npx tsc --noEmit` with the file present must be clean.
+
+- Task ID: TFX-CR-0039
+  - Task: Production login fix not yet live. Cookie parent-domain scoping landed (`server/_core/cookies.ts`, commit a33f01c0) but is on `feat/dvir-inspection-report`; Render deploys from `main`. Real-browser login on truckfixr.com remains broken until merged AND the API is served first-party (api.truckfixr.com).
+  - Category: Security / Auth / Deployment
   - Severity: High
-  - Recommended next action: Run cross-fleet photo privacy/consent proof on an explicitly classified staging/local target.
-
-- Task ID: TFX-CR-0036
-  - Task: Add/verify observability + safety checks for diagnosis enum-format drift tolerance so provider regressions are detectable and non-corrupting.
-  - Category: AI diagnosis workflow / reliability
-  - Severity: Medium/High
-  - Recommended next action: Run the new diagnosis health probe in staging and confirm drift-handled signals are visible.
+  - First discovered date: 2026-06-24
+  - Affected files: `server/_core/cookies.ts`, `render.yaml`, frontend `VITE_API_BASE_URL`, API `APP_BASE_URL`
+  - Recommended next action: Batch B — merge to main; add `api.truckfixr.com` custom domain + DNS; set `VITE_API_BASE_URL=https://api.truckfixr.com` and `APP_BASE_URL=https://truckfixr.com`; redeploy; verify login on default-settings Brave/Chrome.
 
 ## Rolling Implementation Roadmap
 

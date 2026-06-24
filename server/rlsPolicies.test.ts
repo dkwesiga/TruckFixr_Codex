@@ -18,7 +18,11 @@ const mvpHardeningMigration = readFileSync(
   resolve(process.cwd(), "drizzle/0019_mvp_readiness_hardening.sql"),
   "utf8"
 );
-const allRlsMigrations = `${migration}\n${expandedMigration}\n${supportRecoveryMigration}\n${mvpHardeningMigration}`;
+const post0012RlsMigration = readFileSync(
+  resolve(process.cwd(), "drizzle/0031_enable_post_0012_table_rls.sql"),
+  "utf8"
+);
+const allRlsMigrations = `${migration}\n${expandedMigration}\n${supportRecoveryMigration}\n${mvpHardeningMigration}\n${post0012RlsMigration}`;
 
 function policyBlock(name: string) {
   const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -29,6 +33,39 @@ function policyBlock(name: string) {
 }
 
 describe("RLS hardening migration", () => {
+  it("enables RLS for every post-0012 customer-data table", () => {
+    for (const table of [
+      "inspectionReviewQueueItems",
+      "inspectionReviewActions",
+      "combinedInspectionSessions",
+      "adminFleetNotes",
+      "lead_submissions",
+    ]) {
+      expect(post0012RlsMigration).toContain(`ALTER TABLE "${table}" ENABLE ROW LEVEL SECURITY;`);
+    }
+  });
+
+  it("uses fleet-scoped authenticated reads and keeps leads private", () => {
+    expect(policyBlock("inspectionReviewQueueItems_select_policy")).toContain('"user_has_fleet_access"');
+    expect(policyBlock("inspectionReviewActions_select_policy")).toContain('"inspectionReviewQueueItems"');
+    expect(policyBlock("combinedInspectionSessions_select_policy")).toContain('"user_has_fleet_access"');
+    expect(policyBlock("adminFleetNotes_select_policy")).toContain('"user_has_fleet_access"');
+    expect(post0012RlsMigration).not.toContain('CREATE POLICY "lead_submissions_select_policy"');
+  });
+
+  it("retains service-role access for every remediated table", () => {
+    for (const table of [
+      "inspectionReviewQueueItems",
+      "inspectionReviewActions",
+      "combinedInspectionSessions",
+      "adminFleetNotes",
+      "lead_submissions",
+    ]) {
+      expect(post0012RlsMigration).toContain(`'${table}'`);
+    }
+    expect(post0012RlsMigration).toContain('CREATE POLICY "service_role_full_access"');
+  });
+
   it("maps Supabase UUID auth identities to TruckFixr integer app users", () => {
     expect(migration).toContain('CREATE OR REPLACE FUNCTION "current_app_user_id"()');
     expect(migration).toContain("u.\"openId\" = ('supabase_' || auth.uid()::text)");
