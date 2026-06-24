@@ -18,6 +18,7 @@ import {
   diagnosticModelComparisons,
   diagnosticReviewQueue,
   driverInvitations,
+  earlyWarningFlags,
   fleets,
   inAppAlerts,
   inspectionChecklistResponses,
@@ -36,6 +37,7 @@ import {
   vehicles,
 } from "../../drizzle/schema";
 import { canManageCompanyOperations } from "../../server/services/companyAccess";
+import { evaluateEarlyWarnings } from "../../server/services/earlyWarning";
 import {
   canViewVehicle,
   listDriverAccessibleVehiclesAcrossFleets,
@@ -554,6 +556,7 @@ async function clearFleetScopedDemoData(db: DemoDb, fleetId: number) {
     db.delete(inspectionPhotos).where(eq(inspectionPhotos.fleetId, fleetId)),
     db.delete(randomProofRequests).where(eq(randomProofRequests.fleetId, fleetId)),
     db.delete(inspectionFlags).where(eq(inspectionFlags.fleetId, fleetId)),
+    db.delete(earlyWarningFlags).where(eq(earlyWarningFlags.fleetId, fleetId)),
     db.delete(aiTriageRecords).where(eq(aiTriageRecords.fleetId, fleetId)),
     db.delete(aiQualityReviews).where(eq(aiQualityReviews.fleetId, fleetId)),
     db.delete(diagnosticModelComparisons).where(eq(diagnosticModelComparisons.fleetId, fleetId)),
@@ -2060,6 +2063,19 @@ export async function seedDemoData() {
     await seedDemoCompany(db, company, authMode);
   }
 
+  // Generate rule-based early-warning flags from the seeded issue history so
+  // the dashboard and vehicle profile show realistic warnings out of the box.
+  const seededFleets = await fetchDemoFleets(db);
+  for (const fleet of seededFleets) {
+    const fleetVehicles = await db
+      .select({ id: vehicles.id })
+      .from(vehicles)
+      .where(eq(vehicles.fleetId, fleet.id));
+    for (const vehicle of fleetVehicles) {
+      await evaluateEarlyWarnings({ fleetId: fleet.id, vehicleId: vehicle.id });
+    }
+  }
+
   return buildSeedSummary(db, authMode);
 }
 
@@ -2152,11 +2168,21 @@ export async function validateDemoSeed() {
     fleetIds.length > 0
       ? await db.select().from(inspectionFlags).where(inArray(inspectionFlags.fleetId, fleetIds))
       : [];
+  const earlyWarningsByFleet =
+    fleetIds.length > 0
+      ? await db.select().from(earlyWarningFlags).where(inArray(earlyWarningFlags.fleetId, fleetIds))
+      : [];
 
   checks.push({
     name: "demo_companies_exist",
     ok: demoFleets.length === 3,
     details: `Expected 3 demo companies, found ${demoFleets.length}.`,
+  });
+
+  checks.push({
+    name: "demo_early_warnings_generated",
+    ok: earlyWarningsByFleet.some((flag) => flag.isActive),
+    details: `Expected active rule-based early-warning flags across demo fleets, found ${earlyWarningsByFleet.filter((flag) => flag.isActive).length}.`,
   });
 
   checks.push({

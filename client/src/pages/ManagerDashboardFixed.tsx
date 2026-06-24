@@ -56,6 +56,8 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { EarlyWarningList, type EarlyWarning } from "@/components/EarlyWarnings";
+import { NotificationBell } from "@/components/NotificationBell";
 import {
   AlertTriangle,
   BookOpenCheck,
@@ -373,6 +375,10 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
     { fleetId: resolvedFleetId ?? 0 },
     { enabled: resolvedFleetId != null }
   );
+  const earlyWarningsQuery = trpc.defects.listEarlyWarnings.useQuery(
+    { fleetId: resolvedFleetId ?? 0 },
+    { staleTime: 30_000, enabled: resolvedFleetId != null }
+  );
   
   const selectedAsset = useMemo(() => 
     (vehiclesQuery.data ?? []).find(v => String(v.id) === assignmentForm.vehicleId),
@@ -629,6 +635,7 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
   const verifiedHealth = verifiedHealthQuery.data;
   const drivers = driversQuery.data ?? [];
   const pendingAccessRequests = pendingAccessRequestsQuery.data ?? [];
+  const earlyWarnings = (earlyWarningsQuery.data ?? []) as EarlyWarning[];
 
   const rows = useMemo(() => {
     const liveVehicles = vehiclesQuery.data ?? [];
@@ -777,7 +784,8 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
 
   return (
     <div className="app-shell min-h-screen">
-      <div className="fixed right-4 top-4 z-50 sm:right-6 sm:top-6">
+      <div className="fixed right-4 top-4 z-50 flex items-center gap-2 sm:right-6 sm:top-6">
+        <NotificationBell fleetId={resolvedFleetId} />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -1400,6 +1408,35 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
                   </div>
                 ))
               )}
+            </CardContent>
+          </Card>
+        </section>
+
+        <section>
+          <Card className="saas-card">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-slate-950">
+                <AlertTriangle className="h-5 w-5 text-amber-600" />
+                Early warnings
+              </CardTitle>
+              <CardDescription>
+                Rule-based signals flagging vehicles that need attention before
+                they become costly downtime. Click a warning to open the issue.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <EarlyWarningList
+                warnings={earlyWarnings}
+                showVehicle
+                onSelect={(warning) =>
+                  navigate(
+                    warning.defectId
+                      ? `/defect/${warning.defectId}`
+                      : `/truck/${warning.vehicleId}`
+                  )
+                }
+                emptyMessage="No active early warnings. Vehicles are clear."
+              />
             </CardContent>
           </Card>
         </section>

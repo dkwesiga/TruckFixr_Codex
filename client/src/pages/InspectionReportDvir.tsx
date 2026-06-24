@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { trpc } from "@/lib/trpc";
 import { isOwnerOperatorEnabled } from "@/lib/ownerOperator";
-import { ChevronLeft, Printer } from "lucide-react";
+import { ChevronLeft, Printer, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Link } from "wouter";
 
 type DvirRow = {
   code: string;
@@ -142,6 +143,8 @@ function InspectionReportDvirContent() {
     );
   }
 
+  type LinkedDefect = { id: number; title: string; status: string; severity: string | null; category: string | null };
+  const linkedDefects = (report.linkedDefects ?? []) as LinkedDefect[];
   const tractorRows = (report.tractorRows ?? []) as DvirRow[];
   const trailerRows = (report.trailerRows ?? []) as DvirRow[];
   const sheetSections = (report.sheetSections ?? []) as Array<{ label: string; rows: DvirRow[] }>;
@@ -177,6 +180,38 @@ function InspectionReportDvirContent() {
           Print report
         </Button>
       </div>
+
+      {linkedDefects.length > 0 && (
+        <div className="mx-auto mb-4 max-w-6xl print:hidden">
+          <Card className="p-4">
+            <p className="mb-2 text-sm font-semibold text-slate-700">
+              {linkedDefects.length === 1
+                ? "1 defect issue filed from this inspection"
+                : `${linkedDefects.length} defect issues filed from this inspection`}
+            </p>
+            <ul className="space-y-1.5">
+              {linkedDefects.map((d) => (
+                <li key={d.id} className="flex items-center gap-2 text-sm">
+                  {d.severity === "critical" || d.severity === "high" ? (
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-slate-400" />
+                  )}
+                  <Link
+                    href={`/defect/${d.id}`}
+                    className="font-medium text-blue-600 underline-offset-2 hover:underline"
+                  >
+                    {d.title || d.category || `Issue #${d.id}`}
+                  </Link>
+                  <span className="text-xs text-slate-500 capitalize">
+                    {d.severity ? `${d.severity} · ` : ""}{d.status.replace(/_/g, " ")}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        </div>
+      )}
 
       <main className="mx-auto max-w-6xl border-2 border-black bg-white p-4 font-sans text-black shadow-sm print:border print:shadow-none">
         {/* Header */}

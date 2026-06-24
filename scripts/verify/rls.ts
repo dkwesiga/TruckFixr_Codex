@@ -216,6 +216,16 @@ async function main() {
       ["rls_verification_seed", ownerAId, fleetAId, userAId, vehicleAId, "temporary verification row"]
     );
 
+    await client.query(
+      `
+        INSERT INTO "earlyWarningFlags" (
+          "fleetId", "vehicleId", "warningType", "warningReason", "severity", "isActive", "createdAt", "updatedAt"
+        )
+        VALUES ($1, $2, 'high_severity_defect', 'RLS verification warning', 'high', true, now(), now())
+      `,
+      [fleetAId, vehicleAId]
+    );
+
     const userASubject = userAOpenId.replace(/^supabase_/, "");
     const ownerBSubject = ownerBOpenId.replace(/^supabase_/, "");
 
@@ -285,6 +295,16 @@ async function main() {
       "User should not read another fleet's subscription row."
     );
 
+    const allowedWarningCount = await asRole(client, "authenticated", userASubject, () =>
+      queryCount(client, `SELECT count(*) FROM "earlyWarningFlags" WHERE "fleetId" = $1`, [fleetAId])
+    );
+    assert(allowedWarningCount === 1, "Fleet user should read their fleet's early-warning flags.");
+
+    const deniedWarningCount = await asRole(client, "authenticated", ownerBSubject, () =>
+      queryCount(client, `SELECT count(*) FROM "earlyWarningFlags" WHERE "fleetId" = $1`, [fleetAId])
+    );
+    assert(deniedWarningCount === 0, "User should not read another fleet's early-warning flags.");
+
     await client.query("ROLLBACK");
 
     console.log(
@@ -299,6 +319,7 @@ async function main() {
             "support recovery audit hidden from authenticated users",
             "support recovery audit visible to service_role",
             "subscription rows remain fleet-scoped",
+            "early-warning flags remain fleet-scoped",
           ],
         },
         null,

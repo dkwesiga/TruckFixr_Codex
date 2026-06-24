@@ -6,7 +6,7 @@ import {
   mapDiagnosticRiskToAction,
   mapDiagnosticRiskToUrgency,
 } from "../services/tadisCore";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { getDb } from "../db";
 import {
   defects,
@@ -15,9 +15,15 @@ import {
   vehicles,
   maintenanceLogs,
   inspectionReviewQueueItems,
+  aiTriageRecords,
+  inAppAlerts,
+  earlyWarningFlags,
+  repairOutcomes,
 } from "../../drizzle/schema";
 import { canManageVehicleAccess, canViewVehicle } from "../services/vehicleAccess";
 import { sendEmail } from "../services/email";
+import { runDefectTriage } from "../services/aiTriage";
+import { evaluateEarlyWarnings } from "../services/earlyWarning";
 import {
   deriveIssueReviewSeverity,
   deriveManagerReviewRequired,
@@ -336,6 +342,8 @@ export const defectsRouter = router({
         userId: ctx.user.id,
       });
 
+      await evaluateEarlyWarnings({ fleetId: input.fleetId, vehicleId: normalizedVehicleId });
+
       return {
         success: true,
         defectId: defect.id,
@@ -403,6 +411,10 @@ export const defectsRouter = router({
             title: input.title,
             description: input.description ?? null,
             category: input.category ?? null,
+            sourceType: input.inspectionId ? "inspection" : "manual_report",
+            sourceRecordId: input.inspectionId ? String(input.inspectionId) : null,
+            symptoms: input.symptoms ?? null,
+            faultCodes: input.faultCodes ?? null,
             photoUrls: input.photoUrls ?? null,
             status: "open",
           })
@@ -421,6 +433,8 @@ export const defectsRouter = router({
           .returning();
 
         console.log('[Analytics] Defect created:', { defectId: defect.id, title: input.title, category: input.category, vehicleId: input.vehicleId, fleetId: input.fleetId, userId: ctx.user.id });
+
+        await evaluateEarlyWarnings({ fleetId: input.fleetId, vehicleId: String(input.vehicleId) });
 
         return {
           defectId: defect.id,
@@ -482,7 +496,51 @@ export const defectsRouter = router({
         .where(eq(tadisAlerts.defectId, input.defectId))
         .limit(1);
 
-      return { defect, tadisAlert: alert ?? null };
+      const [latestTriage] = await db
+        .select()
+        .from(aiTriageRecords)
+        .where(eq(aiTriageRecords.defectId, input.defectId))
+        .orderBy(desc(aiTriageRecords.createdAt))
+        .limit(1);
+
+      const decisions = await db
+        .select()
+        .from(defectActions)
+        .where(eq(defectActions.defectId, input.defectId))
+        .orderBy(desc(defectActions.createdAt));
+
+      const repairHistory = await db
+        .select()
+        .from(repairOutcomes)
+        .where(eq(repairOutcomes.defectId, input.defectId))
+        .orderBy(desc(repairOutcomes.createdAt));
+
+      const maintenance = await db
+        .select()
+        .from(maintenanceLogs)
+        .where(eq(maintenanceLogs.defectId, input.defectId))
+        .orderBy(desc(maintenanceLogs.createdAt));
+
+      const earlyWarnings = await db
+        .select()
+        .from(earlyWarningFlags)
+        .where(
+          and(
+            eq(earlyWarningFlags.vehicleId, defect.vehicleId),
+            eq(earlyWarningFlags.isActive, true)
+          )
+        )
+        .orderBy(desc(earlyWarningFlags.createdAt));
+
+      return {
+        defect,
+        tadisAlert: alert ?? null,
+        latestTriage: latestTriage ?? null,
+        decisions,
+        repairHistory,
+        maintenance,
+        earlyWarnings,
+      };
     }),
 
   listByVehicle: protectedProcedure
@@ -680,6 +738,8 @@ export const defectsRouter = router({
         userId: ctx.user.id,
       });
 
+      await evaluateEarlyWarnings({ fleetId: existing.fleetId, vehicleId: existing.vehicleId });
+
       return { success: true };
     }),
 
@@ -786,6 +846,408 @@ export const defectsRouter = router({
 
       console.log('[Analytics] Defect resolved:', { defectId: input.defectId, userId: ctx.user.id });
 
+      await db.insert(inAppAlerts).values({
+        fleetId: existing.fleetId,
+        vehicleId: existing.vehicleId,
+        defectId: input.defectId,
+        alertType: "repair_completed",
+        severity: "info",
+        title: "Repair completed",
+        message: `${existing.title} was resolved by ${ctx.user.name || "a manager"}.`,
+      });
+
+      // Resolving an issue clears its active early-warning flags and may close
+      // recurrence-style warnings for the vehicle.
+      await evaluateEarlyWarnings({ fleetId: existing.fleetId, vehicleId: existing.vehicleId });
+
       return { success: true };
+    }),
+
+  // Manual AI triage. V1.0 does NOT auto-run triage for manually reported or
+  // diagnostic-sourced issues (cost control + manager oversight); a manager
+  // explicitly triggers it after reviewing the issue. The inspection submit
+  // flow keeps its own auto-triage.
+  runTriage: protectedProcedure
+    .input(z.object({ defectId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      if (ctx.user.role !== "owner" && ctx.user.role !== "manager") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Only managers can run AI triage",
+        });
+      }
+
+      const db = await getDb();
+      if (!db) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Database not available",
+        });
+      }
+
+      const [defect] = await db
+        .select()
+        .from(defects)
+        .where(eq(defects.id, input.defectId))
+        .limit(1);
+
+      if (!defect) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Defect not found" });
+      }
+
+      const hasAccess = await verifyFleetAccess(defect.fleetId, ctx.user.id, ctx.user.role);
+      if (!hasAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You do not have access to this defect",
+        });
+      }
+
+      const [vehicle] = await db
+        .select()
+        .from(vehicles)
+        .where(sql`CAST(${vehicles.id} AS text) = ${String(defect.vehicleId)}`)
+        .limit(1);
+
+      const symptoms = Array.isArray(defect.symptoms)
+        ? (defect.symptoms as string[])
+        : undefined;
+      const faultCodes = Array.isArray(defect.faultCodes)
+        ? (defect.faultCodes as string[])
+        : undefined;
+
+      const triage = await runDefectTriage({
+        vehicleId: defect.vehicleId,
+        vehicle: {
+          id: vehicle?.id ?? defect.vehicleId,
+          vin: vehicle?.vin,
+          make: vehicle?.make,
+          model: vehicle?.model,
+          year: vehicle?.year,
+        },
+        defectDescription: defect.description || defect.title,
+        category: defect.category,
+        severity: defect.severity ?? "medium",
+        symptoms,
+        faultCodes,
+        driverNotes: defect.description,
+      });
+
+      const now = new Date();
+      const [triageRecord] = await db
+        .insert(aiTriageRecords)
+        .values({
+          fleetId: defect.fleetId,
+          vehicleId: defect.vehicleId,
+          inspectionId: defect.inspectionId ?? null,
+          defectId: defect.id,
+          mostLikelyCause: triage.most_likely_cause,
+          severity: triage.severity,
+          confidenceScore: triage.confidence_score,
+          recommendedAction: triage.recommended_action,
+          driverMessage: triage.driver_message,
+          managerSummary: triage.manager_summary,
+          clarifyingQuestions: triage.clarifying_questions,
+          safetyWarning: triage.safety_warning,
+          suggestedNextSteps: triage.suggested_next_steps,
+          rawResult: triage.raw,
+        })
+        .returning();
+
+      await db
+        .update(defects)
+        .set({
+          aiRecommendation: triage.recommended_action,
+          aiConfidenceScore: triage.confidence_score,
+          aiSummary: triage.manager_summary,
+          updatedAt: now,
+        })
+        .where(eq(defects.id, defect.id));
+
+      await db.insert(inAppAlerts).values({
+        fleetId: defect.fleetId,
+        vehicleId: defect.vehicleId,
+        defectId: defect.id,
+        alertType: "ai_triage_completed",
+        severity:
+          triage.severity === "critical" || triage.recommended_action === "do_not_operate"
+            ? "critical"
+            : "info",
+        title: "AI triage completed",
+        message: `${defect.title}: ${triage.recommended_action} (confidence ${triage.confidence_score}%).`,
+      });
+
+      console.log("[Analytics] Manual AI triage run:", {
+        defectId: defect.id,
+        recommendedAction: triage.recommended_action,
+        confidence: triage.confidence_score,
+        userId: ctx.user.id,
+      });
+
+      return { success: true, triage: { ...triage, id: triageRecord.id } };
+    }),
+
+  // Manager decision using the V1.0 decision vocabulary. Maps each decision to
+  // the existing defect status workflow + operational state, records the
+  // decision, and re-evaluates early warnings.
+  recordDecision: protectedProcedure
+    .input(
+      z.object({
+        defectId: z.number(),
+        decision: z.enum([
+          "monitor",
+          "schedule_repair",
+          "pull_from_service",
+          "emergency_attention",
+          "dismiss_no_action",
+        ]),
+        notes: z.string().trim().optional(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      if (ctx.user.role !== "owner" && ctx.user.role !== "manager") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Only managers can record decisions",
+        });
+      }
+
+      const db = await getDb();
+      if (!db) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Database not available",
+        });
+      }
+
+      const [existing] = await db
+        .select()
+        .from(defects)
+        .where(eq(defects.id, input.defectId))
+        .limit(1);
+      if (!existing) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Defect not found" });
+      }
+
+      const hasAccess = await verifyFleetAccess(existing.fleetId, ctx.user.id, ctx.user.role);
+      if (!hasAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You do not have access to this defect",
+        });
+      }
+
+      const statusByDecision = {
+        monitor: "monitoring",
+        schedule_repair: "assigned",
+        pull_from_service: "repair_required",
+        emergency_attention: "repair_required",
+        dismiss_no_action: "dismissed",
+      } as const;
+      const actionTypeByDecision = {
+        monitor: "comment",
+        schedule_repair: "assign",
+        pull_from_service: "assign",
+        emergency_attention: "assign",
+        dismiss_no_action: "resolve",
+      } as const;
+
+      const now = new Date();
+      const nextStatus = statusByDecision[input.decision];
+      const workflowDecision = mapDefectWorkflowToDecision(nextStatus);
+      const isEmergency = input.decision === "emergency_attention";
+      const isDismiss = input.decision === "dismiss_no_action";
+
+      await db
+        .update(defects)
+        .set({
+          status: nextStatus as any,
+          recommendedAction: input.decision,
+          latestManagerDecision: workflowDecision,
+          latestDriverInstruction: input.notes ?? existing.latestDriverInstruction ?? null,
+          latestManagerActionByUserId: ctx.user.id,
+          latestManagerActionAt: now,
+          closedAt: isDismiss ? now : existing.closedAt,
+          ...(isEmergency ? { complianceStatus: "red" as const } : {}),
+          updatedAt: now,
+        })
+        .where(eq(defects.id, input.defectId));
+
+      if (workflowDecision) {
+        await updateVehicleOperationalState({
+          vehicleId: existing.vehicleId,
+          operationalState: deriveOperationalStateForDecision(workflowDecision),
+          defectId: input.defectId,
+          decisionByUserId: ctx.user.id,
+          instruction: input.notes ?? existing.latestDriverInstruction ?? null,
+          complianceStatus: isEmergency ? "red" : existing.complianceStatus,
+        });
+      }
+
+      await db.insert(defectActions).values({
+        defectId: input.defectId,
+        managerId: ctx.user.id,
+        actionType: actionTypeByDecision[input.decision],
+        notes:
+          input.notes ??
+          `Manager decision: ${input.decision.replace(/_/g, " ")}.`,
+      });
+
+      const decisionAlert =
+        input.decision === "emergency_attention"
+          ? { alertType: "emergency_attention", severity: "critical", title: "Issue marked as emergency" }
+          : input.decision === "schedule_repair"
+            ? { alertType: "repair_scheduled", severity: "info", title: "Repair scheduled" }
+            : input.decision === "dismiss_no_action"
+              ? { alertType: "issue_closed", severity: "info", title: "Issue closed" }
+              : null;
+      if (decisionAlert) {
+        await db.insert(inAppAlerts).values({
+          fleetId: existing.fleetId,
+          vehicleId: existing.vehicleId,
+          defectId: input.defectId,
+          alertType: decisionAlert.alertType,
+          severity: decisionAlert.severity,
+          title: decisionAlert.title,
+          message: `${existing.title} — ${decisionAlert.title.toLowerCase()} by ${ctx.user.name || "a manager"}.`,
+        });
+      }
+
+      await evaluateEarlyWarnings({ fleetId: existing.fleetId, vehicleId: existing.vehicleId });
+
+      console.log("[Analytics] Manager decision recorded:", {
+        defectId: input.defectId,
+        decision: input.decision,
+        status: nextStatus,
+        userId: ctx.user.id,
+      });
+
+      return { success: true, decision: input.decision, status: nextStatus };
+    }),
+
+  // Active early-warning flags for a fleet (Fleet Dashboard warning cards).
+  listEarlyWarnings: protectedProcedure
+    .input(z.object({ fleetId: z.number() }))
+    .query(async ({ input, ctx }) => {
+      const hasAccess = await verifyFleetAccess(input.fleetId, ctx.user.id, ctx.user.role);
+      if (!hasAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You do not have access to this fleet",
+        });
+      }
+
+      const db = await getDb();
+      if (!db) return [];
+
+      const warnings = await db
+        .select()
+        .from(earlyWarningFlags)
+        .where(
+          and(
+            eq(earlyWarningFlags.fleetId, input.fleetId),
+            eq(earlyWarningFlags.isActive, true)
+          )
+        )
+        .orderBy(desc(earlyWarningFlags.createdAt));
+
+      const fleetVehicles = await db
+        .select()
+        .from(vehicles)
+        .where(eq(vehicles.fleetId, input.fleetId));
+      const vehicleById = new Map(fleetVehicles.map((v) => [String(v.id), v]));
+
+      return warnings.map((warning) => {
+        const vehicle = vehicleById.get(String(warning.vehicleId));
+        return {
+          ...warning,
+          vehicleLabel:
+            vehicle?.unitNumber || vehicle?.licensePlate || vehicle?.vin || String(warning.vehicleId),
+        };
+      });
+    }),
+
+  // Aggregated issue/warning/repair view for a single vehicle (Vehicle Profile).
+  getVehicleOverview: protectedProcedure
+    .input(z.object({ vehicleId: z.union([z.number(), z.string().trim().min(1)]) }))
+    .query(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) return null;
+
+      const normalizedVehicleId = String(input.vehicleId);
+      const [vehicle] = await db
+        .select()
+        .from(vehicles)
+        .where(sql`CAST(${vehicles.id} AS text) = ${normalizedVehicleId}`)
+        .limit(1);
+      if (!vehicle) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Vehicle not found" });
+      }
+
+      const hasAccess = await canViewVehicle({
+        user: ctx.user,
+        vehicleId: input.vehicleId,
+        fleetId: vehicle.fleetId,
+      });
+      if (!hasAccess) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You do not have access to this vehicle",
+        });
+      }
+
+      const allIssues = await db
+        .select()
+        .from(defects)
+        .where(eq(defects.vehicleId, normalizedVehicleId))
+        .orderBy(desc(defects.createdAt));
+
+      const activeWarnings = await db
+        .select()
+        .from(earlyWarningFlags)
+        .where(
+          and(
+            eq(earlyWarningFlags.vehicleId, normalizedVehicleId),
+            eq(earlyWarningFlags.isActive, true)
+          )
+        )
+        .orderBy(desc(earlyWarningFlags.createdAt));
+
+      const [latestTriage] = await db
+        .select()
+        .from(aiTriageRecords)
+        .where(eq(aiTriageRecords.vehicleId, normalizedVehicleId))
+        .orderBy(desc(aiTriageRecords.createdAt))
+        .limit(1);
+
+      const repairHistory = await db
+        .select()
+        .from(repairOutcomes)
+        .where(eq(repairOutcomes.vehicleId, normalizedVehicleId))
+        .orderBy(desc(repairOutcomes.createdAt));
+
+      const maintenance = await db
+        .select()
+        .from(maintenanceLogs)
+        .where(eq(maintenanceLogs.vehicleId, normalizedVehicleId))
+        .orderBy(desc(maintenanceLogs.createdAt));
+
+      const openStatuses = new Set([
+        "open",
+        "acknowledged",
+        "assigned",
+        "monitoring",
+        "repair_required",
+      ]);
+
+      return {
+        vehicle,
+        openIssues: allIssues.filter((issue) => openStatuses.has(issue.status ?? "open")),
+        allIssues,
+        activeWarnings,
+        latestTriage: latestTriage ?? null,
+        repairHistory,
+        maintenance,
+      };
     }),
 });

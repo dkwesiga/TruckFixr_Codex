@@ -205,6 +205,17 @@ export const defects = pgTable("defects", {
   aiRecommendation: varchar("aiRecommendation", { length: 100 }),
   aiConfidenceScore: integer("aiConfidenceScore"),
   aiSummary: text("aiSummary"),
+  // Issue-record fields (V1.0 Early Warning & Repair Decision Workflow).
+  sourceType: varchar("sourceType", { length: 32 })
+    .default("manual_report")
+    .notNull(),
+  sourceRecordId: varchar("sourceRecordId", { length: 128 }),
+  trailerId: varchar("trailerId", { length: 64 }),
+  symptoms: jsonb("symptoms"),
+  faultCodes: jsonb("faultCodes"),
+  safetyRelated: boolean("safetyRelated").default(false).notNull(),
+  recommendedAction: varchar("recommendedAction", { length: 32 }),
+  closedAt: dateTimestamp(),
   photoUrls: jsonb("photoUrls"),
   createdAt: dateTimestamp().defaultNow().notNull(),
   updatedAt: dateTimestamp().defaultNow().notNull(),
@@ -812,6 +823,23 @@ export const tadisAlerts = pgTable("tadisAlerts", {
   likelyCause: text("likelyCause"),
   reasoning: text("reasoning"),
   createdAt: dateTimestamp().defaultNow().notNull(),
+});
+
+export const earlyWarningFlags = pgTable("earlyWarningFlags", {
+  id: serial("id").primaryKey(),
+  fleetId: integer("fleetId").notNull(),
+  vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
+  defectId: integer("defectId"),
+  warningType: varchar("warningType", { length: 64 }).notNull(),
+  warningReason: text("warningReason").notNull(),
+  severity: varchar("severity", { length: 32 }).default("medium").notNull(),
+  dedupeKey: varchar("dedupeKey", { length: 255 }),
+  isActive: boolean("isActive").default(true).notNull(),
+  metadata: jsonb("metadata"),
+  resolvedByUserId: integer("resolvedByUserId"),
+  resolvedAt: dateTimestamp(),
+  createdAt: dateTimestamp().defaultNow().notNull(),
+  updatedAt: dateTimestamp().defaultNow().notNull(),
 });
 
 export const users = pgTable("users", {
