@@ -53,6 +53,25 @@ async function queryCount(client: PoolClient, sqlText: string, params: unknown[]
   return Number(result.rows[0]?.count ?? 0);
 }
 
+const POST_0012_RLS_TABLES = [
+  "inspectionReviewQueueItems",
+  "inspectionReviewActions",
+  "combinedInspectionSessions",
+  "adminFleetNotes",
+  "lead_submissions",
+] as const;
+
+async function assertPost0012RlsEnabled(client: PoolClient) {
+  const result = await client.query<{ relname: string; relrowsecurity: boolean }>(
+    `SELECT relname, relrowsecurity FROM pg_class WHERE relname = ANY($1::text[])`,
+    [POST_0012_RLS_TABLES]
+  );
+  const status = new Map(result.rows.map((row) => [row.relname, row.relrowsecurity]));
+  for (const table of POST_0012_RLS_TABLES) {
+    assert(status.get(table) === true, `${table} must exist with row-level security enabled.`);
+  }
+}
+
 async function expectForbidden(
   client: PoolClient,
   action: () => Promise<unknown>,
@@ -100,6 +119,7 @@ async function main() {
 
   try {
     await client.query("BEGIN");
+    await assertPost0012RlsEnabled(client);
 
     const ownerA = await client.query<{ id: number }>(
       `
@@ -206,6 +226,52 @@ async function main() {
       [userAId, fleetAId, ownerBId, fleetBId]
     );
 
+    const reviewQueueA = await client.query<{ id: number }>(
+      `
+        INSERT INTO "inspectionReviewQueueItems" (
+          "fleetId", "vehicleId", "queueType", "status", "headlineStatus", "priority",
+          "highestSeverity", "managerDecisionRequired", "requiresDriverInstruction", "agingState", "createdAt", "updatedAt"
+        )
+        VALUES ($1, $2, 'inspection_review', 'new', 'review_needed', 'normal', 'none', false, false, 'new', now(), now())
+        RETURNING "id"
+      `,
+      [fleetAId, vehicleAId]
+    );
+    const reviewQueueAId = reviewQueueA.rows[0]?.id;
+    assert(reviewQueueAId, "Failed to insert temporary review queue row.");
+    await client.query(
+      `
+        INSERT INTO "inspectionReviewActions" (
+          "queueItemId", "inspectionId", "vehicleId", "managerUserId", "actionType", "createdAt"
+        ) VALUES ($1, 1, $2, $3, 'reviewed', now())
+      `,
+      [reviewQueueAId, vehicleAId, ownerAId]
+    );
+    await client.query(
+      `
+        INSERT INTO "combinedInspectionSessions" (
+          "fleetId", "inspectionSessionId", "headlineStatus", "completionState", "createdAt", "updatedAt"
+        ) VALUES ($1, $2, 'review_needed', 'truck_pending_trailer_pending', now(), now())
+      `,
+      [fleetAId, `rls-session-${suffix}`]
+    );
+    await client.query(
+      `
+        INSERT INTO "adminFleetNotes" (
+          "fleetId", "createdByUserId", "note", "noteType", "createdAt", "updatedAt"
+        ) VALUES ($1, $2, 'Temporary RLS verification row', 'verification', now(), now())
+      `,
+      [fleetAId, ownerAId]
+    );
+    await client.query(
+      `
+        INSERT INTO "lead_submissions" (
+          "full_name", "company_name", "email", "fleet_size", "biggest_maintenance_challenge", "interest_type", "createdAt", "updatedAt"
+        ) VALUES ('RLS Verification', 'TruckFixr Test', $1, '25', 'Temporary verification lead only', 'book_a_demo', now(), now())
+      `,
+      [`rls-lead-${suffix}@truckfixr.test`]
+    );
+
     await client.query(
       `
         INSERT INTO "supportRecoveryActions" (
@@ -305,6 +371,56 @@ async function main() {
     );
     assert(deniedWarningCount === 0, "User should not read another fleet's early-warning flags.");
 
+    const allowedReviewQueueCount = await asRole(client, "authenticated", userASubject, () =>
+      queryCount(client, `SELECT count(*) FROM "inspectionReviewQueueItems" WHERE "fleetId" = $1`, [fleetAId])
+    );
+    assert(allowedReviewQueueCount === 1, "Fleet user should read their own review queue row.");
+
+    const deniedReviewQueueCount = await asRole(client, "authenticated", ownerBSubject, () =>
+      queryCount(client, `SELECT count(*) FROM "inspectionReviewQueueItems" WHERE "fleetId" = $1`, [fleetAId])
+    );
+    assert(deniedReviewQueueCount === 0, "Cross-fleet review queue row should be hidden.");
+
+    const allowedReviewActionCount = await asRole(client, "authenticated", userASubject, () =>
+      queryCount(client, `SELECT count(*) FROM "inspectionReviewActions" WHERE "queueItemId" = $1`, [reviewQueueAId])
+    );
+    assert(allowedReviewActionCount === 1, "Fleet user should read their own review action row.");
+
+    const deniedReviewActionCount = await asRole(client, "authenticated", ownerBSubject, () =>
+      queryCount(client, `SELECT count(*) FROM "inspectionReviewActions" WHERE "queueItemId" = $1`, [reviewQueueAId])
+    );
+    assert(deniedReviewActionCount === 0, "Cross-fleet review action row should be hidden.");
+
+    const allowedSessionCount = await asRole(client, "authenticated", userASubject, () =>
+      queryCount(client, `SELECT count(*) FROM "combinedInspectionSessions" WHERE "fleetId" = $1`, [fleetAId])
+    );
+    assert(allowedSessionCount === 1, "Fleet user should read their own combined inspection session.");
+
+    const deniedSessionCount = await asRole(client, "authenticated", ownerBSubject, () =>
+      queryCount(client, `SELECT count(*) FROM "combinedInspectionSessions" WHERE "fleetId" = $1`, [fleetAId])
+    );
+    assert(deniedSessionCount === 0, "Cross-fleet combined inspection session should be hidden.");
+
+    const allowedNoteCount = await asRole(client, "authenticated", userASubject, () =>
+      queryCount(client, `SELECT count(*) FROM "adminFleetNotes" WHERE "fleetId" = $1`, [fleetAId])
+    );
+    assert(allowedNoteCount === 1, "Fleet user should read their own fleet note.");
+
+    const deniedNoteCount = await asRole(client, "authenticated", ownerBSubject, () =>
+      queryCount(client, `SELECT count(*) FROM "adminFleetNotes" WHERE "fleetId" = $1`, [fleetAId])
+    );
+    assert(deniedNoteCount === 0, "Cross-fleet admin note should be hidden.");
+
+    const leadReadCount = await asRole(client, "authenticated", userASubject, () =>
+      queryCount(client, `SELECT count(*) FROM "lead_submissions"`)
+    );
+    assert(leadReadCount === 0, "Authenticated users must not read lead submissions.");
+
+    const serviceRoleLeadReadCount = await asRole(client, "service_role", serviceRoleSubject, () =>
+      queryCount(client, `SELECT count(*) FROM "lead_submissions"`)
+    );
+    assert(serviceRoleLeadReadCount === 1, "service_role should read verification lead submissions.");
+
     await client.query("ROLLBACK");
 
     console.log(
@@ -320,6 +436,12 @@ async function main() {
             "support recovery audit visible to service_role",
             "subscription rows remain fleet-scoped",
             "early-warning flags remain fleet-scoped",
+            "post-0012 tables have RLS enabled",
+            "review queue and action rows remain fleet-scoped",
+            "combined inspection sessions remain fleet-scoped",
+            "admin fleet notes remain fleet-scoped",
+            "lead submissions remain hidden from authenticated users",
+            "lead submissions remain readable by service_role",
           ],
         },
         null,
