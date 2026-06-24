@@ -5,11 +5,61 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import { Textarea } from "@/components/ui/textarea";
-import { formatDistanceKm } from "@/lib/vehicleDisplay";
+import { EarlyWarningList, type EarlyWarning } from "@/components/EarlyWarnings";
 import { trpc } from "@/lib/trpc";
-import { AlertCircle, CheckCircle, Clock, User, MessageSquare, FileText } from "lucide-react";
+import {
+  AlertCircle,
+  AlertTriangle,
+  CheckCircle,
+  Clock,
+  Sparkles,
+  ShieldAlert,
+  Ban,
+  XCircle,
+  Wrench,
+} from "lucide-react";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
+
+type DecisionValue =
+  | "monitor"
+  | "schedule_repair"
+  | "pull_from_service"
+  | "emergency_attention"
+  | "dismiss_no_action";
+
+const DECISIONS: {
+  value: DecisionValue;
+  label: string;
+  icon: typeof CheckCircle;
+  variant: "default" | "outline" | "destructive";
+}[] = [
+  { value: "monitor", label: "Monitor", icon: Clock, variant: "outline" },
+  { value: "schedule_repair", label: "Schedule Repair", icon: Wrench, variant: "outline" },
+  { value: "pull_from_service", label: "Pull From Service", icon: Ban, variant: "outline" },
+  { value: "emergency_attention", label: "Mark as Emergency", icon: ShieldAlert, variant: "destructive" },
+  { value: "dismiss_no_action", label: "Dismiss / No Action", icon: XCircle, variant: "outline" },
+];
+
+function statusBadgeClasses(status: string) {
+  switch (status) {
+    case "resolved":
+      return "bg-emerald-100 text-emerald-800";
+    case "repair_required":
+      return "bg-red-100 text-red-800";
+    case "assigned":
+    case "monitoring":
+      return "bg-amber-100 text-amber-800";
+    case "dismissed":
+      return "bg-slate-200 text-slate-700";
+    default:
+      return "bg-blue-100 text-blue-800";
+  }
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((entry) => String(entry)).filter(Boolean) : [];
+}
 
 function DefectDetailContent() {
   const [, navigate] = useLocation();
@@ -20,24 +70,6 @@ function DefectDetailContent() {
   const defectQuery = trpc.defects.getById.useQuery({ defectId });
   const utils = trpc.useUtils();
   const [managerNote, setManagerNote] = useState("");
-  const recordRepairOutcomeMutation = trpc.inspections.recordRepairOutcome.useMutation({
-    onSuccess: async () => {
-      await utils.defects.getById.invalidate({ defectId });
-      toast.success("Repair outcome recorded");
-    },
-  });
-  const updateStatusMutation = trpc.defects.updateStatus.useMutation({
-    onSuccess: async () => {
-      await utils.defects.getById.invalidate({ defectId });
-      toast.success("Defect status updated");
-    },
-  });
-  const resolveMutation = trpc.defects.resolve.useMutation({
-    onSuccess: async () => {
-      await utils.defects.getById.invalidate({ defectId });
-      toast.success("Defect marked resolved");
-    },
-  });
   const [repairForm, setRepairForm] = useState({
     confirmedFault: "",
     repairPerformed: "",
@@ -45,77 +77,69 @@ function DefectDetailContent() {
     aiDiagnosisCorrect: "unknown" as "yes" | "partially" | "no" | "unknown",
     repairNotes: "",
   });
+  const [estimateForm, setEstimateForm] = useState({
+    repairActionRequested: "",
+    estimatedParts: "",
+    labourNotes: "",
+    preferredShop: "",
+    estimatedCost: "",
+  });
 
-  const liveDefect = defectQuery.data?.defect;
-  const liveAlert = defectQuery.data?.tadisAlert;
-  const defect = liveDefect
-    ? {
-        id: liveDefect.id,
-        vehicleId: liveDefect.vehicleId,
-        title: liveDefect.title,
-        description: liveDefect.description || "No description provided",
-        reportedBy: `Driver ${liveDefect.driverId}`,
-        reportedAt: new Date(liveDefect.createdAt),
-        status: liveDefect.status || "open",
-        photoUrls: Array.isArray(liveDefect.photoUrls) ? liveDefect.photoUrls : [],
-      }
-    : {
-        id: defectId,
-        vehicleId: 42,
-        title: "Loading defect...",
-        description: "Loading latest defect details",
-        reportedBy: "Driver",
-        reportedAt: new Date(),
-        status: "open",
-        photoUrls: [],
-      };
-
-  const tadisAnalysis = {
-    urgency: liveAlert?.urgency ?? "Attention",
-    recommendedAction: liveAlert?.recommendedAction ?? "Inspect Soon",
-    likelyCause: liveAlert?.likelyCause ?? liveDefect?.aiSummary ?? "Manager review required",
-    reasoning:
-      liveAlert?.reasoning ??
-      liveDefect?.aiSummary ??
-      "TruckFixr created this defect from the verified inspection workflow.",
-    confidence: (liveDefect?.aiConfidenceScore ?? 0) / 100,
-    nextSteps: liveAlert?.reasoning
-      ? (() => {
-          try {
-            const parsed = JSON.parse(liveAlert.reasoning);
-            return Array.isArray(parsed.recommended_tests) ? parsed.recommended_tests : ["Review defect and record repair outcome"];
-          } catch {
-            return ["Review defect and record repair outcome"];
-          }
-        })()
-      : ["Review defect and record repair outcome"],
+  const invalidate = async () => {
+    await utils.defects.getById.invalidate({ defectId });
   };
 
-  const actionLog = [
-    {
-      id: 1,
-      actor: "John Smith (Driver)",
-      action: "Reported defect",
-      timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000),
-      notes: "Engine overheating warning on dashboard",
+  const runTriageMutation = trpc.defects.runTriage.useMutation({
+    onSuccess: async () => {
+      await invalidate();
+      toast.success("AI triage complete");
     },
-    {
-      id: 2,
-      actor: "System",
-      action: "TruckFixr AI Analysis Complete",
-      timestamp: new Date(Date.now() - 1.99 * 60 * 60 * 1000),
-      notes: "Urgency: Critical, Recommended Action: Stop Now",
+    onError: (error) => toast.error(error.message || "Unable to run AI triage"),
+  });
+  const recordDecisionMutation = trpc.defects.recordDecision.useMutation({
+    onSuccess: async (result) => {
+      await invalidate();
+      toast.success(`Decision recorded: ${result.decision.replace(/_/g, " ")}`);
     },
-  ];
+    onError: (error) => toast.error(error.message || "Unable to record decision"),
+  });
+  const recordRepairOutcomeMutation = trpc.inspections.recordRepairOutcome.useMutation({
+    onSuccess: async () => {
+      await invalidate();
+      toast.success("Repair outcome recorded");
+    },
+    onError: (error) => toast.error(error.message || "Unable to record repair outcome"),
+  });
+  const updateStatusMutation = trpc.defects.updateStatus.useMutation({
+    onSuccess: async () => {
+      await invalidate();
+      toast.success("Repair request saved");
+    },
+    onError: (error) => toast.error(error.message || "Unable to save repair request"),
+  });
+
+  const data = defectQuery.data;
+  const defect = data?.defect;
+  const triage = data?.latestTriage ?? null;
+  const decisions = data?.decisions ?? [];
+  const repairHistory = data?.repairHistory ?? [];
+  const earlyWarnings = (data?.earlyWarnings ?? []) as EarlyWarning[];
+
+  const recordDecision = (decision: DecisionValue) => {
+    void recordDecisionMutation.mutateAsync({
+      defectId,
+      decision,
+      notes: managerNote.trim() || undefined,
+    });
+  };
 
   const submitRepairOutcome = async () => {
     if (!repairForm.confirmedFault.trim() || !repairForm.repairPerformed.trim()) {
       toast.error("Enter the confirmed fault and repair performed.");
       return;
     }
-
     await recordRepairOutcomeMutation.mutateAsync({
-      defectId: defect.id,
+      defectId,
       confirmedFault: repairForm.confirmedFault.trim(),
       repairPerformed: repairForm.repairPerformed.trim(),
       partsReplaced: repairForm.partsReplaced
@@ -129,220 +153,429 @@ function DefectDetailContent() {
     });
   };
 
-  const submitStatusUpdate = async (status: "open" | "acknowledged" | "assigned" | "resolved", options?: { assignedTo?: number }) => {
-    if (!liveDefect) return;
+  const submitEstimate = async () => {
+    if (!estimateForm.repairActionRequested.trim()) {
+      toast.error("Describe the repair action requested.");
+      return;
+    }
+    const noteLines = [
+      `Repair action requested: ${estimateForm.repairActionRequested.trim()}`,
+      estimateForm.estimatedParts.trim() && `Estimated parts: ${estimateForm.estimatedParts.trim()}`,
+      estimateForm.labourNotes.trim() && `Labour notes: ${estimateForm.labourNotes.trim()}`,
+      estimateForm.preferredShop.trim() && `Preferred shop/mechanic: ${estimateForm.preferredShop.trim()}`,
+      estimateForm.estimatedCost.trim() && `Estimated cost: ${estimateForm.estimatedCost.trim()}`,
+    ].filter(Boolean);
     await updateStatusMutation.mutateAsync({
-      defectId: defect.id,
-      status,
-      notes: managerNote.trim() || undefined,
-      assignedTo: options?.assignedTo,
+      defectId,
+      notes: `Repair estimate / action request\n${noteLines.join("\n")}`,
+    });
+    setEstimateForm({
+      repairActionRequested: "",
+      estimatedParts: "",
+      labourNotes: "",
+      preferredShop: "",
+      estimatedCost: "",
     });
   };
 
-  const markResolved = async () => {
-    if (!liveDefect) return;
-    await resolveMutation.mutateAsync({
-      defectId: defect.id,
-      resolutionNotes: managerNote.trim() || "Resolved by manager",
-    });
-  };
+  if (defectQuery.isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 text-slate-600">
+        Loading issue…
+      </div>
+    );
+  }
+  if (!defect) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 text-slate-600">
+        <p>Issue not found.</p>
+        <Button variant="outline" onClick={() => navigate("/manager")}>
+          Back to dashboard
+        </Button>
+      </div>
+    );
+  }
+
+  const symptoms = asStringArray(defect.symptoms);
+  const faultCodes = asStringArray(defect.faultCodes);
+  const nextSteps = triage ? asStringArray(triage.suggestedNextSteps) : [];
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Header */}
-      <header className="bg-white border-b border-slate-200">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex items-start justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900">Defect Details</h1>
-              <p className="text-slate-600 mt-1">Truck #42 - License ABC-1234</p>
-            </div>
-            <Button variant="outline" onClick={() => navigate("/manager")}>Back to Queue</Button>
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-5xl items-start justify-between px-4 py-6 sm:px-6 lg:px-8">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+              Issue detail
+            </p>
+            <h1 className="mt-1 text-2xl font-bold text-slate-900">{defect.title}</h1>
+            <p className="mt-1 text-sm text-slate-600">
+              Vehicle {defect.vehicleId} · Reported {new Date(defect.createdAt).toLocaleString()}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => navigate(`/truck/${defect.vehicleId}`)}>
+              View vehicle
+            </Button>
+            <Button variant="outline" onClick={() => navigate("/manager")}>
+              Back to dashboard
+            </Button>
           </div>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid lg:grid-cols-3 gap-8">
-          {/* Left Column: Defect & TruckFixr AI */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Defect Summary */}
+      <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="grid gap-6 lg:grid-cols-3">
+          <div className="space-y-6 lg:col-span-2">
+            {/* Issue summary */}
             <Card>
               <CardHeader>
-                <CardTitle>{defect.title}</CardTitle>
-                <CardDescription>Reported {defect.reportedAt.toLocaleString()}</CardDescription>
+                <CardTitle>Issue summary</CardTitle>
+                <CardDescription>Source, reporter, and reported details.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div>
-                  <p className="text-sm text-slate-600 mb-2">Description</p>
-                  <p className="text-slate-900">{defect.description}</p>
+                  <p className="mb-1 text-sm text-slate-600">Description</p>
+                  <p className="text-slate-900">{defect.description || "No description provided"}</p>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
                   <div>
-                    <p className="text-xs text-slate-600 mb-1">Reported By</p>
-                    <p className="font-medium text-slate-900">{defect.reportedBy}</p>
+                    <p className="mb-1 text-xs text-slate-500">Source</p>
+                    <p className="font-medium capitalize text-slate-900">
+                      {(defect.sourceType ?? "manual_report").replace(/_/g, " ")}
+                    </p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-600 mb-1">Status</p>
-                    <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full font-medium">
-                      {defect.status}
+                    <p className="mb-1 text-xs text-slate-500">Reported by</p>
+                    <p className="font-medium text-slate-900">Driver {defect.driverId}</p>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-xs text-slate-500">Severity</p>
+                    <p className="font-medium capitalize text-slate-900">{defect.severity ?? "medium"}</p>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-xs text-slate-500">Status</p>
+                    <span
+                      className={`rounded-full px-2 py-1 text-xs font-medium ${statusBadgeClasses(
+                        defect.status ?? "open"
+                      )}`}
+                    >
+                      {(defect.status ?? "open").replace(/_/g, " ")}
                     </span>
                   </div>
                 </div>
+                {(symptoms.length > 0 || faultCodes.length > 0 || defect.safetyRelated) && (
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {defect.safetyRelated ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700 ring-1 ring-red-200">
+                        <ShieldAlert className="h-3.5 w-3.5" /> Safety-related
+                      </span>
+                    ) : null}
+                    {symptoms.map((symptom) => (
+                      <span
+                        key={symptom}
+                        className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-700 ring-1 ring-slate-200"
+                      >
+                        {symptom}
+                      </span>
+                    ))}
+                    {faultCodes.map((code) => (
+                      <span
+                        key={code}
+                        className="rounded-full bg-slate-900 px-2.5 py-1 text-xs font-medium text-white"
+                      >
+                        {code}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
 
-            {/* TruckFixr AI Analysis Card */}
-            <Card className="border-2 border-red-200 bg-red-50">
+            {/* AI triage */}
+            <Card className={triage ? "border-2 border-blue-200 bg-blue-50/60" : ""}>
               <CardHeader>
-                <div className="flex items-start justify-between">
+                <div className="flex items-start justify-between gap-3">
                   <div>
                     <CardTitle className="flex items-center gap-2">
-                      <AlertCircle className="w-5 h-5 text-red-600" />
-                      TruckFixr AI Analysis
+                      <Sparkles className="h-5 w-5 text-blue-600" />
+                      AI triage
                     </CardTitle>
-                    <CardDescription>AI-powered diagnostic assessment</CardDescription>
+                    <CardDescription>
+                      Manager-triggered, decision-support only.
+                    </CardDescription>
                   </div>
-                  <div className="text-right">
-                    <p className="text-xs text-slate-600">Confidence</p>
-                    <p className="text-lg font-bold text-slate-900">{Math.round(tadisAnalysis.confidence * 100)}%</p>
-                  </div>
+                  <Button
+                    onClick={() => runTriageMutation.mutate({ defectId })}
+                    disabled={runTriageMutation.isPending}
+                  >
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    {runTriageMutation.isPending
+                      ? "Running…"
+                      : triage
+                        ? "Re-run AI triage"
+                        : "Run AI triage"}
+                  </Button>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-6">
-                {/* Urgency & Action */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="p-4 bg-red-100 rounded-lg border border-red-300">
-                    <p className="text-xs text-red-700 font-semibold mb-1">URGENCY</p>
-                    <p className="text-2xl font-bold text-red-600">{tadisAnalysis.urgency}</p>
+              <CardContent>
+                {!triage ? (
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-600">
+                    No AI triage yet. Review the issue, then run AI triage for a
+                    severity, recommended action, and likely causes.
                   </div>
-                  <div className="p-4 bg-red-100 rounded-lg border border-red-300">
-                    <p className="text-xs text-red-700 font-semibold mb-1">ACTION</p>
-                    <p className="text-lg font-bold text-red-600">{tadisAnalysis.recommendedAction}</p>
+                ) : (
+                  <div className="space-y-5">
+                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                      <div className="rounded-lg border border-blue-200 bg-blue-100/70 p-3">
+                        <p className="text-xs font-semibold uppercase text-blue-700">Severity</p>
+                        <p className="text-lg font-bold capitalize text-blue-900">{triage.severity}</p>
+                      </div>
+                      <div className="rounded-lg border border-blue-200 bg-blue-100/70 p-3">
+                        <p className="text-xs font-semibold uppercase text-blue-700">Action</p>
+                        <p className="text-lg font-bold text-blue-900">
+                          {(triage.recommendedAction ?? "").replace(/_/g, " ")}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-blue-200 bg-blue-100/70 p-3">
+                        <p className="text-xs font-semibold uppercase text-blue-700">Confidence</p>
+                        <p className="text-lg font-bold text-blue-900">{triage.confidenceScore}%</p>
+                      </div>
+                    </div>
+                    {triage.mostLikelyCause ? (
+                      <div>
+                        <p className="mb-1 text-sm font-semibold text-slate-900">Likely cause</p>
+                        <p className="text-slate-700">{triage.mostLikelyCause}</p>
+                      </div>
+                    ) : null}
+                    {triage.managerSummary ? (
+                      <div>
+                        <p className="mb-1 text-sm font-semibold text-slate-900">Manager summary</p>
+                        <p className="text-slate-700">{triage.managerSummary}</p>
+                      </div>
+                    ) : null}
+                    {nextSteps.length > 0 ? (
+                      <div>
+                        <p className="mb-2 text-sm font-semibold text-slate-900">Recommended next steps</p>
+                        <ol className="space-y-1.5">
+                          {nextSteps.map((step, idx) => (
+                            <li key={idx} className="flex gap-2 text-sm text-slate-700">
+                              <span className="font-semibold text-slate-900">{idx + 1}.</span>
+                              <span>{step}</span>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+                    ) : null}
+                    {triage.safetyWarning ? (
+                      <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                        <span>{triage.safetyWarning}</span>
+                      </div>
+                    ) : null}
                   </div>
-                </div>
-
-                {/* Likely Cause */}
-                <div>
-                  <p className="text-sm font-semibold text-slate-900 mb-2">Likely Cause</p>
-                  <p className="text-slate-700">{tadisAnalysis.likelyCause}</p>
-                </div>
-
-                {/* Reasoning */}
-                <div>
-                  <p className="text-sm font-semibold text-slate-900 mb-2">Reasoning</p>
-                  <p className="text-slate-700">{tadisAnalysis.reasoning}</p>
-                </div>
-
-                {/* Next Steps */}
-                <div>
-                  <p className="text-sm font-semibold text-slate-900 mb-3">Recommended Next Steps</p>
-                  <ol className="space-y-2">
-                    {tadisAnalysis.nextSteps.map((step: string, idx: number) => (
-                      <li key={idx} className="flex gap-3 text-sm text-slate-700">
-                        <span className="font-semibold text-slate-900">{idx + 1}.</span>
-                        <span>{step}</span>
-                      </li>
-                    ))}
-                  </ol>
-                </div>
+                )}
               </CardContent>
             </Card>
 
-            {/* Action Log */}
+            {/* Active early warnings */}
             <Card>
               <CardHeader>
-                <CardTitle>Action Log</CardTitle>
-                <CardDescription>Timeline of all actions on this defect</CardDescription>
+                <CardTitle className="flex items-center gap-2">
+                  <AlertTriangle className="h-5 w-5 text-amber-600" />
+                  Active early warnings
+                </CardTitle>
+                <CardDescription>Rule-based signals for this vehicle.</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  {actionLog.map((log, idx) => (
-                    <div key={log.id} className="flex gap-4">
-                      <div className="flex flex-col items-center">
-                        <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                          {log.action.includes("Reported") ? (
-                            <User className="w-4 h-4 text-blue-600" />
-                          ) : (
-                            <CheckCircle className="w-4 h-4 text-blue-600" />
-                          )}
-                        </div>
-                        {idx < actionLog.length - 1 && <div className="w-0.5 h-12 bg-slate-200 mt-2" />}
-                      </div>
-                      <div className="flex-1 pb-4">
-                        <p className="font-medium text-slate-900">{log.action}</p>
-                        <p className="text-xs text-slate-600">{log.actor}</p>
-                        <p className="text-xs text-slate-500 mt-1">{log.timestamp.toLocaleString()}</p>
-                        {log.notes && <p className="text-sm text-slate-700 mt-2">{log.notes}</p>}
+                <EarlyWarningList warnings={earlyWarnings} />
+              </CardContent>
+            </Card>
+
+            {/* Repair history */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Repair history</CardTitle>
+                <CardDescription>Confirmed repair outcomes for this issue.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {repairHistory.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+                    No repair outcomes recorded yet.
+                  </div>
+                ) : (
+                  repairHistory.map((repair) => (
+                    <div key={repair.id} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+                      <p className="font-semibold text-slate-900">{repair.confirmedFault}</p>
+                      <p className="mt-1 text-sm text-slate-700">{repair.repairPerformed}</p>
+                      {asStringArray(repair.partsReplaced).length > 0 ? (
+                        <p className="mt-2 text-xs text-slate-600">
+                          Parts: {asStringArray(repair.partsReplaced).join(", ")}
+                        </p>
+                      ) : null}
+                      <p className="mt-2 text-xs uppercase tracking-[0.14em] text-slate-400">
+                        {new Date(repair.createdAt).toLocaleDateString()} · AI diagnosis{" "}
+                        {repair.aiDiagnosisCorrect}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Decision history */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Decision history</CardTitle>
+                <CardDescription>Manager actions on this issue.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {decisions.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+                    No manager decisions recorded yet.
+                  </div>
+                ) : (
+                  decisions.map((decision) => (
+                    <div key={decision.id} className="flex gap-3">
+                      <CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
+                      <div>
+                        <p className="text-sm font-medium capitalize text-slate-900">
+                          {decision.actionType}
+                        </p>
+                        {decision.notes ? (
+                          <p className="whitespace-pre-line text-sm text-slate-700">{decision.notes}</p>
+                        ) : null}
+                        <p className="mt-1 text-xs text-slate-500">
+                          {new Date(decision.createdAt).toLocaleString()}
+                        </p>
                       </div>
                     </div>
-                  ))}
-                </div>
+                  ))
+                )}
               </CardContent>
             </Card>
           </div>
 
-          {/* Right Column: Manager Actions */}
+          {/* Right column: decisions + repair */}
           <div className="space-y-6">
-            {/* Manager Actions Card */}
             <Card>
               <CardHeader>
-              <CardTitle>Manager Actions</CardTitle>
+                <CardTitle>Manager decision</CardTitle>
+                <CardDescription>Choose the next action for this issue.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="space-y-2">
-                  <Label htmlFor="managerNote">Manager note</Label>
+                  <Label htmlFor="managerNote">Decision note (optional)</Label>
                   <Textarea
                     id="managerNote"
                     value={managerNote}
                     onChange={(event) => setManagerNote(event.target.value)}
-                    placeholder="Optional note for the driver or mechanic"
+                    placeholder="Note for the driver or mechanic"
                   />
+                </div>
+                {DECISIONS.map((decision) => {
+                  const Icon = decision.icon;
+                  return (
+                    <Button
+                      key={decision.value}
+                      className="w-full justify-start"
+                      variant={decision.variant}
+                      disabled={recordDecisionMutation.isPending}
+                      onClick={() => recordDecision(decision.value)}
+                    >
+                      <Icon className="mr-2 h-4 w-4" />
+                      {decision.label}
+                    </Button>
+                  );
+                })}
+              </CardContent>
+            </Card>
+
+            {/* Repair estimate / action request placeholder */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Repair estimate / action request</CardTitle>
+                <CardDescription>
+                  Lightweight request — not parts ordering. Saved to decision history.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div>
+                  <Label htmlFor="repairAction">Repair action requested</Label>
+                  <Input
+                    id="repairAction"
+                    value={estimateForm.repairActionRequested}
+                    onChange={(event) =>
+                      setEstimateForm((current) => ({ ...current, repairActionRequested: event.target.value }))
+                    }
+                    placeholder="Replace front brake pads"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="estimatedParts">Estimated parts needed</Label>
+                  <Input
+                    id="estimatedParts"
+                    value={estimateForm.estimatedParts}
+                    onChange={(event) =>
+                      setEstimateForm((current) => ({ ...current, estimatedParts: event.target.value }))
+                    }
+                    placeholder="brake pads, rotors"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="labourNotes">Estimated labour notes</Label>
+                  <Textarea
+                    id="labourNotes"
+                    value={estimateForm.labourNotes}
+                    onChange={(event) =>
+                      setEstimateForm((current) => ({ ...current, labourNotes: event.target.value }))
+                    }
+                    placeholder="~3 hours, hoist required"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="preferredShop">Preferred shop / mechanic</Label>
+                    <Input
+                      id="preferredShop"
+                      value={estimateForm.preferredShop}
+                      onChange={(event) =>
+                        setEstimateForm((current) => ({ ...current, preferredShop: event.target.value }))
+                      }
+                      placeholder="Main St. Diesel"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="estimatedCost">Estimated cost</Label>
+                    <Input
+                      id="estimatedCost"
+                      value={estimateForm.estimatedCost}
+                      onChange={(event) =>
+                        setEstimateForm((current) => ({ ...current, estimatedCost: event.target.value }))
+                      }
+                      placeholder="$650"
+                    />
+                  </div>
                 </div>
                 <Button
                   className="w-full"
                   variant="outline"
                   disabled={updateStatusMutation.isPending}
-                  onClick={() => void submitStatusUpdate("acknowledged")}
+                  onClick={submitEstimate}
                 >
-                  <CheckCircle className="w-4 h-4 mr-2" />
-                  Acknowledge
-                </Button>
-                <Button
-                  className="w-full"
-                  variant="outline"
-                  disabled={updateStatusMutation.isPending}
-                  onClick={() => void submitStatusUpdate("assigned")}
-                >
-                  <Clock className="w-4 h-4 mr-2" />
-                  Assign to Mechanic
-                </Button>
-                <Button
-                  className="w-full"
-                  variant="outline"
-                  disabled={updateStatusMutation.isPending}
-                  onClick={() => void submitStatusUpdate((liveDefect?.status ?? "open") as "open" | "acknowledged" | "assigned" | "resolved")}
-                >
-                  <MessageSquare className="w-4 h-4 mr-2" />
-                  Add Note
-                </Button>
-                <Button
-                  className="w-full"
-                  variant="outline"
-                  disabled={resolveMutation.isPending}
-                  onClick={() => void markResolved()}
-                >
-                  <FileText className="w-4 h-4 mr-2" />
-                  Mark Resolved
+                  Save repair request
                 </Button>
               </CardContent>
             </Card>
 
+            {/* Repair outcome */}
             <Card>
               <CardHeader>
-                <CardTitle>Repair Outcome</CardTitle>
-                <CardDescription>Save confirmed repair feedback for future AI context.</CardDescription>
+                <CardTitle className="flex items-center gap-2">
+                  <Wrench className="h-5 w-5 text-slate-700" />
+                  Record repair outcome
+                </CardTitle>
+                <CardDescription>Resolves the issue and feeds future AI context.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div>
@@ -364,7 +597,7 @@ function DefectDetailContent() {
                     onChange={(event) =>
                       setRepairForm((current) => ({ ...current, repairPerformed: event.target.value }))
                     }
-                    placeholder="Pressure-tested cooling system and replaced oil cooler"
+                    placeholder="Replaced oil cooler and pressure-tested"
                   />
                 </div>
                 <div>
@@ -409,35 +642,18 @@ function DefectDetailContent() {
                   disabled={recordRepairOutcomeMutation.isPending}
                   onClick={submitRepairOutcome}
                 >
-                  {recordRepairOutcomeMutation.isPending ? "Saving..." : "Record repair outcome"}
+                  {recordRepairOutcomeMutation.isPending ? "Saving…" : "Record repair outcome"}
                 </Button>
               </CardContent>
             </Card>
 
-            {/* Quick Info */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Quick Info</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4 text-sm">
-                <div>
-                  <p className="text-slate-600 mb-1">Vehicle</p>
-                  <p className="font-medium text-slate-900">Truck #42</p>
-                </div>
-                <div>
-                  <p className="text-slate-600 mb-1">License Plate</p>
-                  <p className="font-medium text-slate-900">ABC-1234</p>
-                </div>
-                <div>
-                  <p className="text-slate-600 mb-1">Make/Model</p>
-                  <p className="font-medium text-slate-900">Peterbilt 579</p>
-                </div>
-                <div>
-                  <p className="text-slate-600 mb-1">Distance</p>
-                  <p className="font-medium text-slate-900">{formatDistanceKm(245320)}</p>
-                </div>
-              </CardContent>
-            </Card>
+            <div className="flex items-start gap-2 rounded-2xl border border-slate-200 bg-white p-4 text-xs text-slate-500">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                AI triage is decision-support only and does not replace a qualified
+                mechanic's inspection.
+              </span>
+            </div>
           </div>
         </div>
       </main>

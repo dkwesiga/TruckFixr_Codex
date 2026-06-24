@@ -258,6 +258,7 @@ export async function createInspectionReportDelivery(args: {
   inspectionId: number;
   recipients: string[];
   vehicle: VehicleProfile;
+  carrier?: { name?: string | null; address?: string | null };
   input: DailyInspectionSubmission;
   userEmail?: string | null;
   reportBuilder?: typeof buildInspectionReport;
@@ -267,22 +268,25 @@ export async function createInspectionReportDelivery(args: {
   const emailSender = args.emailSender ?? sendEmail;
   let reportWarning: string | undefined;
   let reportData:
-    | ReturnType<typeof buildInspectionReport>
+    | Awaited<ReturnType<typeof buildInspectionReport>>
     | null = null;
 
   try {
-    reportData = reportBuilder({
+    reportData = await reportBuilder({
       inspectionId: args.inspectionId,
       submittedAt: args.prepared.submittedAt,
       validUntil: args.prepared.validUntil,
       complianceStatus: args.prepared.complianceStatus,
+      carrier: args.carrier,
       vehicle: {
         id: args.vehicle.id,
+        unitNumber: args.vehicle.unitNumber ?? null,
         vin: args.vehicle.vin ?? null,
         licensePlate: args.vehicle.licensePlate ?? null,
         make: args.vehicle.make ?? null,
         model: args.vehicle.model ?? null,
         year: args.vehicle.year ?? null,
+        assetType: args.vehicle.assetType ?? null,
       },
       inspector: {
         printedName: args.input.driverPrintedName,

@@ -38,7 +38,7 @@ export function useAuthContext() {
       window.localStorage.removeItem("truckfixr:last-activity-at");
     }
     await logoutMutation.mutateAsync();
-    window.location.href = "/";
+    window.location.href = "/login";
   };
 
   return {

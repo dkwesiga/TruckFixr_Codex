@@ -75,6 +75,7 @@ import {
   getInspectionStatusFromIntegrity,
 } from "../services/inspectionIntegrity";
 import { analyzeDiagnosticWithAi } from "../services/tadisCore";
+import { evaluateEarlyWarnings } from "../services/earlyWarning";
 import {
   canInspectVehicle,
   canManageVehicleAccess,
@@ -1585,6 +1586,13 @@ export const inspectionsRouter = router({
         }
       }
 
+      // Re-evaluate rule-based early warnings for this vehicle now that the
+      // inspection's defects have been recorded (e.g. high/critical defect).
+      await evaluateEarlyWarnings({
+        fleetId: inspection.fleetId,
+        vehicleId: inspection.vehicleId,
+      });
+
       for (const flag of integrity.flags) {
         await db.insert(inAppAlerts).values({
           fleetId: inspection.fleetId,
@@ -1801,11 +1809,19 @@ export const inspectionsRouter = router({
           managerUserId: ctx.user.managerUserId,
         });
 
+        // Carrier/operator details for the DVIR header, from the fleet record.
+        const [reportFleet] = await db
+          .select({ name: fleets.name, address: fleets.address })
+          .from(fleets)
+          .where(eq(fleets.id, input.fleetId))
+          .limit(1);
+
         const reportDelivery = await createInspectionReportDelivery({
           prepared,
           inspectionId: inspectionResult.id,
           recipients: reportRecipients.recipients,
           vehicle,
+          carrier: { name: reportFleet?.name ?? null, address: reportFleet?.address ?? null },
           input: {
             ...input,
             ...(odometerReading != null ? { odometer: odometerReading } : {}),
@@ -2114,12 +2130,26 @@ export const inspectionsRouter = router({
         .where(eq(users.id, inspection.driverId))
         .limit(1);
 
-      return buildDvirPayload({
-        inspection,
-        vehicle: vehicle ?? null,
-        fleet: fleet ?? null,
-        driver: driver ?? null,
-      });
+      const linkedDefectRows = await db
+        .select({
+          id: defects.id,
+          title: defects.title,
+          status: defects.status,
+          severity: defects.severity,
+          category: defects.category,
+        })
+        .from(defects)
+        .where(eq(defects.inspectionId, input.inspectionId));
+
+      return {
+        ...buildDvirPayload({
+          inspection,
+          vehicle: vehicle ?? null,
+          fleet: fleet ?? null,
+          driver: driver ?? null,
+        }),
+        linkedDefects: linkedDefectRows,
+      };
     }),
 
   getMyReports: protectedProcedure

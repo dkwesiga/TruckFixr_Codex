@@ -2,7 +2,7 @@
   "name": "TruckFixr Fleet AI Driver Mode",
   "short_name": "TruckFixr Driver",
   "description": "Mobile driver inspections, issue reporting, and AI triage for TruckFixr fleets.",
-  "start_url": "/driver",
+  "start_url": "/login",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f8f9ff",
