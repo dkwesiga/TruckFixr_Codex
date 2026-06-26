@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { motion, type Transition } from "framer-motion";
 import AppLogo from "@/components/AppLogo";
 import { Button } from "@/components/ui/button";
@@ -10,16 +10,20 @@ import { trackEvent } from "@/lib/analytics";
 import {
   ArrowRight,
   BrainCircuit,
+  Calculator,
   Check,
   ChevronDown,
   ClipboardCheck,
   Gauge,
-  ShieldCheck,
+  History,
+  KeyRound,
+  Play,
   Siren,
-  Sparkles,
+  Smartphone,
   Truck,
   Users,
   Wrench,
+  X,
   type LucideIcon,
 } from "lucide-react";
 
@@ -33,6 +37,22 @@ const colors = {
   muted: "#42474E",
 };
 
+// Vite env var (this app is Vite + tRPC, not Next.js). If a hosted explainer
+// video URL is provided at build time, the demo card plays it in a modal;
+// otherwise a polished placeholder with a Request Pilot CTA is shown.
+const EXPLAINER_VIDEO_URL =
+  (import.meta.env.VITE_EXPLAINER_VIDEO_URL as string | undefined) ?? "";
+
+// CTA route map — reuses the app's existing access + lead infrastructure.
+// No duplicate routes, no schema changes.
+const ROUTES = {
+  getStarted: "/pricing",
+  pricing: "/pricing",
+  requestPilot: "#request-pilot",
+  pilotCode: "/access/pilot-code",
+  signIn: "/access",
+};
+
 type ContentCard = {
   icon: LucideIcon;
   title: string;
@@ -42,87 +62,93 @@ type ContentCard = {
 const painPoints: ContentCard[] = [
   {
     icon: Siren,
-    title: "Emergency breakdowns",
+    title: "Issues scattered everywhere",
     description:
-      "Small warning signs can turn into roadside calls, missed loads, and expensive emergency labour when nobody sees the pattern early.",
-  },
-  {
-    icon: ClipboardCheck,
-    title: "Missed inspection defects",
-    description:
-      "Paper inspections, rushed checks, and text-message follow-up make it too easy for important defects to disappear.",
-  },
-  {
-    icon: Wrench,
-    title: "Repeat repairs without history",
-    description:
-      "Technicians spend more time reconstructing the story when symptoms, fault codes, and prior work are scattered across systems.",
-  },
-  {
-    icon: ShieldCheck,
-    title: "Compliance readiness pressure",
-    description:
-      "Ontario fleets need records that are easier to trust when someone asks what was checked, reported, and repaired.",
-  },
-];
-
-const solutionCards: ContentCard[] = [
-  {
-    icon: BrainCircuit,
-    title: "AI-assisted diagnostics",
-    description:
-      "Turn symptoms, warning lights, and fault codes into clearer maintenance direction with confidence and safety-aware next steps.",
-  },
-  {
-    icon: ClipboardCheck,
-    title: "Daily inspection issue capture",
-    description:
-      "Drivers record defects, photos, notes, and timing so managers can see what needs action now versus what can wait.",
+      "Vehicle problems live in calls, texts, inspections, fault codes, photos, and memory. Nobody sees the full picture in time.",
   },
   {
     icon: Gauge,
-    title: "Fleet manager visibility",
+    title: "Slow urgent-vs-wait calls",
     description:
-      "Keep one view of inspection status, open defects, maintenance history, and the latest recommendation for every unit.",
+      "Fleet managers lose time deciding what is urgent and what can wait, often with incomplete information.",
   },
   {
-    icon: Truck,
-    title: "Technician-ready context",
+    icon: History,
+    title: "Incomplete repair history",
     description:
-      "Give the bay team the symptom story, previous repair clues, and operational urgency before the truck arrives.",
+      "When history is thin, repeat issues are harder to catch and technicians rebuild the story every time.",
   },
   {
-    icon: Sparkles,
-    title: "Repair prioritization",
+    icon: ClipboardCheck,
+    title: "Defects without follow-through",
     description:
-      "Separate urgent safety issues from monitor-and-check items so maintenance decisions happen faster and with less noise.",
+      "Inspection defects are not always connected to a repair decision, the work done, and the proof it was handled.",
+  },
+];
+
+const benefitCards: ContentCard[] = [
+  {
+    icon: Siren,
+    title: "Catch issues earlier",
+    description:
+      "Spot recurring defects, high-risk symptoms, overdue issues, and warning signs before they become costly downtime.",
   },
   {
-    icon: Users,
-    title: "Driver + manager workflow",
+    icon: BrainCircuit,
+    title: "Make faster repair decisions",
     description:
-      "Capture the issue where it starts, then move it through a cleaner operating flow for maintenance and follow-up.",
+      "Use AI triage, severity levels, and recommended actions to decide whether to monitor, schedule repair, pull from service, or escalate.",
   },
+  {
+    icon: History,
+    title: "Build better vehicle history",
+    description:
+      "Connect inspections, diagnostics, manager decisions, repair notes, costs, and outcomes into one maintenance record.",
+  },
+];
+
+const featureItems: { icon: LucideIcon; label: string }[] = [
+  { icon: ClipboardCheck, label: "Digital inspections" },
+  { icon: BrainCircuit, label: "AI triage" },
+  { icon: Siren, label: "Early warning flags" },
+  { icon: Gauge, label: "Manager repair decisions" },
+  { icon: Wrench, label: "Repair status tracking" },
+  { icon: History, label: "Repair history" },
+  { icon: Truck, label: "Fleet dashboard" },
+  { icon: Smartphone, label: "Mobile-friendly reporting" },
+  { icon: ClipboardCheck, label: "Photos, notes, fault codes" },
 ];
 
 const steps = [
   {
     step: "1",
-    title: "Capture the issue",
+    title: "Report the issue",
     description:
-      "Drivers or managers report symptoms, warning lights, fault codes, photos, or inspection defects from a mobile-friendly flow.",
+      "Drivers or owner-operators submit inspection defects, symptoms, warning lights, fault codes, notes, or photos.",
   },
   {
     step: "2",
-    title: "Organize the context",
+    title: "Run AI triage",
     description:
-      "TruckFixr connects the issue to vehicle details, repair history, and diagnostic patterns so the signal is easier to read.",
+      "TruckFixr summarizes the issue, identifies likely causes, assigns severity, and recommends next steps.",
   },
   {
     step: "3",
-    title: "Act faster",
+    title: "Decide what happens next",
     description:
-      "Managers and technicians get clearer next steps so the right maintenance decision can happen sooner.",
+      "Fleet managers choose whether to monitor, schedule repair, pull from service, or escalate.",
+  },
+  {
+    step: "4",
+    title: "Track the repair",
+    description:
+      "Follow the issue from open to reviewed, scheduled, completed, and closed.",
+  },
+  {
+    step: "5",
+    title: "Build better history",
+    description:
+      "Every issue, decision, repair note, and outcome strengthens the vehicle's maintenance record.",
   },
 ];
 
@@ -132,46 +158,79 @@ const demoWorkflow = [
     body: "ABS warning light on. Brake pedal feels normal. Truck completed route yesterday.",
   },
   {
-    label: "TruckFixr context",
-    body: "Vehicle history, previous ABS repair, inspection notes, urgency level, and possible diagnostic direction.",
+    label: "AI triage",
+    body: "Likely wheel-speed sensor or ABS module communication. Severity: caution. Recommended action: inspect before next dispatch.",
   },
   {
-    label: "Maintenance decision",
-    body: "Prioritize inspection before next dispatch. Check wheel speed sensor wiring and ABS module communication.",
+    label: "Manager decision + history",
+    body: "Schedule repair, track to completion, and save the outcome to the vehicle's maintenance record.",
   },
 ];
 
-const supportCards = [
+const whoCards = [
   {
-    title: "For Drivers",
-    body: "Simple inspections, issue reporting, photo capture, and clearer next steps when something feels wrong.",
+    title: "Owner-operators",
+    body: "Track issues, get AI triage support, and build better repair history.",
   },
   {
-    title: "For Technicians",
-    body: "Better symptom history, fault-code context, previous repair clues, and AI-assisted diagnostic guidance before the truck reaches the bay.",
+    title: "Small fleets",
+    body: "Connect inspections, defects, repair decisions, and vehicle records in one workflow.",
+  },
+  {
+    title: "Growing commercial fleets",
+    body: "See open issues, early warnings, manager decisions, and repair status across vehicles.",
+  },
+];
+
+const supporters = [
+  {
+    name: "Black Founders Network",
+    href: "https://www.blackfounders.network/",
+    logoSrc: "/partner-bfn.svg",
+    logoAlt: "Black Founders Network logo",
+    logoClassName: "h-8 w-auto",
+    logoWrapperClassName: "rounded-xl bg-slate-950 px-3 py-2",
+  },
+  {
+    name: "DMZ",
+    href: "https://www.dmzlaunchpad.ca/",
+    logoSrc: "/partner-dmz.png",
+    logoAlt: "DMZ logo",
+    logoClassName: "h-7 w-auto",
+    logoWrapperClassName: "rounded-xl bg-slate-100 px-3 py-2",
   },
 ];
 
 const faqItems = [
   {
-    question: "What does TruckFixr help fleets do day to day?",
+    question: "What does TruckFixr do?",
     answer:
-      "TruckFixr helps fleets capture inspection issues, organize diagnostics, and turn maintenance signals into clearer decisions before downtime grows.",
+      "TruckFixr helps fleets connect inspections, driver reports, fault codes, AI triage, repair decisions, and vehicle history in one maintenance workflow.",
   },
   {
-    question: "How does the AI-assisted diagnosis work?",
+    question: "Is TruckFixr a replacement for a mechanic?",
     answer:
-      "TruckFixr combines symptoms, fault codes, vehicle context, and maintenance signals to suggest urgency and likely next actions. Final judgment stays with your team or shop.",
+      "No. TruckFixr provides maintenance decision support. Repairs and final judgment stay with your qualified technicians and shop.",
   },
   {
-    question: "Is this built for trucking workflows specifically?",
+    question: "What does AI triage do?",
     answer:
-      "Yes. The product language, inspection flows, and manager views are tailored for truck readiness, dispatch risk, and fleet maintenance coordination.",
+      "It reviews symptoms, inspection defects, fault codes, notes, and vehicle history to suggest severity, likely causes, and recommended next steps.",
   },
   {
-    question: "Does this replace a licensed inspection or a mechanic's judgment?",
+    question: "Does TruckFixr support inspections?",
     answer:
-      "No. TruckFixr supports maintenance and inspection readiness; it does not replace professional judgment, licensed inspections, or regulatory compliance obligations.",
+      "Yes. TruckFixr helps capture inspection defects and connect them to repair decisions and vehicle history.",
+  },
+  {
+    question: "How do I get started?",
+    answer:
+      "View pricing, request a pilot, enter a pilot code, or sign in if you already have an account.",
+  },
+  {
+    question: "How is TruckFixr different from telematics or inspection apps?",
+    answer:
+      "Telematics shows vehicle signals and inspection apps capture defects. TruckFixr connects those issues to AI triage, early warnings, repair decisions, repair tracking, and vehicle history.",
   },
 ];
 
@@ -186,6 +245,14 @@ const fadeUp = {
   viewport: { once: true, amount: 0.2 },
   transition: revealTransition,
 };
+
+function scrollToId(id: string) {
+  if (typeof document === "undefined") return;
+  const el = document.getElementById(id);
+  if (el) {
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
 
 function SectionHeading({
   eyebrow,
@@ -219,6 +286,32 @@ function FeatureCard({ card }: { card: ContentCard }) {
   );
 }
 
+// Compact partner / supporter credibility strip (ported from the legacy
+// Landing page so the "Supported by" relationships are preserved).
+function SupportersStrip() {
+  return (
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+      <span className="text-xs font-bold uppercase tracking-[0.16em] text-[#6B7280]">Supported by</span>
+      <div className="flex flex-wrap items-center gap-3">
+        {supporters.map((supporter) => (
+          <a
+            key={supporter.name}
+            href={supporter.href}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center transition-transform hover:-translate-y-0.5"
+            aria-label={supporter.name}
+          >
+            <span className={supporter.logoWrapperClassName}>
+              <img src={supporter.logoSrc} alt={supporter.logoAlt} className={supporter.logoClassName} />
+            </span>
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ProductPreview() {
   return (
     <div className="grid gap-4 lg:grid-cols-[1.05fr_0.95fr]">
@@ -230,12 +323,12 @@ function ProductPreview() {
         <div className="mt-6 rounded-2xl bg-[#F6F8FC] p-5">
           <div className="flex items-center gap-2 text-sm font-bold text-[#00263F]">
             <BrainCircuit className="h-4 w-4 text-[#E32636]" />
-            AI context bundle
+            AI triage bundle
           </div>
           <ul className="mt-4 space-y-3 text-sm leading-7 text-[#42474E]">
-            <li>Vehicle history and recent repair notes</li>
-            <li>Inspection defects and driver observations</li>
-            <li>Urgency level and safety-aware maintenance direction</li>
+            <li>Likely cause and severity level</li>
+            <li>Inspection defects, fault codes, and vehicle history</li>
+            <li>Recommended action: monitor, schedule, pull, or escalate</li>
           </ul>
         </div>
       </div>
@@ -251,7 +344,191 @@ function ProductPreview() {
   );
 }
 
-function DemoRequestForm() {
+// Accessible modal shell: focus trap entry, Escape to close, scroll lock,
+// click-outside to dismiss. Used by both the video and downtime modals.
+function ModalShell({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    closeRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      className="fixed inset-0 z-[100] flex items-end justify-center bg-black/60 p-4 sm:items-center"
+      onClick={onClose}
+    >
+      <div
+        className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-[var(--fleet-outline)] bg-white p-6 shadow-2xl sm:p-8"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <h3 className="font-['Manrope'] text-xl font-black text-[#00263F]">{title}</h3>
+          <button
+            ref={closeRef}
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded-full p-1.5 text-[#42474E] transition hover:bg-[#F4F7FD] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#00263F]"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="mt-4">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function ExplainerVideoModal({ onClose }: { onClose: () => void }) {
+  return (
+    <ModalShell title="See how TruckFixr works in 45 seconds" onClose={onClose}>
+      {EXPLAINER_VIDEO_URL ? (
+        <div className="aspect-video w-full overflow-hidden rounded-2xl bg-black">
+          <iframe
+            src={EXPLAINER_VIDEO_URL}
+            title="TruckFixr explainer video"
+            className="h-full w-full"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+          />
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-[#BFD0E7] bg-[#F8FAFD] p-8 text-center">
+          <Play className="mx-auto h-10 w-10 text-[#E32636]" />
+          <p className="mt-4 font-['Manrope'] text-lg font-bold text-[#00263F]">Demo video coming soon</p>
+          <p className="mt-2 text-sm leading-7 text-[#42474E]">
+            Want a walkthrough now? Request a pilot and we'll show you the full workflow on a real fleet.
+          </p>
+          <Button
+            className="mt-5 rounded-full bg-[#E32636] px-6 font-['Manrope'] font-bold text-white hover:bg-[#BC1E2C]"
+            onClick={() => {
+              onClose();
+              scrollToId("request-pilot");
+              trackEvent("request_pilot_cta_clicked", { cta_location: "video_placeholder" });
+            }}
+          >
+            Request Pilot
+            <ArrowRight className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+    </ModalShell>
+  );
+}
+
+function DowntimeCalculatorModal({ onClose }: { onClose: () => void }) {
+  const [trucks, setTrucks] = useState("3");
+  const [daysDown, setDaysDown] = useState("2");
+  const [costPerDay, setCostPerDay] = useState("800");
+
+  const estimate = useMemo(() => {
+    const t = Math.max(0, Number.parseFloat(trucks) || 0);
+    const d = Math.max(0, Number.parseFloat(daysDown) || 0);
+    const c = Math.max(0, Number.parseFloat(costPerDay) || 0);
+    return Math.round(t * d * c);
+  }, [trucks, daysDown, costPerDay]);
+
+  const formatted = useMemo(
+    () => new Intl.NumberFormat("en-CA", { style: "currency", currency: "CAD", maximumFractionDigits: 0 }).format(estimate),
+    [estimate],
+  );
+
+  return (
+    <ModalShell title="What is downtime costing you?" onClose={onClose}>
+      <p className="text-sm leading-7 text-[#42474E]">
+        A rough estimate of avoidable downtime cost. Catching issues earlier is how fleets keep this number down.
+      </p>
+      <div className="mt-5 space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="dt-trucks" className="text-[#00263F]">
+            Trucks affected
+          </Label>
+          <Input
+            id="dt-trucks"
+            type="number"
+            min="0"
+            inputMode="numeric"
+            value={trucks}
+            onChange={(event) => setTrucks(event.target.value)}
+            className="border-[#BFD0E7] bg-[#F8FAFD]"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="dt-days" className="text-[#00263F]">
+            Days out of service (each)
+          </Label>
+          <Input
+            id="dt-days"
+            type="number"
+            min="0"
+            inputMode="decimal"
+            value={daysDown}
+            onChange={(event) => setDaysDown(event.target.value)}
+            className="border-[#BFD0E7] bg-[#F8FAFD]"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="dt-cost" className="text-[#00263F]">
+            Lost revenue per truck per day (CAD)
+          </Label>
+          <Input
+            id="dt-cost"
+            type="number"
+            min="0"
+            inputMode="decimal"
+            value={costPerDay}
+            onChange={(event) => setCostPerDay(event.target.value)}
+            className="border-[#BFD0E7] bg-[#F8FAFD]"
+          />
+        </div>
+      </div>
+      <div className="mt-6 rounded-2xl bg-[#00263F] p-5 text-white">
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-[#FFB693]">Estimated downtime cost</p>
+        <p className="mt-2 font-['Manrope'] text-3xl font-black" aria-live="polite">
+          {formatted}
+        </p>
+        <p className="mt-2 text-xs leading-6 text-blue-100">
+          Estimate only. Actual costs vary by route, contract, and repair time.
+        </p>
+      </div>
+      <Button
+        className="mt-5 w-full rounded-full bg-[#E32636] px-6 py-6 font-['Manrope'] text-base font-bold text-white hover:bg-[#BC1E2C]"
+        onClick={() => {
+          onClose();
+          scrollToId("request-pilot");
+          trackEvent("request_pilot_cta_clicked", { cta_location: "downtime_calculator" });
+        }}
+      >
+        Request a pilot to reduce this
+        <ArrowRight className="h-4 w-4" />
+      </Button>
+    </ModalShell>
+  );
+}
+
+function PilotRequestForm() {
   const leadMutation = trpc.leads.submitDemoRequest.useMutation();
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -266,11 +543,12 @@ function DemoRequestForm() {
     vehicleTypes: "",
     location: "",
     biggestMaintenanceChallenge: "",
-    interestType: "book_a_demo",
-    preferredDemoTime: "",
+    interestType: "pilot_inquiry",
+    hasPilotCode: "",
     website: "",
   });
-  const challengeTooShort = form.biggestMaintenanceChallenge.trim().length > 0 && form.biggestMaintenanceChallenge.trim().length < 10;
+  const challengeTooShort =
+    form.biggestMaintenanceChallenge.trim().length > 0 && form.biggestMaintenanceChallenge.trim().length < 10;
 
   const trackingContext = useMemo(() => {
     if (typeof window === "undefined") {
@@ -301,7 +579,7 @@ function DemoRequestForm() {
     if (!startTrackedRef.current) {
       startTrackedRef.current = true;
       setHasStarted(true);
-      trackEvent("demo_form_started", {
+      trackEvent("pilot_form_started", {
         source_page: trackingContext.sourcePage,
       });
     }
@@ -324,6 +602,12 @@ function DemoRequestForm() {
       return;
     }
 
+    // Fold the optional "already have a pilot code?" answer into the free-text
+    // challenge field so we keep using the existing lead schema (no backend change).
+    const challengeWithContext = form.hasPilotCode
+      ? `${form.biggestMaintenanceChallenge.trim()} [Has pilot code/invitation: ${form.hasPilotCode}]`
+      : form.biggestMaintenanceChallenge.trim();
+
     try {
       const result = await leadMutation.mutateAsync({
         fullName: form.fullName,
@@ -333,9 +617,9 @@ function DemoRequestForm() {
         fleetSize: form.fleetSize,
         vehicleTypes: form.vehicleTypes || null,
         location: form.location || null,
-        biggestMaintenanceChallenge: form.biggestMaintenanceChallenge,
+        biggestMaintenanceChallenge: challengeWithContext,
         interestType: form.interestType as "book_a_demo" | "beta_access" | "pilot_inquiry" | "general_inquiry",
-        preferredDemoTime: form.preferredDemoTime || null,
+        preferredDemoTime: null,
         sourcePage: trackingContext.sourcePage,
         utmSource: trackingContext.utmSource || null,
         utmMedium: trackingContext.utmMedium || null,
@@ -348,7 +632,7 @@ function DemoRequestForm() {
 
       setSuccessMessage(result.message);
       setErrorMessage(null);
-      trackEvent("demo_form_submitted", {
+      trackEvent("pilot_form_submitted", {
         source_page: trackingContext.sourcePage,
         interest_type: form.interestType,
       });
@@ -361,8 +645,8 @@ function DemoRequestForm() {
         vehicleTypes: "",
         location: "",
         biggestMaintenanceChallenge: "",
-        interestType: "book_a_demo",
-        preferredDemoTime: "",
+        interestType: "pilot_inquiry",
+        hasPilotCode: "",
         website: "",
       });
     } catch (error) {
@@ -472,28 +756,8 @@ function DemoRequestForm() {
           </select>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="interestType" className="text-[#00263F]">
-            Interest type *
-          </Label>
-          <select
-            id="interestType"
-            value={form.interestType}
-            onChange={(event) => handleChange("interestType", event.target.value)}
-            className="h-11 w-full rounded-lg border border-[#BFD0E7] bg-[#F8FAFD] px-3 text-sm text-[#0B1C30]"
-            required
-          >
-            <option value="book_a_demo">Book a Demo</option>
-            <option value="beta_access">Beta Access</option>
-            <option value="pilot_inquiry">Pilot Inquiry</option>
-            <option value="general_inquiry">General Inquiry</option>
-          </select>
-        </div>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
           <Label htmlFor="vehicleTypes" className="text-[#00263F]">
-            Vehicle types
+            Vehicle type
           </Label>
           <Input
             id="vehicleTypes"
@@ -503,29 +767,17 @@ function DemoRequestForm() {
             placeholder="Tractors, straight trucks, trailers"
           />
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="location" className="text-[#00263F]">
-            Location
-          </Label>
-          <Input
-            id="location"
-            value={form.location}
-            onChange={(event) => handleChange("location", event.target.value)}
-            className="border-[#BFD0E7] bg-[#F8FAFD]"
-            placeholder="Ontario, Canada"
-          />
-        </div>
       </div>
 
       <div className="space-y-2">
         <Label htmlFor="biggestMaintenanceChallenge" className="text-[#00263F]">
-          Biggest maintenance challenge *
+          Main maintenance challenge *
         </Label>
         <Textarea
           id="biggestMaintenanceChallenge"
           value={form.biggestMaintenanceChallenge}
           onChange={(event) => handleChange("biggestMaintenanceChallenge", event.target.value)}
-          className="min-h-28 border-[#BFD0E7] bg-[#F8FAFD]"
+          className="min-h-24 border-[#BFD0E7] bg-[#F8FAFD]"
           placeholder="What is creating downtime, repeat repairs, or inspection follow-up headaches?"
           required
           minLength={10}
@@ -536,20 +788,25 @@ function DemoRequestForm() {
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="preferredDemoTime" className="text-[#00263F]">
-          Preferred demo time
+        <Label htmlFor="hasPilotCode" className="text-[#00263F]">
+          Do you already have a pilot code or invitation?
         </Label>
-        <Input
-          id="preferredDemoTime"
-          value={form.preferredDemoTime}
-          onChange={(event) => handleChange("preferredDemoTime", event.target.value)}
-          className="border-[#BFD0E7] bg-[#F8FAFD]"
-          placeholder="Weekday mornings, afternoons, or flexible"
-        />
+        <select
+          id="hasPilotCode"
+          value={form.hasPilotCode}
+          onChange={(event) => handleChange("hasPilotCode", event.target.value)}
+          className="h-11 w-full rounded-lg border border-[#BFD0E7] bg-[#F8FAFD] px-3 text-sm text-[#0B1C30]"
+        >
+          <option value="">Select one</option>
+          <option value="No">No</option>
+          <option value="Yes">Yes</option>
+        </select>
       </div>
 
       <div className="rounded-2xl border border-[#D8E2F0] bg-[#F8FAFD] p-4 text-sm text-[#42474E]">
-        {hasStarted ? "Thanks for taking a look. We'll route this to the TruckFixr team at info@truckfixr.com." : "Tell us about your fleet and we'll follow up with a demo."}
+        {hasStarted
+          ? "Thanks for taking a look. We'll route this to the TruckFixr team at info@truckfixr.com."
+          : "Tell us about your fleet and we'll follow up about a pilot or demo."}
       </div>
 
       {successMessage ? (
@@ -576,7 +833,7 @@ function DemoRequestForm() {
           form.biggestMaintenanceChallenge.trim().length < 10
         }
       >
-        {leadMutation.isPending ? "Sending..." : "Request Demo"}
+        {leadMutation.isPending ? "Sending..." : "Request Pilot"}
         <ArrowRight className="h-4 w-4" />
       </Button>
     </form>
@@ -585,17 +842,21 @@ function DemoRequestForm() {
 
 export default function LandingSaaS() {
   const [expandedFaq, setExpandedFaq] = useState<number | null>(0);
+  const [showVideo, setShowVideo] = useState(false);
+  const [showDowntime, setShowDowntime] = useState(false);
 
-  const handleLeadCtaClick = (location: string) => {
-    trackEvent("book_demo_cta_clicked", {
-      cta_location: location,
-    });
+  const handleCta = (event: string, location: string) => {
+    trackEvent(event, { cta_location: location });
   };
 
-  const handleBetaCtaClick = (location: string) => {
-    trackEvent("beta_waitlist_cta_clicked", {
-      cta_location: location,
-    });
+  const openDowntime = (location: string) => {
+    setShowDowntime(true);
+    handleCta("calculate_downtime_cost_clicked", location);
+  };
+
+  const openVideo = (location: string) => {
+    setShowVideo(true);
+    handleCta("watch_demo_clicked", location);
   };
 
   return (
@@ -613,19 +874,19 @@ export default function LandingSaaS() {
         } as CSSProperties
       }
     >
+      {/* 1. Header / Navigation */}
       <header className="sticky top-0 z-50 border-b border-[var(--fleet-outline)] bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-[1200px] items-center justify-between gap-4 px-4 py-4 sm:px-6">
-          <a href="/" className="flex items-center">
+          <a href="/" className="flex items-center" aria-label="TruckFixr home">
             <AppLogo variant="full" imageClassName="h-10 w-auto" />
           </a>
 
-          <nav className="hidden items-center gap-6 lg:flex">
+          <nav className="hidden items-center gap-6 lg:flex" aria-label="Primary">
             {[
-              ["Problem", "#problem"],
-              ["Solution", "#solution"],
               ["How it works", "#how-it-works"],
-              ["Demo", "#demo"],
-              ["Ontario", "#ontario"],
+              ["Features", "#features"],
+              ["Pricing", ROUTES.pricing],
+              ["FAQ", "#faq"],
             ].map(([label, href]) => (
               <a
                 key={label}
@@ -643,42 +904,33 @@ export default function LandingSaaS() {
               variant="outline"
               className="rounded-full border-[#00263F] bg-white px-3 font-['Manrope'] text-xs font-bold text-[#00263F] hover:border-[#E32636] hover:bg-[#F4F7FD] sm:px-4 sm:text-sm"
             >
-              <a href="/access">Sign In / Get Access</a>
-            </Button>
-            <Button
-              asChild
-              variant="outline"
-              className="hidden rounded-full border-[#00263F] bg-white px-3 font-['Manrope'] text-xs font-bold text-[#00263F] hover:border-[#E32636] hover:bg-[#F4F7FD] sm:inline-flex sm:px-4 sm:text-sm"
-            >
-              <a href="#book-demo" onClick={() => handleLeadCtaClick("nav")}>Book a Demo</a>
+              <a href={ROUTES.signIn} onClick={() => handleCta("sign_in_clicked", "nav")}>Sign In</a>
             </Button>
             <Button
               asChild
               className="rounded-full bg-[#E32636] px-3 font-['Manrope'] text-xs font-bold text-white hover:bg-[#BC1E2C] sm:px-5 sm:text-sm"
             >
-              <a href="#beta" onClick={() => handleBetaCtaClick("nav")}>Join the Beta</a>
+              <a href={ROUTES.getStarted} onClick={() => handleCta("get_started_clicked", "nav")}>Get Started</a>
             </Button>
           </div>
         </div>
       </header>
 
       <main>
+        {/* 2. Hero */}
         <section className="relative isolate overflow-hidden border-b border-[var(--fleet-outline)] bg-[linear-gradient(140deg,#F7F9FC_0%,#E9EEF7_52%,#FDEDEF_100%)]">
           <div className="absolute inset-y-0 right-0 -z-10 hidden w-1/2 bg-[radial-gradient(circle,#C7D2E2_1px,transparent_1px)] bg-[length:24px_24px] opacity-45 lg:block" />
-          <div className="mx-auto grid min-h-[calc(100svh-4rem)] max-w-[1200px] items-center gap-12 px-4 py-16 sm:px-6 lg:grid-cols-[1fr_1fr] lg:py-20">
+          <div className="mx-auto grid max-w-[1200px] items-center gap-12 px-4 py-16 sm:px-6 lg:grid-cols-[1fr_1fr] lg:py-20">
             <motion.div {...fadeUp} className="max-w-2xl">
               <p className="inline-flex rounded-full bg-[#00263F] px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-white">
-                Built from real Ontario diesel repair operations - not generic AI.
+                Maintenance intelligence for commercial vehicle uptime
               </p>
-              <h1 className="mt-6 font-['Manrope'] text-5xl font-black leading-[0.95] tracking-[-0.06em] text-[#00263F] sm:text-6xl lg:text-7xl">
-                AI-powered fleet maintenance intelligence for small commercial fleets.
+              <h1 className="mt-6 font-['Manrope'] text-4xl font-black leading-[0.98] tracking-[-0.05em] text-[#00263F] sm:text-5xl lg:text-6xl">
+                Turn scattered vehicle issues into clear maintenance decisions.
               </h1>
               <p className="mt-6 max-w-xl text-lg leading-8 text-[#42474E]">
-                TruckFixr Fleet AI helps fleet managers reduce downtime by turning driver reports, inspections, fault codes,
-                symptoms, and repair history into faster, clearer maintenance decisions.
-              </p>
-              <p className="mt-4 text-sm font-semibold uppercase tracking-[0.16em] text-[#A04100]">
-                Now onboarding selected Ontario and Canadian fleets for early access.
+                TruckFixr Fleet AI helps commercial fleets connect inspections, driver reports, fault codes, early
+                warnings, AI triage, repair decisions, and vehicle history in one workflow.
               </p>
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
                 <Button
@@ -686,7 +938,7 @@ export default function LandingSaaS() {
                   size="lg"
                   className="rounded-full bg-[#E32636] px-8 font-['Manrope'] text-base font-bold text-white shadow-[0_18px_35px_-22px_rgba(227,38,54,0.72)] hover:bg-[#BC1E2C]"
                 >
-                  <a href="#book-demo" onClick={() => handleLeadCtaClick("hero")}>Book a Demo</a>
+                  <a href={ROUTES.getStarted} onClick={() => handleCta("get_started_clicked", "hero")}>Get Started</a>
                 </Button>
                 <Button
                   asChild
@@ -694,21 +946,41 @@ export default function LandingSaaS() {
                   variant="outline"
                   className="rounded-full border-2 border-[#00263F] bg-transparent px-8 font-['Manrope'] text-base font-bold text-[#00263F] hover:bg-[#00263F] hover:text-white"
                 >
-                  <a href="#beta" onClick={() => handleBetaCtaClick("hero")}>Join the Beta</a>
+                  <a
+                    href={ROUTES.requestPilot}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      scrollToId("request-pilot");
+                      handleCta("request_pilot_cta_clicked", "hero");
+                    }}
+                  >
+                    Request Pilot
+                  </a>
+                </Button>
+                <Button
+                  asChild
+                  size="lg"
+                  variant="ghost"
+                  className="rounded-full px-4 font-['Manrope'] text-base font-bold text-[#00263F] hover:bg-[#00263F]/5"
+                >
+                  <a href={ROUTES.signIn} onClick={() => handleCta("sign_in_clicked", "hero")}>Sign In</a>
                 </Button>
               </div>
-              <div className="mt-8 grid gap-3 text-sm text-[#42474E] sm:grid-cols-2">
-                {[
-                  "Driver inspection workflows",
-                  "AI-assisted defect triage",
-                  "Fleet readiness visibility",
-                  "Ontario and Canadian operating realities",
-                ].map((item) => (
-                  <div key={item} className="flex items-center gap-2">
-                    <Check className="h-4 w-4 text-[#E32636]" />
-                    <span>{item}</span>
-                  </div>
-                ))}
+
+              {/* Calculate Downtime Cost — secondary lead-magnet CTA (does not compete with primary CTAs) */}
+              <div className="mt-5">
+                <button
+                  type="button"
+                  onClick={() => openDowntime("hero")}
+                  className="inline-flex items-center gap-2 text-sm font-semibold text-[#A04100] underline-offset-4 transition hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[#A04100] focus-visible:ring-offset-2"
+                >
+                  <Calculator className="h-4 w-4" />
+                  Not sure what downtime is costing you? Calculate Downtime Cost
+                </button>
+              </div>
+
+              <div className="mt-8">
+                <SupportersStrip />
               </div>
             </motion.div>
 
@@ -722,9 +994,9 @@ export default function LandingSaaS() {
                         <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#A3CBF2]">
                           Fleet operations center
                         </p>
-                        <h2 className="mt-1 font-['Manrope'] text-lg font-bold text-white">
+                        <p className="mt-1 font-['Manrope'] text-lg font-bold text-white">
                           Morning readiness in one view
-                        </h2>
+                        </p>
                       </div>
                       <span className="rounded-full bg-emerald-400/15 px-3 py-1 text-xs font-bold text-emerald-200">
                         Live
@@ -801,12 +1073,72 @@ export default function LandingSaaS() {
           </div>
         </section>
 
+        {/* 3. Explainer Video / Demo Preview */}
+        <section id="demo" className="border-b border-[var(--fleet-outline)] bg-white px-4 py-16 sm:px-6 lg:py-24">
+          <div className="mx-auto max-w-[1200px]">
+            <SectionHeading
+              eyebrow="Demo preview"
+              title="See how TruckFixr works in 45 seconds."
+              description="Watch how a driver-reported issue becomes AI triage, a manager decision, repair tracking, and vehicle history."
+              center
+            />
+            <div className="mt-10 flex justify-center">
+              <button
+                type="button"
+                onClick={() => openVideo("demo_section")}
+                className="group relative flex aspect-video w-full max-w-2xl items-center justify-center overflow-hidden rounded-[2rem] border border-[var(--fleet-outline)] bg-[#00263F] shadow-[var(--fleet-shadow)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#E32636] focus-visible:ring-offset-2"
+                aria-label="Play the 45-second TruckFixr explainer video"
+              >
+                <div className="absolute inset-0 bg-[radial-gradient(circle,#7FA7CD_1px,transparent_1px)] bg-[length:22px_22px] opacity-20" />
+                <span className="relative flex h-16 w-16 items-center justify-center rounded-full bg-[#E32636] text-white shadow-lg transition-transform group-hover:scale-110">
+                  <Play className="h-7 w-7" />
+                </span>
+                <span className="absolute bottom-5 left-0 right-0 text-center text-sm font-bold uppercase tracking-[0.16em] text-[#A3CBF2]">
+                  Watch the 45-second demo
+                </span>
+              </button>
+            </div>
+            <div className="mt-12">
+              <ProductPreview />
+            </div>
+          </div>
+        </section>
+
+        {/* 4. How It Works */}
+        <section id="how-it-works" className="bg-[#00263F] px-4 py-16 text-white sm:px-6 lg:py-24">
+          <div className="mx-auto max-w-[1200px]">
+            <motion.div {...fadeUp} className="mx-auto max-w-3xl text-center">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-[#FFB693]">How it works</p>
+              <h2 className="mt-3 font-['Manrope'] text-3xl font-black tracking-[-0.03em] text-white sm:text-4xl">
+                From driver report to repair decision.
+              </h2>
+            </motion.div>
+            <div className="mt-14 grid gap-6 md:grid-cols-3 lg:grid-cols-5">
+              {steps.map((item, index) => (
+                <motion.div
+                  key={item.title}
+                  {...fadeUp}
+                  transition={{ ...revealTransition, delay: index * 0.06 }}
+                  className="rounded-2xl border border-white/10 bg-white/[0.05] p-5 text-center"
+                >
+                  <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-[#F37021] font-['Manrope'] text-lg font-black text-white">
+                    {item.step}
+                  </div>
+                  <h3 className="mt-4 font-['Manrope'] text-base font-black">{item.title}</h3>
+                  <p className="mt-2 text-sm leading-6 text-blue-100/80">{item.description}</p>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* 5. What Fleets Struggle With */}
         <section id="problem" className="border-b border-[var(--fleet-outline)] bg-white px-4 py-16 sm:px-6 lg:py-24">
           <div className="mx-auto max-w-[1200px]">
             <SectionHeading
-              eyebrow="The problem"
-              title="Downtime does not start when the truck stops. It starts when warning signs get missed."
-              description="Small fleets lose time and money when maintenance decisions are scattered across paper inspections, text messages, driver memory, fault codes, and previous repair invoices."
+              eyebrow="What fleets struggle with"
+              title="Downtime starts when warning signs get missed."
+              description="Maintenance decisions get scattered across paper inspections, text messages, driver memory, fault codes, and old repair invoices."
               center
             />
             <div className="mt-12 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
@@ -819,17 +1151,17 @@ export default function LandingSaaS() {
           </div>
         </section>
 
-        <section id="solution" className="bg-[var(--fleet-surface)] px-4 py-16 sm:px-6 lg:py-24">
+        {/* 6. Key Benefits */}
+        <section id="benefits" className="bg-[var(--fleet-surface)] px-4 py-16 sm:px-6 lg:py-24">
           <div className="mx-auto max-w-[1200px]">
             <SectionHeading
-              eyebrow="The solution"
-              title="One intelligence layer for inspections, diagnostics, and maintenance decisions."
-              description="TruckFixr Fleet AI organizes daily inspection issues, driver reports, symptoms, fault codes, vehicle history, and repair notes into a clearer maintenance workflow."
+              eyebrow="Key benefits"
+              title="Catch more, decide faster, remember everything."
               center
             />
-            <div className="mt-12 grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-              {solutionCards.map((card, index) => (
-                <motion.div key={card.title} {...fadeUp} transition={{ ...revealTransition, delay: index * 0.04 }}>
+            <div className="mt-12 grid gap-6 md:grid-cols-3">
+              {benefitCards.map((card, index) => (
+                <motion.div key={card.title} {...fadeUp} transition={{ ...revealTransition, delay: index * 0.05 }}>
                   <FeatureCard card={card} />
                 </motion.div>
               ))}
@@ -837,271 +1169,246 @@ export default function LandingSaaS() {
           </div>
         </section>
 
-        <section id="how-it-works" className="bg-[#00263F] px-4 py-16 text-white sm:px-6 lg:py-24">
+        {/* 7. Core Features */}
+        <section id="features" className="border-y border-[var(--fleet-outline)] bg-white px-4 py-16 sm:px-6 lg:py-24">
           <div className="mx-auto max-w-[1200px]">
-            <motion.div {...fadeUp} className="mx-auto max-w-3xl text-center">
-              <p className="text-xs font-black uppercase tracking-[0.18em] text-[#FFB693]">
-                From driver report to maintenance decision in minutes
-              </p>
-              <h2 className="mt-3 font-['Manrope'] text-3xl font-black tracking-[-0.03em] text-white sm:text-4xl">
-                Three simple steps to move from symptom to action.
-              </h2>
-            </motion.div>
-            <div className="relative mt-14 grid gap-8 md:grid-cols-3">
-              <div className="absolute left-0 right-0 top-8 hidden h-px bg-white/15 md:block" />
-              {steps.map((item, index) => (
-                <motion.div key={item.title} {...fadeUp} transition={{ ...revealTransition, delay: index * 0.08 }} className="relative text-center">
-                  <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-[#F37021] text-white shadow-[0_0_0_8px_#00263F]">
-                    <span className="font-['Manrope'] text-xl font-black">{item.step}</span>
-                  </div>
-                  <h3 className="mt-5 font-['Manrope'] text-lg font-black">{item.title}</h3>
-                  <p className="mt-2 text-sm leading-6 text-blue-100/80">{item.description}</p>
+            <SectionHeading
+              eyebrow="Core features"
+              title="One workflow, all the moving parts."
+              center
+            />
+            <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {featureItems.map((feature, index) => (
+                <motion.div
+                  key={feature.label}
+                  {...fadeUp}
+                  transition={{ ...revealTransition, delay: index * 0.03 }}
+                  className="flex items-center gap-3 rounded-2xl border border-[var(--fleet-outline)] bg-[var(--fleet-surface)] px-5 py-4 shadow-[var(--fleet-shadow)]"
+                >
+                  <feature.icon className="h-5 w-5 shrink-0 text-[#E32636]" />
+                  <span className="font-['Manrope'] text-sm font-bold text-[#00263F]">{feature.label}</span>
                 </motion.div>
               ))}
             </div>
           </div>
         </section>
 
-        <section id="demo" className="px-4 py-16 sm:px-6 lg:py-24">
+        {/* 8. Who TruckFixr Helps (+ mobile use + Mr Diesel trust line) */}
+        <section id="who" className="bg-[var(--fleet-surface)] px-4 py-16 sm:px-6 lg:py-24">
           <div className="mx-auto max-w-[1200px]">
             <SectionHeading
-              eyebrow="Product demo preview"
-              title="See how TruckFixr turns a driver report into a maintenance decision."
-              description="This static preview is designed to show the workflow clearly even before a live demo."
+              eyebrow="Who TruckFixr helps"
+              title="From one truck to a growing fleet."
               center
             />
-            <div className="mt-12">
-              <ProductPreview />
-            </div>
-            <div className="mt-8 text-center">
-              <Button
-                asChild
-                size="lg"
-                className="rounded-full bg-[#00263F] px-8 font-['Manrope'] font-bold text-white hover:bg-[#0B3C5D]"
-              >
-                <a href="#book-demo" onClick={() => handleLeadCtaClick("demo_preview")}>Book a Demo to see the full workflow</a>
-              </Button>
-            </div>
-          </div>
-        </section>
-
-        <section className="border-y border-[var(--fleet-outline)] bg-white px-4 py-16 sm:px-6 lg:py-20">
-          <div className="mx-auto grid max-w-[1200px] gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
-            <SectionHeading
-              eyebrow="Built from real repair experience"
-              title="Built by people who understand truck repair pressure."
-              description="TruckFixr Fleet AI was developed from real commercial truck repair experience at Mr. Diesel Inc., an Ontario truck and trailer repair shop."
-            />
-            <div className="rounded-3xl border border-[var(--fleet-outline)] bg-[var(--fleet-surface)] p-6 shadow-[var(--fleet-shadow)]">
-              <p className="text-sm leading-7 text-[#42474E]">
-                This is not generic AI pasted onto fleet maintenance. TruckFixr is built with repair-shop DNA and shaped by real
-                repair workflows, real driver reports, and the daily pressure fleet managers face when vehicles go down.
-              </p>
-              <div className="mt-6 flex flex-wrap gap-2">
-                {["Ontario shop experience", "Diesel repair workflow", "Driver + technician alignment", "Maintenance follow-up"].map((label) => (
-                  <span key={label} className="rounded-full bg-[#E5EEFF] px-3 py-1 text-xs font-bold uppercase tracking-[0.12em] text-[#00263F]">
-                    {label}
-                  </span>
-                ))}
-              </div>
-              <div className="mt-6">
-                <Button asChild className="rounded-full bg-[#E32636] px-6 font-['Manrope'] font-bold text-white hover:bg-[#BC1E2C]">
-                  <a href="#book-demo" onClick={() => handleLeadCtaClick("repair_experience")}>Book a Demo</a>
-                </Button>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section id="ontario" className="bg-[var(--fleet-surface)] px-4 py-16 sm:px-6 lg:py-24">
-          <div className="mx-auto max-w-[1200px]">
-            <SectionHeading
-              eyebrow="Ontario / Canada readiness"
-              title="Built for Ontario and Canadian fleet realities."
-              description="TruckFixr helps fleet teams stay organized around daily inspections, reported defects, maintenance follow-up, and repair history."
-              center
-            />
-            <div className="mt-10 grid gap-6 lg:grid-cols-[1fr_0.9fr]">
-              <div className="rounded-3xl border border-[var(--fleet-outline)] bg-white p-6 shadow-[var(--fleet-shadow)]">
-                <p className="text-sm leading-8 text-[#42474E]">
-                  CVOR-aware workflows, MTO inspection expectations, DriveON-related service realities, Canadian winters, and local
-                  repair conditions all shape how TruckFixr presents fleet health and maintenance readiness.
-                </p>
-                <p className="mt-6 rounded-2xl bg-[#F8FAFD] p-4 text-sm leading-7 text-[#6B7280]">
-                  TruckFixr supports maintenance and inspection readiness; it does not replace professional judgment, licensed inspections,
-                  or regulatory compliance obligations.
-                </p>
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                {[
-                  "Daily inspections",
-                  "CVOR-aware workflows",
-                  "Winter condition readiness",
-                  "Repair follow-up visibility",
-                ].map((item) => (
-                  <div key={item} className="rounded-2xl border border-[var(--fleet-outline)] bg-white p-5 shadow-[var(--fleet-shadow)]">
-                    <Check className="h-4 w-4 text-[#E32636]" />
-                    <p className="mt-3 text-sm font-semibold text-[#00263F]">{item}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="px-4 py-16 sm:px-6 lg:py-24">
-          <div className="mx-auto max-w-[1200px]">
-            <SectionHeading
-              eyebrow="Supporting users"
-              title="Built for fleet managers. Useful for drivers and technicians."
-              center
-            />
-            <div className="mt-10 grid gap-6 md:grid-cols-2">
-              {supportCards.map((card) => (
+            <div className="mt-12 grid gap-6 md:grid-cols-3">
+              {whoCards.map((card) => (
                 <div key={card.title} className="rounded-3xl border border-[var(--fleet-outline)] bg-white p-6 shadow-[var(--fleet-shadow)]">
                   <h3 className="font-['Manrope'] text-xl font-black text-[#00263F]">{card.title}</h3>
                   <p className="mt-3 text-sm leading-7 text-[#42474E]">{card.body}</p>
                 </div>
               ))}
             </div>
-          </div>
-        </section>
 
-        <section id="beta" className="border-y border-[var(--fleet-outline)] bg-[#00263F] px-4 py-16 text-white sm:px-6 lg:py-24">
-          <div className="mx-auto grid max-w-[1200px] gap-8 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
-            <div>
-              <p className="text-xs font-black uppercase tracking-[0.18em] text-[#FFB693]">
-                Now onboarding selected Ontario and Canadian fleets
-              </p>
-              <h2 className="mt-3 font-['Manrope'] text-3xl font-black tracking-[-0.03em] text-white sm:text-4xl">
-                Join the Ontario Fleet Beta.
-              </h2>
-              <p className="mt-4 max-w-2xl text-base leading-8 text-blue-100">
-                TruckFixr Fleet AI is currently onboarding early-access fleets that want a smarter way to manage inspections, diagnostics,
-                repair history, and maintenance decisions.
-              </p>
-            </div>
-            <div className="flex flex-col gap-3 sm:flex-row lg:justify-end">
-              <Button asChild size="lg" className="rounded-full bg-[#E32636] px-8 font-['Manrope'] font-bold text-white hover:bg-[#BC1E2C]">
-                <a href="#book-demo" onClick={() => handleLeadCtaClick("beta")}>Book a Demo</a>
-              </Button>
-              <Button asChild size="lg" variant="outline" className="rounded-full border-2 border-white/25 bg-transparent px-8 font-['Manrope'] font-bold text-white hover:bg-white hover:text-[#00263F]">
-                <a href="#book-demo" onClick={() => handleBetaCtaClick("beta")}>Join the Beta</a>
-              </Button>
+            <div className="mt-8 grid gap-6 lg:grid-cols-2">
+              <div className="flex items-start gap-4 rounded-3xl border border-[var(--fleet-outline)] bg-white p-6 shadow-[var(--fleet-shadow)]">
+                <Smartphone className="mt-1 h-7 w-7 shrink-0 text-[#E32636]" />
+                <div>
+                  <h3 className="font-['Manrope'] text-lg font-black text-[#00263F]">Works on mobile</h3>
+                  <p className="mt-2 text-sm leading-7 text-[#42474E]">
+                    Drivers report issues, upload photos, complete inspections, and answer maintenance questions from their
+                    phone. Managers review issues, AI triage, and repair status from the office, yard, or road.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-start gap-4 rounded-3xl border border-[var(--fleet-outline)] bg-white p-6 shadow-[var(--fleet-shadow)]">
+                <Wrench className="mt-1 h-7 w-7 shrink-0 text-[#E32636]" />
+                <div>
+                  <h3 className="font-['Manrope'] text-lg font-black text-[#00263F]">Built from real repair workflows</h3>
+                  <p className="mt-2 text-sm leading-7 text-[#42474E]">
+                    Built from real commercial truck repair workflows through Mr. Diesel Inc. in Ontario, TruckFixr is
+                    designed around practical fleet maintenance decisions, not generic AI chat.
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
         </section>
 
-        <section className="border-b border-[var(--fleet-outline)] bg-white px-4 py-10 sm:px-6">
-          <div className="mx-auto flex max-w-[1200px] flex-col items-start justify-between gap-4 rounded-3xl border border-[var(--fleet-outline)] bg-[var(--fleet-surface)] px-6 py-6 shadow-[var(--fleet-shadow)] sm:flex-row sm:items-center">
-            <div>
-              <p className="text-xs font-black uppercase tracking-[0.18em] text-[#A04100]">Already invited to TruckFixr?</p>
-              <p className="mt-2 text-sm leading-7 text-[#42474E]">
-                If you have a pilot code, trial invitation, or driver invitation, you can access TruckFixr without booking a demo.
-              </p>
-            </div>
-            <Button asChild className="rounded-full bg-[#00263F] px-6 font-['Manrope'] font-bold text-white hover:bg-[#0B3C5D]">
-              <a href="/access">Sign In / Get Access</a>
-            </Button>
-          </div>
-        </section>
-
-        <section id="book-demo" className="px-4 py-16 sm:px-6 lg:py-24">
-          <div className="mx-auto max-w-[1200px] grid gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
-            <SectionHeading
-              eyebrow="Lead capture"
-              title="Book a TruckFixr Fleet AI Demo"
-              description="Tell us about your fleet and we will follow up to show how TruckFixr can support your maintenance workflow."
-            />
-            <div className="rounded-[2rem] border border-[var(--fleet-outline)] bg-white p-6 shadow-[var(--fleet-shadow)] sm:p-8">
-              <DemoRequestForm />
-            </div>
-          </div>
-        </section>
-
-        <section id="faq" className="border-t border-[var(--fleet-outline)] bg-white px-4 py-16 sm:px-6 lg:py-24">
+        {/* 9. Get Started / Access Paths */}
+        <section id="get-started" className="border-y border-[var(--fleet-outline)] bg-[#00263F] px-4 py-16 text-white sm:px-6 lg:py-24">
           <div className="mx-auto max-w-[1200px]">
-            <SectionHeading
-              eyebrow="FAQ"
-              title="Clear answers for fleets evaluating TruckFixr."
-              center
-            />
+            <div className="grid gap-6 lg:grid-cols-3">
+              {/* Pricing teaser */}
+              <div className="flex flex-col rounded-3xl border border-white/10 bg-white/[0.05] p-6">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-[#FFB693]">Pricing</p>
+                <h3 className="mt-3 font-['Manrope'] text-2xl font-black">Fleet plans from $49/month CAD.</h3>
+                <p className="mt-3 text-sm leading-7 text-blue-100">
+                  Plans scale by vehicle count, with better per-vehicle economics as your fleet grows. Owner-operator
+                  plans start at $19/month.
+                </p>
+                <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+                  <Button asChild className="rounded-full bg-[#E32636] px-6 font-['Manrope'] font-bold text-white hover:bg-[#BC1E2C]">
+                    <a href={ROUTES.pricing} onClick={() => handleCta("view_pricing_clicked", "get_started")}>View Pricing</a>
+                  </Button>
+                  <Button
+                    asChild
+                    variant="outline"
+                    className="rounded-full border-2 border-white/25 bg-transparent px-6 font-['Manrope'] font-bold text-white hover:bg-white hover:text-[#00263F]"
+                  >
+                    <a
+                      href={ROUTES.requestPilot}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        scrollToId("request-pilot");
+                        handleCta("request_pilot_cta_clicked", "get_started");
+                      }}
+                    >
+                      Request Pilot
+                    </a>
+                  </Button>
+                </div>
+              </div>
+
+              {/* Access-code / invitation path */}
+              <div className="flex flex-col rounded-3xl border border-white/10 bg-white/[0.05] p-6">
+                <p className="inline-flex items-center gap-2 text-xs font-black uppercase tracking-[0.18em] text-[#FFB693]">
+                  <KeyRound className="h-4 w-4" />
+                  Invited?
+                </p>
+                <h3 className="mt-3 font-['Manrope'] text-2xl font-black">Already have a pilot code or invitation?</h3>
+                <p className="mt-3 text-sm leading-7 text-blue-100">
+                  If your fleet manager, employer, or TruckFixr contact invited you, use your code or invitation link to
+                  activate your account and join the correct fleet.
+                </p>
+                <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+                  <Button asChild className="rounded-full bg-white px-6 font-['Manrope'] font-bold text-[#00263F] hover:bg-blue-50">
+                    <a href={ROUTES.pilotCode} onClick={() => handleCta("enter_pilot_code_clicked", "get_started")}>Enter Pilot Code</a>
+                  </Button>
+                  <Button
+                    asChild
+                    variant="outline"
+                    className="rounded-full border-2 border-white/25 bg-transparent px-6 font-['Manrope'] font-bold text-white hover:bg-white hover:text-[#00263F]"
+                  >
+                    <a href={ROUTES.signIn} onClick={() => handleCta("sign_in_clicked", "get_started")}>Sign In</a>
+                  </Button>
+                </div>
+              </div>
+
+              {/* Request pilot lead form */}
+              <div id="request-pilot" className="scroll-mt-24 rounded-3xl border border-white/10 bg-white p-6 text-[#0B1C30] shadow-[var(--fleet-shadow)]">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-[#A04100]">Request a pilot</p>
+                <h3 className="mt-2 font-['Manrope'] text-xl font-black text-[#00263F]">Tell us about your fleet</h3>
+                <p className="mt-2 text-sm leading-7 text-[#42474E]">
+                  We'll follow up to set up a pilot or demo on a real fleet.
+                </p>
+                <div className="mt-5">
+                  <PilotRequestForm />
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* 10. FAQ */}
+        <section id="faq" className="bg-white px-4 py-16 sm:px-6 lg:py-24">
+          <div className="mx-auto max-w-[900px]">
+            <SectionHeading eyebrow="FAQ" title="Clear answers for fleets evaluating TruckFixr." center />
             <div className="mt-10 space-y-3">
               {faqItems.map((faq, index) => {
                 const isOpen = expandedFaq === index;
                 return (
-                  <motion.button
+                  <div
                     key={faq.question}
-                    type="button"
-                    {...fadeUp}
-                    transition={{ ...revealTransition, delay: index * 0.05 }}
-                    onClick={() => setExpandedFaq(isOpen ? null : index)}
-                    className="w-full rounded-2xl border border-[var(--fleet-outline)] bg-[var(--fleet-surface)] px-5 py-5 text-left shadow-[var(--fleet-shadow)] transition hover:border-[#F37021]"
+                    className="overflow-hidden rounded-2xl border border-[var(--fleet-outline)] bg-[var(--fleet-surface)] shadow-[var(--fleet-shadow)]"
                   >
-                    <div className="flex items-start justify-between gap-6">
-                      <div>
-                        <p className="font-['Manrope'] text-lg font-black text-[#00263F]">{faq.question}</p>
-                        {isOpen ? <p className="mt-3 text-sm leading-7 text-[#42474E]">{faq.answer}</p> : null}
-                      </div>
+                    <button
+                      type="button"
+                      aria-expanded={isOpen}
+                      onClick={() => setExpandedFaq(isOpen ? null : index)}
+                      className="flex w-full items-start justify-between gap-6 px-5 py-5 text-left transition hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-[#F37021]"
+                    >
+                      <span className="font-['Manrope'] text-lg font-black text-[#00263F]">{faq.question}</span>
                       <ChevronDown className={`mt-1 h-5 w-5 shrink-0 text-[#A04100] transition-transform ${isOpen ? "rotate-180" : ""}`} />
-                    </div>
-                  </motion.button>
+                    </button>
+                    {isOpen ? <p className="px-5 pb-5 text-sm leading-7 text-[#42474E]">{faq.answer}</p> : null}
+                  </div>
                 );
               })}
             </div>
+            <p className="mx-auto mt-8 max-w-2xl text-center text-xs leading-6 text-[#6B7280]">
+              TruckFixr provides maintenance decision support and does not replace certified inspections, qualified
+              technicians, or required safety and compliance procedures.
+            </p>
           </div>
-        </section>
-
-        <section className="px-4 py-16 sm:px-6 lg:py-24">
-          <motion.div
-            {...fadeUp}
-            className="relative mx-auto max-w-[1200px] overflow-hidden rounded-[2rem] bg-[#00263F] px-6 py-12 text-white sm:px-10 lg:px-12"
-          >
-            <div className="absolute inset-y-0 right-0 hidden w-1/3 bg-[radial-gradient(circle,#7FA7CD_1px,transparent_1px)] bg-[length:22px_22px] opacity-20 lg:block" />
-            <div className="relative grid gap-8 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.18em] text-[#FFB693]">
-                  Ready to reduce downtime and make maintenance decisions faster?
-                </p>
-                <h2 className="mt-4 font-['Manrope'] text-3xl font-black tracking-[-0.03em] sm:text-4xl">
-                  Book a demo and see how TruckFixr Fleet AI turns inspections, driver reports, fault codes, and repair history into action.
-                </h2>
-              </div>
-              <div className="flex flex-col gap-3 sm:flex-row lg:justify-end">
-                <Button asChild size="lg" className="rounded-full bg-[#E32636] px-8 font-['Manrope'] font-bold text-white hover:bg-[#BC1E2C]">
-                  <a href="#book-demo" onClick={() => handleLeadCtaClick("final_cta")}>Book a Demo</a>
-                </Button>
-                <Button asChild size="lg" variant="outline" className="rounded-full border-2 border-white/25 bg-transparent px-8 font-['Manrope'] font-bold text-white hover:bg-white hover:text-[#00263F]">
-                  <a href="#beta" onClick={() => handleBetaCtaClick("final_cta")}>Join the Beta</a>
-                </Button>
-              </div>
-            </div>
-          </motion.div>
         </section>
       </main>
 
-      <footer className="border-t border-[var(--fleet-outline)] bg-white">
-        <div className="mx-auto flex max-w-[1200px] flex-col gap-5 px-4 py-8 text-sm text-[#42474E] sm:px-6 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-3">
-            <AppLogo imageClassName="h-8" frameClassName="rounded p-1.5" />
-            <span className="font-['Manrope'] font-black text-[#00263F]">TruckFixr Fleet AI</span>
+      {/* Footer */}
+      <footer className="border-t border-[var(--fleet-outline)] bg-[#00263F] text-blue-100">
+        <div className="mx-auto max-w-[1200px] px-4 py-12 sm:px-6">
+          <div className="grid gap-8 md:grid-cols-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <AppLogo imageClassName="h-8" frameClassName="rounded p-1.5 bg-white" />
+                <span className="font-['Manrope'] font-black text-white">TruckFixr Fleet AI</span>
+              </div>
+              <p className="mt-4 text-sm leading-7 text-blue-100/80">
+                Maintenance intelligence for commercial vehicle uptime.
+              </p>
+            </div>
+            <div>
+              <h4 className="font-['Manrope'] font-black text-white">Product</h4>
+              <ul className="mt-4 space-y-2 text-sm">
+                <li><a href="#how-it-works" className="hover:text-white">How It Works</a></li>
+                <li><a href="#features" className="hover:text-white">Features</a></li>
+                <li><a href={ROUTES.pricing} className="hover:text-white">Pricing</a></li>
+                <li><a href="#faq" className="hover:text-white">FAQ</a></li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-['Manrope'] font-black text-white">Get Started</h4>
+              <ul className="mt-4 space-y-2 text-sm">
+                <li><a href={ROUTES.getStarted} className="hover:text-white">Get Started</a></li>
+                <li>
+                  <a
+                    href={ROUTES.requestPilot}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      scrollToId("request-pilot");
+                    }}
+                    className="hover:text-white"
+                  >
+                    Request Pilot
+                  </a>
+                </li>
+                <li><a href={ROUTES.pilotCode} className="hover:text-white">Enter Pilot Code</a></li>
+                <li><a href={ROUTES.signIn} className="hover:text-white">Sign In</a></li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-['Manrope'] font-black text-white">Company</h4>
+              <ul className="mt-4 space-y-2 text-sm">
+                <li><a href="mailto:info@truckfixr.com" className="hover:text-white">Contact</a></li>
+                <li><a href="/terms" className="hover:text-white">Terms</a></li>
+                <li><a href="/privacy" className="hover:text-white">Privacy</a></li>
+              </ul>
+            </div>
           </div>
-          <div className="flex flex-wrap gap-5">
-            <a href="#problem" className="hover:text-[#F37021]">Problem</a>
-            <a href="#solution" className="hover:text-[#F37021]">Solution</a>
-            <a href="#book-demo" className="hover:text-[#F37021]">Book a Demo</a>
-            <a href="#faq" className="hover:text-[#F37021]">FAQ</a>
+          <div className="mt-10 flex flex-col gap-3 border-t border-white/10 pt-6 text-sm text-blue-100/70 sm:flex-row sm:items-center sm:justify-between">
+            <p>2026 TruckFixr. Maintenance intelligence for commercial fleets.</p>
+            <p>
+              Contact:{" "}
+              <a href="mailto:info@truckfixr.com" className="hover:text-white">
+                info@truckfixr.com
+              </a>
+            </p>
           </div>
-          <p>2026 TruckFixr. Fleet maintenance intelligence for modern trucking teams.</p>
-          <p className="text-sm">
-            Contact:{" "}
-            <a href="mailto:info@truckfixr.com" className="hover:text-[#F37021]">
-              info@truckfixr.com
-            </a>
-          </p>
         </div>
       </footer>
+
+      {showVideo ? <ExplainerVideoModal onClose={() => setShowVideo(false)} /> : null}
+      {showDowntime ? <DowntimeCalculatorModal onClose={() => setShowDowntime(false)} /> : null}
     </div>
   );
 }
-
