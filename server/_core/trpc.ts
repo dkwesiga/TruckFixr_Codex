@@ -10,6 +10,7 @@ const t = initTRPC.context<TrpcContext>().create({
 
 export const router = t.router;
 export const publicProcedure = t.procedure;
+export const createCallerFactory = t.createCallerFactory;
 
 const requireUser = t.middleware(async opts => {
   const { ctx, next } = opts;
@@ -41,6 +42,7 @@ type StaffLikeUser =
   | {
       email?: string | null;
       role?: string | null;
+      internalAdminRole?: string | null;
     }
   | null
   | undefined;
@@ -48,14 +50,22 @@ type StaffLikeUser =
 export function isStaffAdminUser(user: StaffLikeUser) {
   const userEmail = user?.email?.trim().toLowerCase();
   const staffEmails = configuredStaffEmails();
+  const internalRole = user?.internalAdminRole;
+
+  if (internalRole === "super_admin" || internalRole === "admin" || internalRole === "read_only_viewer") {
+    return true;
+  }
 
   if (userEmail && staffEmails.has(userEmail)) {
     return true;
   }
 
+  // Dev-only convenience: allow owner/manager when no staff emails are configured AND
+  // the database is local (not Supabase). This must never fire against a real database.
   if (
     !ENV.isProduction &&
     staffEmails.size === 0 &&
+    !/supabase\.com/i.test(ENV.databaseUrl) &&
     (user?.role === "owner" || user?.role === "manager")
   ) {
     return true;

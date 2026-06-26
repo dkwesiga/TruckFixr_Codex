@@ -92,7 +92,7 @@ function inferEngineMake(result: VinDecodeResult) {
   return "";
 }
 
-function inferVehicleType(result: VinDecodeResult): VehicleTypeValue | null {
+function inferVehicleType(result: VinDecodeResult): VehicleTypeValue {
   const haystack = [
     result.VehicleType,
     result.BodyClass,
@@ -103,8 +103,6 @@ function inferVehicleType(result: VinDecodeResult): VehicleTypeValue | null {
     .filter((value): value is string => Boolean(value && value.trim()))
     .join(" | ")
     .toLowerCase();
-
-  if (!haystack) return null;
 
   if (haystack.includes("reefer") || haystack.includes("refrigerated")) {
     return "reefer_trailer";
@@ -138,7 +136,10 @@ function inferVehicleType(result: VinDecodeResult): VehicleTypeValue | null {
     return "bus";
   }
 
-  if (haystack.includes("van")) {
+  if (
+    (haystack.includes("cargo van") || haystack.includes("delivery van")) &&
+    !haystack.includes("trailer")
+  ) {
     return "van";
   }
 
@@ -147,12 +148,15 @@ function inferVehicleType(result: VinDecodeResult): VehicleTypeValue | null {
     haystack.includes("single-unit truck") ||
     haystack.includes("single unit truck") ||
     haystack.includes("incomplete vehicle") ||
+    haystack.includes("multipurpose passenger vehicle") ||
     haystack.includes("truck")
   ) {
     return "straight_truck";
   }
 
-  return null;
+  // For anything else on this platform (heavy-duty commercial vehicles), default to straight_truck.
+  // The user can correct this on the review screen.
+  return "straight_truck";
 }
 
 export function registerVehicleLookupRoutes(app: Express) {

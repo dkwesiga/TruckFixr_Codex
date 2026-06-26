@@ -2,8 +2,8 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { randomUUID } from "crypto";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, eq, gt, or, sql } from "drizzle-orm";
-import { driverInvitations, vehicleAssignments, vehicles } from "../../drizzle/schema";
+import { and, eq, gt, inArray, or, sql } from "drizzle-orm";
+import { driverInvitations, users, vehicleAssignments, vehicles } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { vehicleInspectionConfigSchema } from "../../shared/inspection";
 import {
@@ -19,8 +19,13 @@ import {
   verifyDriverBelongsToFleet,
 } from "../services/vehicleAccess";
 import { getUserPrimaryFleetId } from "../services/companyAccess";
-import { assignDriver } from "../../vehicle.controller";
+import {
+  assignDriver,
+  assignOwnerOperatorToSelf,
+  releaseOwnerOperatorSelfAssignment,
+} from "../../vehicle.controller";
 import { VEHICLE_TYPE_VALUES, type VehicleTypeValue } from "../../shared/vehicleTypes";
+import { parseOwnerOperatorSelfAssignmentNote } from "../services/ownerOperator";
 
 function normalizeAssetType(
   assetType: "tractor" | "straight_truck" | "trailer" | "truck" | "bus" | "van" | "reefer_trailer" | "flatbed_trailer" | "dry_van_trailer" | "other" | undefined
@@ -134,6 +139,214 @@ function classifyVehicle(vehicleType: VehicleClassificationInput, assetType: Veh
   }
 }
 
+function getVehicleRelationshipLabel(vehicle: any, fleetVehicles: any[]) {
+  const formatVehicleLabel = (candidate: any) =>
+    candidate?.unitNumber?.trim() || candidate?.licensePlate?.trim() || candidate?.vin || String(candidate?.id ?? "");
+
+  const linkedPoweredVehicle =
+    vehicle.linkedPoweredVehicleId != null
+      ? fleetVehicles.find((candidate) => String(candidate.id) === String(vehicle.linkedPoweredVehicleId))
+      : null;
+  if (linkedPoweredVehicle) {
+    return `Linked to ${formatVehicleLabel(linkedPoweredVehicle)}`;
+  }
+
+  const linkedTrailers = fleetVehicles.filter(
+    (candidate) =>
+      candidate.linkedPoweredVehicleId != null &&
+      String(candidate.linkedPoweredVehicleId) === String(vehicle.id)
+  );
+  if (linkedTrailers.length === 0) {
+    return null;
+  }
+
+  const trailerLabels = linkedTrailers.map(formatVehicleLabel).filter(Boolean);
+  if (trailerLabels.length === 0) {
+    return null;
+  }
+
+  return trailerLabels.length === 1
+    ? `Linked trailer ${trailerLabels[0]}`
+    : `Linked trailers ${trailerLabels.join(", ")}`;
+}
+
+function decorateVehiclesWithRelationshipSummary(
+  fleetVehicles: Array<Record<string, any>>
+) : any[] {
+  return fleetVehicles.map((vehicle) => ({
+    ...vehicle,
+    linkedVehicleSummary: getVehicleRelationshipLabel(vehicle, fleetVehicles),
+  }));
+}
+
+async function decorateFleetVehiclesForDashboard(
+  db: Exclude<Awaited<ReturnType<typeof getDb>>, null>,
+  fleetVehicles: Array<Record<string, any>>
+): Promise<any[]> {
+  const vehiclesWithRelationships = decorateVehiclesWithRelationshipSummary(
+    fleetVehicles
+  );
+  if (vehiclesWithRelationships.length === 0) {
+    return vehiclesWithRelationships;
+  }
+
+  const assignedDriverIds = Array.from(
+    new Set(
+      vehiclesWithRelationships
+        .map((vehicle) => vehicle.assignedDriverId)
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+    )
+  );
+
+  const vehicleIds = vehiclesWithRelationships.map((vehicle) => String(vehicle.id));
+  const activeAssignments = await db
+    .select({
+      id: vehicleAssignments.id,
+      vehicleId: vehicleAssignments.vehicleId,
+      driverUserId: vehicleAssignments.driverUserId,
+      notes: vehicleAssignments.notes,
+      updatedAt: vehicleAssignments.updatedAt,
+    })
+    .from(vehicleAssignments)
+    .where(
+      and(
+        eq(
+          vehicleAssignments.fleetId,
+          Number(vehiclesWithRelationships[0]?.fleetId ?? 0)
+        ),
+        eq(vehicleAssignments.status, "active"),
+        inArray(vehicleAssignments.vehicleId, vehicleIds)
+      )
+    );
+
+  const ownerOperatorAssignments = new Map<
+    string,
+    {
+      ownerOperatorUserId: number;
+      ownerOperatorName: string | null;
+      previousDriverUserId: number | null;
+      previousDriverName: string | null;
+      assignedAt: string;
+    }
+  >();
+
+  for (const row of activeAssignments) {
+    const metadata = parseOwnerOperatorSelfAssignmentNote(row.notes);
+    if (!metadata) continue;
+    const vehicleId = String(row.vehicleId);
+    if (!ownerOperatorAssignments.has(vehicleId)) {
+      ownerOperatorAssignments.set(vehicleId, metadata);
+    }
+    if (typeof row.driverUserId === "number" && Number.isFinite(row.driverUserId)) {
+      assignedDriverIds.push(row.driverUserId);
+    }
+    if (metadata.previousDriverUserId != null) {
+      assignedDriverIds.push(metadata.previousDriverUserId);
+    }
+    if (metadata.ownerOperatorUserId != null) {
+      assignedDriverIds.push(metadata.ownerOperatorUserId);
+    }
+  }
+
+  const uniqueAssignedDriverIds = Array.from(
+    new Set(
+      assignedDriverIds.filter(
+        (value): value is number => typeof value === "number" && Number.isFinite(value)
+      )
+    )
+  );
+
+  const assignedDriverRows =
+    uniqueAssignedDriverIds.length > 0
+      ? await db
+          .select({ id: users.id, name: users.name, email: users.email })
+          .from(users)
+          .where(inArray(users.id, uniqueAssignedDriverIds))
+      : [];
+  const assignedDriverMap = new Map(
+    assignedDriverRows.map((row) => [row.id, row.name?.trim() || row.email || null])
+  );
+
+  return vehiclesWithRelationships.map((vehicle) => {
+    const ownerOperatorSelfAssignment = ownerOperatorAssignments.get(String(vehicle.id)) ?? null;
+    const assignedDriverDisplayName =
+      (typeof vehicle.assignedDriverId === "number"
+        ? assignedDriverMap.get(vehicle.assignedDriverId) ?? null
+        : null) ??
+      (ownerOperatorSelfAssignment?.ownerOperatorUserId === vehicle.assignedDriverId
+        ? ownerOperatorSelfAssignment?.ownerOperatorName ?? null
+        : null);
+
+    return {
+      ...vehicle,
+      assignedDriverDisplayName,
+      ownerOperatorSelfAssignment,
+    } as any;
+  });
+}
+
+const vehicleCreateReturnShape = {
+  id: vehicles.id,
+  fleetId: vehicles.fleetId,
+  assignedDriverId: vehicles.assignedDriverId,
+  unitNumber: vehicles.unitNumber,
+  vin: vehicles.vin,
+  licensePlate: vehicles.licensePlate,
+  make: vehicles.make,
+  engineMake: vehicles.engineMake,
+  model: vehicles.model,
+  year: vehicles.year,
+};
+
+const vehicleCreateModernReturnShape = {
+  ...vehicleCreateReturnShape,
+  assetRecordStatus: vehicles.assetRecordStatus,
+};
+
+function getVehicleCreateErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error ?? "Vehicle creation failed");
+}
+
+function isLegacyVehicleSchemaError(message: string) {
+  const normalized = message.toLowerCase();
+  if (!normalized.includes("vehicles")) return false;
+
+  return [
+    "assettype",
+    "assetcategory",
+    "vehicletype",
+    "ispoweredvehicle",
+    "istrailer",
+    "assetrecordstatus",
+    "createdbyuserid",
+    "linkedpoweredvehicleid",
+    "trailerlinkstatus",
+    "operationaldecision",
+    "lastcleaninspection",
+  ].some((fragment) => normalized.includes(fragment));
+}
+
+function isVehicleIdTypeMismatch(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("invalid input syntax for type integer") ||
+    (normalized.includes("\"id\"") &&
+      normalized.includes("integer") &&
+      (normalized.includes("character varying") || normalized.includes("text")))
+  );
+}
+
+function isDuplicateVinError(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("vin") &&
+    (normalized.includes("duplicate key") ||
+      normalized.includes("already exists") ||
+      normalized.includes("ix_vehicles_vin") ||
+      normalized.includes("unique"))
+  );
+}
+
 export const vehiclesRouter = router({
   /**
    * Create a new vehicle (truck)
@@ -223,37 +436,88 @@ export const vehiclesRouter = router({
         }
       }
       let vehicle;
+      const generatedVehicleId = `veh_${randomUUID()}`;
+      const baseInsertValues = {
+        fleetId: resolvedFleetId,
+        assignedDriverId: null,
+        unitNumber: input.unitNumber?.trim() || null,
+        vin: input.vin,
+        licensePlate: input.licensePlate?.trim() || "UNKNOWN",
+        make: input.make,
+        engineMake: input.engineMake?.trim() || null,
+        model: input.model,
+        year: input.year,
+        configuration: input.configuration,
+        status: (assetRecordStatus === "active" ? "active" : "maintenance") as "active" | "maintenance",
+      };
       try {
         [vehicle] = await db
           .insert(vehicles)
           .values({
-            id: `veh_${randomUUID()}`,
-            fleetId: resolvedFleetId,
-            assignedDriverId: null,
+            id: generatedVehicleId,
+            ...baseInsertValues,
             assetType: classification.assetType,
             assetCategory: classification.assetCategory,
             vehicleType: classification.vehicleType,
             isPoweredVehicle: classification.isPoweredVehicle,
             isTrailer: classification.isTrailer,
-            unitNumber: input.unitNumber?.trim() || null,
-            vin: input.vin,
-            licensePlate: input.licensePlate?.trim() || "UNKNOWN",
-            make: input.make,
-            engineMake: input.engineMake?.trim() || null,
-            model: input.model,
-            year: input.year,
-            configuration: input.configuration,
-            status: assetRecordStatus === "active" ? "active" : "maintenance",
             assetRecordStatus,
             createdByUserId: ctx.user.id,
           })
-          .returning();
+          .returning(vehicleCreateModernReturnShape);
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Vehicle creation failed";
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: `Unable to save this vehicle record. ${message}`,
-        });
+        const message = getVehicleCreateErrorMessage(error);
+        if (isDuplicateVinError(message)) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "This VIN is already on file. Search your fleet before adding it again. If you believe it was added incorrectly, contact support.",
+          });
+        }
+        const shouldRetryWithLegacyPayload =
+          isLegacyVehicleSchemaError(message) || isVehicleIdTypeMismatch(message);
+
+        if (!shouldRetryWithLegacyPayload) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Unable to save this vehicle record. ${message}`,
+          });
+        }
+
+        try {
+          console.warn("[Vehicles] Falling back to legacy-compatible vehicle insert.", {
+            fleetId: resolvedFleetId,
+            reason: message,
+          });
+
+          const legacyValues = {
+            ...baseInsertValues,
+            ...(isVehicleIdTypeMismatch(message) ? {} : { id: generatedVehicleId }),
+          };
+
+          [vehicle] = await db
+            .insert(vehicles)
+            .values(legacyValues as any)
+            .returning(vehicleCreateReturnShape);
+
+          vehicle = {
+            ...vehicle,
+            assetRecordStatus,
+          };
+        } catch (legacyError) {
+          const legacyMessage = getVehicleCreateErrorMessage(legacyError);
+          if (isDuplicateVinError(legacyMessage)) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message:
+                "This VIN is already on file. Search your fleet before adding it again. If you believe it was added incorrectly, contact support.",
+            });
+          }
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `Unable to save this vehicle record. ${legacyMessage}`,
+          });
+        }
       }
 
       if (input.assignedDriverId != null) {
@@ -362,7 +626,11 @@ export const vehiclesRouter = router({
           });
         }
 
-        return db.select().from(vehicles).where(eq(vehicles.fleetId, input.fleetId));
+        const fleetVehicles = await db
+          .select()
+          .from(vehicles)
+          .where(eq(vehicles.fleetId, input.fleetId));
+        return decorateFleetVehiclesForDashboard(db, fleetVehicles);
       }
 
       const scopedVehicles = await listDriverAccessibleVehicles({
@@ -371,7 +639,7 @@ export const vehiclesRouter = router({
       });
 
       if (scopedVehicles.length > 0) {
-        return scopedVehicles;
+        return decorateVehiclesWithRelationshipSummary(scopedVehicles);
       }
 
       return [];
@@ -399,12 +667,17 @@ export const vehiclesRouter = router({
         });
       }
 
-      return db.select().from(vehicles).where(eq(vehicles.fleetId, fleetId));
+      const fleetVehicles = await db
+        .select()
+        .from(vehicles)
+        .where(eq(vehicles.fleetId, fleetId));
+      return decorateFleetVehiclesForDashboard(db, fleetVehicles);
     }
 
-    return listDriverAccessibleVehiclesAcrossFleets({
+    const vehiclesAcrossFleets = await listDriverAccessibleVehiclesAcrossFleets({
       driverUserId: ctx.user.id,
     });
+    return decorateVehiclesWithRelationshipSummary(vehiclesAcrossFleets);
     }),
 
   /**
@@ -530,5 +803,28 @@ export const vehiclesRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       return await assignDriver({ input, ctx });
+    }),
+
+  assignOwnerOperatorToSelf: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number(),
+        vehicleId: z.union([z.coerce.number(), z.string().trim().min(1)]),
+        confirmTakeover: z.boolean().optional(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      return await assignOwnerOperatorToSelf({ input, ctx });
+    }),
+
+  releaseOwnerOperatorSelfAssignment: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number(),
+        vehicleId: z.union([z.coerce.number(), z.string().trim().min(1)]),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      return await releaseOwnerOperatorSelfAssignment({ input, ctx });
     }),
 });

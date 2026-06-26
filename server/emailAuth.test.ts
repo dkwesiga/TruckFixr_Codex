@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
+import { ENV } from "./_core/env";
 
 function createPublicContext(): TrpcContext {
   return {
@@ -14,6 +15,11 @@ function createPublicContext(): TrpcContext {
     } as TrpcContext["res"],
   };
 }
+
+beforeEach(() => {
+  ENV.supabaseUrl = "";
+  ENV.supabaseAnonKey = "";
+});
 
 describe("emailAuth.signup", () => {
   it("creates a new user with email and password", async () => {

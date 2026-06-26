@@ -9,9 +9,148 @@ services:
     autoDeploy: true
     buildCommand: npm install -g pnpm@10.15.1 && CI=true pnpm install --frozen-lockfile --force --reporter=append-only && pnpm build:client
     staticPublishPath: dist/public
+    headers:
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      - path: /
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /index.html
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /access
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /access/*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /pilot
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /signup
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /auth/*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /profile
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /app
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /onboarding
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /manager
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /driver
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /diagnosis
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /inspection
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /inspection/*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /inspection-report/*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /defect/*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /truck/*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /pricing
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /admin
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /admin/*
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /404
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /manifest.json
+        name: Cache-Control
+        value: no-cache, must-revalidate
+      - path: /sw.js
+        name: Cache-Control
+        value: no-cache, must-revalidate
+      - path: /service-worker.js
+        name: Cache-Control
+        value: no-cache, must-revalidate
     routes:
       - type: rewrite
-        source: /*
+        source: /
+        destination: /index.html
+      - type: rewrite
+        source: /access
+        destination: /index.html
+      - type: rewrite
+        source: /access/*
+        destination: /index.html
+      - type: rewrite
+        source: /pilot
+        destination: /index.html
+      - type: rewrite
+        source: /signup
+        destination: /index.html
+      - type: rewrite
+        source: /auth/*
+        destination: /index.html
+      - type: rewrite
+        source: /profile
+        destination: /index.html
+      - type: rewrite
+        source: /app
+        destination: /index.html
+      - type: rewrite
+        source: /onboarding
+        destination: /index.html
+      - type: rewrite
+        source: /manager
+        destination: /index.html
+      - type: rewrite
+        source: /driver
+        destination: /index.html
+      - type: rewrite
+        source: /diagnosis
+        destination: /index.html
+      - type: rewrite
+        source: /inspection
+        destination: /index.html
+      - type: rewrite
+        source: /inspection/*
+        destination: /index.html
+      - type: rewrite
+        source: /inspection-report/*
+        destination: /index.html
+      - type: rewrite
+        source: /defect/*
+        destination: /index.html
+      - type: rewrite
+        source: /truck/*
+        destination: /index.html
+      - type: rewrite
+        source: /pricing
+        destination: /index.html
+      - type: rewrite
+        source: /admin
+        destination: /index.html
+      - type: rewrite
+        source: /admin/*
+        destination: /index.html
+      - type: rewrite
+        source: /404
         destination: /index.html
     envVars:
       - key: NODE_VERSION
@@ -47,14 +186,16 @@ services:
     plan: free
     rootDir: .
     autoDeploy: true
-    buildCommand: npm install -g pnpm@10.15.1 && CI=true pnpm install --frozen-lockfile --force --reporter=append-only && pnpm exec tsx --version
-    startCommand: pnpm exec cross-env NODE_ENV=production tsx server/_core/renderStart.ts
+    buildCommand: npm install -g pnpm@10.15.1 && CI=true pnpm install --frozen-lockfile --force --reporter=append-only && pnpm build
+    startCommand: pnpm start:server
     healthCheckPath: /healthz
     envVars:
       - key: NODE_VERSION
         value: 20.19.5
       - key: NODE_ENV
         value: production
+      - key: ALLOW_RUNTIME_SCHEMA_REPAIR
+        value: "false"
       - key: VITE_APP_ID
         value: truckfixr-render
       - key: APP_BASE_URL
@@ -145,6 +286,28 @@ services:
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
+      - key: ENABLE_STRIPE_DIAGNOSTICS_ENDPOINT
+        value: "false"
+      - key: STRIPE_PRICE_OWNER_OPERATOR_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_OWNER_OPERATOR_ANNUAL
+        sync: false
+      - key: STRIPE_PRICE_SMALL_FLEET_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_SMALL_FLEET_ANNUAL
+        sync: false
+      - key: STRIPE_PRICE_FLEET_GROWTH_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_FLEET_GROWTH_ANNUAL
+        sync: false
+      - key: STRIPE_PRICE_FLEET_PRO_MONTHLY
+        sync: false
+      - key: STRIPE_PRICE_FLEET_PRO_ANNUAL
+        sync: false
+      - key: STRIPE_PRICE_FLEET_PILOT_30_DAY
+        sync: false
+      - key: STRIPE_PRICE_EXTRA_TRAILER_MONTHLY
+        sync: false
       - key: STRIPE_PRICE_PRO_MONTHLY
         sync: false
       - key: STRIPE_PRICE_PRO_ANNUAL
@@ -152,6 +315,6 @@ services:
       - key: STRIPE_PRICE_FLEET_MONTHLY
         sync: false
       - key: ADMIN_EMAILS
-        sync: false
+        value: dkwesiga@truckfixr.com
       - key: SALES_NOTIFICATION_EMAIL
         sync: false

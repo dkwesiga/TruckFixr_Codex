@@ -147,17 +147,25 @@ export async function extractVinFromImage(
         {
           role: "system",
           content:
-            "You extract heavy-duty truck VINs from images. Return strict JSON with {\"vinCandidate\": string, \"rawText\": string}. VINs are 17 characters. Preserve OCR uncertainty in rawText, but normalize obvious separators in vinCandidate.",
+            "You extract heavy-duty truck VINs from images. Return strict JSON with {\"vinCandidate\": string, \"rawText\": string}. " +
+            "Rules: VINs are exactly 17 alphanumeric characters. " +
+            "Common OCR errors to correct: O→0, Q→0, I→1, l→1, B→8, S→5, Z→2. " +
+            "The VIN never contains letters I, O, or Q. " +
+            "In vinCandidate return only the 17 corrected characters with no spaces or dashes. " +
+            "In rawText preserve exactly what you see in the image.",
         },
         {
           role: "user",
           content: [
-            { type: "text", text: "Extract the VIN from this vehicle image. Return only one best VIN candidate." },
+            {
+              type: "text",
+              text: "Extract the 17-character VIN from this vehicle image. The VIN label is usually on a metal plate on the door jamb, dashboard, or frame. Return only the single best VIN candidate.",
+            },
             {
               type: "image_url" as const,
               image_url: {
                 url: input.imageDataUrl,
-                detail: "low" as const,
+                detail: "high" as const,
               },
             },
           ],

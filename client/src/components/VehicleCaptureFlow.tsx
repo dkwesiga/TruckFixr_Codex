@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { trpc } from "@/lib/trpc";
 import { getApiUrl, readApiPayload } from "@/lib/api";
+import { getVehicleCreateErrorPresentation } from "@/lib/actionErrorMessages";
 import { saveLastDriverVehicleContext } from "@/lib/driverVehicleContext";
 import { loadDriverVehicles, saveDriverVehicles, type DriverVehicleRecord } from "@/lib/driverVehicles";
 import { getFallbackUnitNumber, getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
@@ -80,6 +81,9 @@ export default function VehicleCaptureFlow({
   const [ocrWarning, setOcrWarning] = useState("");
   const [vinInput, setVinInput] = useState("");
   const [decodeWarning, setDecodeWarning] = useState("");
+  const [saveErrorMessage, setSaveErrorMessage] = useState("");
+  const [vinFieldError, setVinFieldError] = useState("");
+  const [saveAttempted, setSaveAttempted] = useState(false);
   const [vehicleForm, setVehicleForm] = useState<VehicleCaptureDraft>({
     label: "",
     vin: "",
@@ -287,6 +291,10 @@ export default function VehicleCaptureFlow({
   };
 
   const saveVehicle = async () => {
+    setSaveAttempted(true);
+    setSaveErrorMessage("");
+    setVinFieldError("");
+
     if (!(typeof fleetId === "number" && fleetId > 0)) {
       toast.error("TruckFixr is still loading your fleet. Refresh and try again.");
       return;
@@ -298,7 +306,7 @@ export default function VehicleCaptureFlow({
       return;
     }
     if (!vehicleForm.vehicleType) {
-      toast.error("Select the vehicle type before saving.");
+      toast.error("Select a vehicle type before saving.");
       return;
     }
 
@@ -339,7 +347,12 @@ export default function VehicleCaptureFlow({
       toast.success(`${localVehicle.label} saved and ready to use.`);
       onSaved(localVehicle);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to save vehicle");
+      const presentation = getVehicleCreateErrorPresentation(error);
+      setSaveErrorMessage(presentation.inline);
+      if (presentation.field?.name === "vin") {
+        setVinFieldError(presentation.field.message);
+      }
+      toast.error(presentation.toast);
       setStep("review");
     }
   };
@@ -380,10 +393,14 @@ export default function VehicleCaptureFlow({
                 id="manual-vin"
                 value={vehicleForm.vin}
                 onChange={(event) =>
-                  setVehicleForm((current) => ({
-                    ...current,
-                    vin: normalizeVinInput(event.target.value),
-                  }))
+                  {
+                    setVinFieldError("");
+                    setSaveErrorMessage("");
+                    setVehicleForm((current) => ({
+                      ...current,
+                      vin: normalizeVinInput(event.target.value),
+                    }));
+                  }
                 }
                 placeholder="Enter 17-character VIN"
                 className="mt-2"
@@ -555,15 +572,25 @@ export default function VehicleCaptureFlow({
                 <Input
                   id="review-vin"
                   value={vehicleForm.vin}
-                  onChange={(event) =>
+                onChange={(event) =>
+                  {
+                    setVinFieldError("");
+                    setSaveErrorMessage("");
                     setVehicleForm((current) => ({
                       ...current,
                       vin: normalizeVinInput(event.target.value),
-                    }))
+                    }));
                   }
-                  className="mt-2"
-                />
-              </div>
+                }
+                className={`mt-2 ${(saveAttempted && normalizeVinInput(vehicleForm.vin).length !== 17) || vinFieldError ? "border-red-400 ring-1 ring-red-400" : ""}`}
+              />
+              {saveAttempted && normalizeVinInput(vehicleForm.vin).length !== 17 ? (
+                <p className="mt-1 text-xs text-red-600">VIN must be exactly 17 characters.</p>
+              ) : null}
+              {vinFieldError ? (
+                <p className="mt-1 text-xs text-red-600">{vinFieldError}</p>
+              ) : null}
+            </div>
               <div>
                 <Label htmlFor="review-make">Make</Label>
                 <Input id="review-make" value={vehicleForm.make} onChange={(event) => setVehicleForm((current) => ({ ...current, make: event.target.value }))} className="mt-2" />
@@ -581,9 +608,14 @@ export default function VehicleCaptureFlow({
                 <Input id="review-engine" value={vehicleForm.engineMake} onChange={(event) => setVehicleForm((current) => ({ ...current, engineMake: event.target.value }))} className="mt-2" />
               </div>
               <div>
-                <Label htmlFor="review-vehicle-type">Vehicle Type</Label>
+                <Label htmlFor="review-vehicle-type">
+                  Vehicle Type
+                  {saveAttempted && !vehicleForm.vehicleType ? (
+                    <span className="ml-1 text-red-600">*</span>
+                  ) : null}
+                </Label>
                 <Select
-                  value={vehicleForm.vehicleType}
+                  value={vehicleForm.vehicleType || undefined}
                   onValueChange={(value) =>
                     setVehicleForm((current) => ({
                       ...current,
@@ -591,7 +623,10 @@ export default function VehicleCaptureFlow({
                     }))
                   }
                 >
-                  <SelectTrigger id="review-vehicle-type" className="mt-2 w-full">
+                  <SelectTrigger
+                    id="review-vehicle-type"
+                    className={`mt-2 w-full ${saveAttempted && !vehicleForm.vehicleType ? "border-red-400 ring-1 ring-red-400" : ""}`}
+                  >
                     <SelectValue placeholder="Select vehicle type" />
                   </SelectTrigger>
                   <SelectContent>
@@ -602,6 +637,9 @@ export default function VehicleCaptureFlow({
                     ))}
                   </SelectContent>
                 </Select>
+                {saveAttempted && !vehicleForm.vehicleType ? (
+                  <p className="mt-1 text-xs text-red-600">Select a vehicle type to continue.</p>
+                ) : null}
               </div>
               <div>
                 <Label htmlFor="review-label">Unit Number</Label>
@@ -620,8 +658,13 @@ export default function VehicleCaptureFlow({
                 })}
               </div>
             ) : null}
+            {saveErrorMessage ? (
+              <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                {saveErrorMessage}
+              </div>
+            ) : null}
             <div className="flex gap-3">
-              <Button type="button" variant="outline" onClick={() => setStep("manual")} disabled={step === "saving"}>
+              <Button type="button" variant="outline" onClick={() => { setSaveAttempted(false); setStep("manual"); }} disabled={step === "saving"}>
                 Edit VIN
               </Button>
               <Button type="button" onClick={() => void saveVehicle()} disabled={step === "saving" || createVehicleMutation.isPending}>

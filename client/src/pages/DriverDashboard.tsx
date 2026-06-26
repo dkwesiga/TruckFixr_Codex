@@ -5,12 +5,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import OwnerOperatorGate from "@/components/OwnerOperatorGate";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import { trackEvent, trackInspectionStarted, trackVehicleAdded } from "@/lib/analytics";
 import { saveLastDriverVehicleContext } from "@/lib/driverVehicleContext";
 import { getApiUrl, readApiPayload } from "@/lib/api";
 import { createTemporaryDriverVehicleId } from "@/lib/driverVehicles";
 import { formatDistanceKm, getFallbackUnitNumber, getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
+import { isOwnerOperatorEnabled } from "@/lib/ownerOperator";
 import { toast } from "sonner";
 import { AlertCircle, CheckCircle, Eye, Plus, SearchCode, Stethoscope, Truck } from "lucide-react";
 
@@ -107,7 +109,10 @@ function DriverDashboardContent() {
   const [isAddVehicleOpen, setIsAddVehicleOpen] = useState(false);
 
   const userRole = String(user?.role ?? "");
-  const isOwnerOperator = userRole === "owner_operator" || userRole === "owner" || userRole === "manager";
+  if (user?.role === "owner" && !isOwnerOperatorEnabled(user)) {
+    return <OwnerOperatorGate />;
+  }
+  const isOwnerOperator = userRole === "manager" || isOwnerOperatorEnabled(user);
 
   const [selectedReport, setSelectedReport] = useState<InspectionReport | null>(null);
   const [isDecodingVin, setIsDecodingVin] = useState(false);

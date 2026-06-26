@@ -137,6 +137,7 @@
     font-family: "Inter", sans-serif;
     background-image: linear-gradient(180deg, #f8f9ff 0%, #eff4ff 100%);
     min-height: 100vh;
+    overflow-x: hidden;
   }
   h1,
   h2,
@@ -278,5 +279,56 @@
     font-family: "Manrope", sans-serif;
     letter-spacing: -0.03em;
     color: var(--fleet-primary);
+  }
+}
+
+@media print {
+  body {
+    background: #ffffff !important;
+    background-image: none !important;
+  }
+
+  .quick-start-app-only,
+  .quick-start-nav,
+  [data-sonner-toaster] {
+    display: none !important;
+  }
+
+  .app-shell {
+    background: #ffffff !important;
+  }
+
+  .quick-start-guide {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+
+  .quick-start-guide,
+  .quick-start-guide * {
+    color: #111827 !important;
+    box-shadow: none !important;
+  }
+
+  .quick-start-guide header,
+  .quick-start-guide section,
+  .quick-start-guide [data-slot="card"] {
+    break-inside: avoid;
+    border-color: #d1d5db !important;
+    background: #ffffff !important;
+  }
+
+  .quick-start-guide h1 {
+    font-size: 26px !important;
+  }
+
+  .quick-start-guide h2 {
+    font-size: 18px !important;
+  }
+
+  .quick-start-guide p,
+  .quick-start-guide li,
+  .quick-start-guide span {
+    font-size: 11px !important;
+    line-height: 1.45 !important;
   }
 }

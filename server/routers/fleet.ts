@@ -32,6 +32,20 @@ async function verifyDriverFleetAccess(fleetId: number, driverId: number): Promi
   return membership?.status === "active" && membership.role === "driver";
 }
 
+function isDemoFleetLike(fleet: {
+  accountType?: string | null;
+  isDemoAccount?: boolean | null;
+  salesStatus?: string | null;
+  companyEmail?: string | null;
+}) {
+  return (
+    fleet.accountType === "demo" ||
+    Boolean(fleet.isDemoAccount) ||
+    fleet.salesStatus === "demo" ||
+    String(fleet.companyEmail ?? "").trim().toLowerCase().endsWith("@truckfixr-demo.example.com")
+  );
+}
+
 export const fleetRouter = router({
   create: protectedProcedure
     .input(
@@ -104,7 +118,12 @@ export const fleetRouter = router({
         .where(eq(fleets.id, input.fleetId))
         .limit(1);
 
-      return fleet ?? null;
+      if (!fleet) return null;
+
+      return {
+        ...fleet,
+        driverModeEnabled: fleet.driverModeEnabled || isDemoFleetLike(fleet),
+      };
     }),
 
   list: protectedProcedure.query(async ({ ctx }) => {
@@ -115,7 +134,12 @@ export const fleetRouter = router({
       const memberships = await db
         .select({ fleetId: companyMemberships.fleetId })
         .from(companyMemberships)
-        .where(eq(companyMemberships.userId, ctx.user.id));
+        .where(
+          and(
+            eq(companyMemberships.userId, ctx.user.id),
+            eq(companyMemberships.status, "active")
+          )
+        );
 
       const membershipFleetIds = memberships.map((row) => row.fleetId);
       const ownedFleets = await db.select().from(fleets).where(eq(fleets.ownerId, ctx.user.id));
@@ -138,7 +162,12 @@ export const fleetRouter = router({
       await db
         .select({ fleetId: companyMemberships.fleetId })
         .from(companyMemberships)
-        .where(eq(companyMemberships.userId, ctx.user.id))
+        .where(
+          and(
+            eq(companyMemberships.userId, ctx.user.id),
+            eq(companyMemberships.status, "active")
+          )
+        )
     ).map((row) => row.fleetId);
 
     const fleetIds = Array.from(new Set([...assignedVehicles.map((v) => v.fleetId), ...membershipFleetIds]));
@@ -268,6 +297,7 @@ export const fleetRouter = router({
         name: z.string().optional(),
         planId: z.number().optional(),
         premiumTadis: z.boolean().optional(),
+        driverModeEnabled: z.boolean().optional(),
       })
     )
     .mutation(async ({ input, ctx }) => {
@@ -298,6 +328,7 @@ export const fleetRouter = router({
       if (input.name) updateData.name = input.name;
       if (input.planId) updateData.planId = input.planId;
       if (input.premiumTadis !== undefined) updateData.premiumTadis = input.premiumTadis;
+      if (input.driverModeEnabled !== undefined) updateData.driverModeEnabled = input.driverModeEnabled;
 
       const [updated] = await db
         .update(fleets)

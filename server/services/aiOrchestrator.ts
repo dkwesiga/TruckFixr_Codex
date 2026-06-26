@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { ENV } from "../_core/env";
+import { recordObservabilityEvent } from "./observability";
 
 export type AiProvider = "openai" | "anthropic" | "gemini" | "openrouter" | "groq";
 
@@ -960,6 +961,17 @@ function logAttempt(attempt: ProviderAttempt) {
   };
 
   console.info("[AI Orchestrator]", summary);
+
+  if (!attempt.success) {
+    recordObservabilityEvent({
+      category: "ai_provider",
+      event: "ai_attempt_failed",
+      severity: "warning",
+      message: attempt.reason,
+      durationMs: attempt.latencyMs,
+      context: { provider: attempt.provider, model: attempt.model },
+    });
+  }
 }
 
 function logCallSummary(summary: {
@@ -975,6 +987,23 @@ function logCallSummary(summary: {
   errorCategory: AiErrorCategory | null;
 }) {
   console.info("[AI Orchestrator]", summary);
+
+  recordObservabilityEvent({
+    category: "ai_provider",
+    event: summary.status === "fallback" ? "ai_call_fallback" : "ai_call_success",
+    // A fallback means every configured provider failed for this call — that is
+    // a real reliability signal, not routine noise.
+    severity: summary.status === "fallback" ? "error" : "info",
+    durationMs: summary.latencyMs,
+    context: {
+      feature: summary.feature,
+      primaryProvider: summary.primaryProvider,
+      providerUsed: summary.providerUsed,
+      modelUsed: summary.modelUsed,
+      fallbackUsed: summary.fallbackUsed,
+      errorCategory: summary.errorCategory,
+    },
+  });
 }
 
 export async function probeAiProviderStatus(

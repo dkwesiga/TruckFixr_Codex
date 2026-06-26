@@ -5,7 +5,7 @@ import {createRequire} from "node:module";
 import {join, resolve} from "node:path";
 import {pathToFileURL} from "node:url";
 import {promisify} from "node:util";
-import {ensureDir, outputRoot, writeJson} from "./utils";
+import {ensureDir, outputRoot, parseArg, writeJson} from "./utils";
 
 const require = createRequire(import.meta.url);
 const ffmpegPath: string | null = require("ffmpeg-static");
@@ -16,6 +16,16 @@ type RenderEntry = {
   aspect: "landscape" | "vertical";
   outputLocation: string;
 };
+
+function resolveRequestedDurations() {
+  const requested = parseArg("duration", "all");
+  return requested === "all" ? null : requested;
+}
+
+function resolveRequestedAspects() {
+  const requested = parseArg("aspect", "all");
+  return requested === "all" ? null : requested;
+}
 
 function getWebTargets(entry: RenderEntry) {
   const dir = join(outputRoot, "web", entry.aspect);
@@ -117,10 +127,17 @@ async function main() {
   const renderReport = JSON.parse(
     await readFile(renderReportPath, "utf8")
   ) as RenderEntry[];
+  const requestedDuration = resolveRequestedDurations();
+  const requestedAspect = resolveRequestedAspects();
+  const selectedEntries = renderReport.filter((entry) => {
+    const durationMatches = requestedDuration ? entry.duration === requestedDuration : true;
+    const aspectMatches = requestedAspect ? entry.aspect === requestedAspect : true;
+    return durationMatches && aspectMatches;
+  });
 
   const compressed: Array<Record<string, string>> = [];
 
-  for (const entry of renderReport) {
+  for (const entry of selectedEntries) {
     const targets = getWebTargets(entry);
     await ensureDir(targets.dir);
 
@@ -181,27 +198,29 @@ async function main() {
     });
   }
 
-  const landscapePrimary =
-    compressed.find((entry) => entry.aspect === "landscape" && entry.duration === "60") ??
-    compressed.find((entry) => entry.aspect === "landscape" && entry.duration === "30") ??
-    compressed.find((entry) => entry.aspect === "landscape");
+  if (compressed.length > 0) {
+    const landscapePrimary =
+      compressed.find((entry) => entry.aspect === "landscape" && entry.duration === "60") ??
+      compressed.find((entry) => entry.aspect === "landscape" && entry.duration === "30") ??
+      compressed.find((entry) => entry.aspect === "landscape");
 
-  if (!landscapePrimary) {
-    throw new Error("No landscape output was available to build the embed snippet.");
+    if (!landscapePrimary) {
+      throw new Error("No landscape output was available to build the embed snippet.");
+    }
+
+    const embedDir = join(outputRoot, "embed");
+    await ensureDir(embedDir);
+    await writeFile(
+      join(embedDir, "truckfixr-video-embed.html"),
+      buildEmbedSnippet({
+        duration: landscapePrimary.duration,
+        mp4: landscapePrimary.mp4.split("\\").pop() ?? landscapePrimary.mp4,
+        webm: landscapePrimary.webm.split("\\").pop() ?? landscapePrimary.webm,
+        poster: landscapePrimary.poster.split("\\").pop() ?? landscapePrimary.poster,
+      }),
+      "utf8"
+    );
   }
-
-  const embedDir = join(outputRoot, "embed");
-  await ensureDir(embedDir);
-  await writeFile(
-    join(embedDir, "truckfixr-video-embed.html"),
-    buildEmbedSnippet({
-      duration: landscapePrimary.duration,
-      mp4: landscapePrimary.mp4.split("\\").pop() ?? landscapePrimary.mp4,
-      webm: landscapePrimary.webm.split("\\").pop() ?? landscapePrimary.webm,
-      poster: landscapePrimary.poster.split("\\").pop() ?? landscapePrimary.poster,
-    }),
-    "utf8"
-  );
 
   await writeJson(join(outputRoot, "reports", "compression-report.json"), compressed);
 }

@@ -1,16 +1,20 @@
 import { useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
+import OwnerOperatorGate from "@/components/OwnerOperatorGate";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import VehicleAccessRequestDialog from "@/components/VehicleAccessRequestDialog";
+import { useOwnerOperatorReturnToOwner } from "@/hooks/useOwnerOperatorModeNavigation";
+import { getInspectionErrorPresentation } from "@/lib/actionErrorMessages";
 import { trpc } from "@/lib/trpc";
 import { useAuthContext } from "@/hooks/useAuthContext";
 import { loadLastDriverVehicleContext } from "@/lib/driverVehicleContext";
 import { getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
+import { isOwnerOperatorEnabled } from "@/lib/ownerOperator";
 import { toast } from "sonner";
 import {
   AlertTriangle,
@@ -132,7 +136,10 @@ function VerifiedInspectionContent() {
   const parsedFleetId = Number(params.get("fleet") ?? storedVehicle?.fleetId ?? 0);
   const fleetId = Number.isFinite(parsedFleetId) && parsedFleetId > 0 ? parsedFleetId : 0;
   const userRole = String(user?.role ?? "");
-  const isOwnerOperator = userRole === "owner_operator" || userRole === "owner" || userRole === "manager";
+  if (user?.role === "owner" && !isOwnerOperatorEnabled(user)) {
+    return <OwnerOperatorGate />;
+  }
+  const isOwnerOperator = userRole === "manager" || isOwnerOperatorEnabled(user);
   const [inspectionSession, setInspectionSession] = useState<any>(null);
   const [location, setLocation] = useState<LocationCapture | null>(null);
   const [responses, setResponses] = useState<Record<string, ChecklistResponse>>({});
@@ -149,11 +156,14 @@ function VerifiedInspectionContent() {
   const [signatureConfirmed, setSignatureConfirmed] = useState(false);
   const [notes, setNotes] = useState("");
   const [submitResult, setSubmitResult] = useState<any>(null);
+  const [startErrorMessage, setStartErrorMessage] = useState("");
+  const [submitErrorMessage, setSubmitErrorMessage] = useState("");
   const proofCaptureRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const defectCaptureRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const startMutation = trpc.inspections.startVerified.useMutation();
   const submitMutation = trpc.inspections.submitVerified.useMutation();
+  const uploadEvidencePhotoMutation = trpc.inspections.uploadEvidencePhoto.useMutation();
   const vehiclesQuery = trpc.vehicles.listByFleet.useQuery(
     { fleetId },
     { staleTime: 30_000, enabled: fleetId > 0 }
@@ -199,6 +209,24 @@ function VerifiedInspectionContent() {
     }
     return Array.from(grouped.values());
   }, [openDefects]);
+  const hasDriverModeWorkInProgress =
+    Boolean(inspectionSession) ||
+    Object.keys(responses).length > 0 ||
+    Object.keys(proofPhotos).length > 0 ||
+    Object.keys(followUps).length > 0 ||
+    signatureConfirmed ||
+    notes.trim().length > 0 ||
+    startMutation.isPending ||
+    submitMutation.isPending;
+  const {
+    canReturnToOwnerDashboard,
+    requestReturnToOwnerDashboard,
+    ownerDashboardReturnDialog,
+  } = useOwnerOperatorReturnToOwner({
+    hasInProgressWork: hasDriverModeWorkInProgress,
+    description:
+      "You have verified inspection work in progress. Leaving Driver Mode now may interrupt this inspection.",
+  });
 
   const updateResponse = (item: any, patch: Partial<ChecklistResponse>) => {
     setResponses((current) => ({
@@ -218,8 +246,11 @@ function VerifiedInspectionContent() {
 
   const startInspection = async () => {
     try {
+      setStartErrorMessage("");
       if (fleetId <= 0) {
-        toast.error("Select or join a company fleet before starting an inspection.");
+        const presentation = getInspectionErrorPresentation("Select or join a company fleet before starting an inspection.");
+        setStartErrorMessage(presentation.inline);
+        toast.error(presentation.toast);
         return;
       }
 
@@ -239,17 +270,63 @@ function VerifiedInspectionContent() {
       setResponses(initialResponses);
       setInspectionSession(session);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not start the inspection.");
+      const presentation = getInspectionErrorPresentation(error);
+      setStartErrorMessage(presentation.inline);
+      toast.error(presentation.toast);
     }
   };
 
   const handleDefectPhoto = async (item: any, files: FileList | null) => {
-    const photoUrls = await filesToDataUrls(files);
+    const rawUrls = await filesToDataUrls(files);
+    if (rawUrls.length === 0) {
+      updateResponse(item, { photoUrls: [] });
+      return;
+    }
+
+    const inspectionId = inspectionSession?.inspectionId ?? inspectionSession?.id ?? null;
+    const photoUrls =
+      fleetId > 0 && vehicleId
+        ? await Promise.all(
+            rawUrls.map(async (dataUrl) => {
+              try {
+                const result = await uploadEvidencePhotoMutation.mutateAsync({
+                  fleetId,
+                  vehicleId,
+                  inspectionId,
+                  kind: "defect",
+                  dataUrl,
+                });
+                return result.url;
+              } catch {
+                return dataUrl;
+              }
+            })
+          )
+        : rawUrls;
+
     updateResponse(item, { photoUrls });
   };
 
   const handleProofPhoto = async (proofItem: string, files: FileList | null) => {
-    const [photoUrl] = await filesToDataUrls(files);
+    const [firstUrl] = await filesToDataUrls(files);
+    if (!firstUrl) return;
+
+    const inspectionId = inspectionSession?.inspectionId ?? inspectionSession?.id ?? null;
+    let photoUrl = firstUrl;
+    if (fleetId > 0 && vehicleId) {
+      try {
+        const result = await uploadEvidencePhotoMutation.mutateAsync({
+          fleetId,
+          vehicleId,
+          inspectionId,
+          kind: "proof",
+          dataUrl: firstUrl,
+        });
+        photoUrl = result.url;
+      } catch {
+        photoUrl = firstUrl;
+      }
+    }
     setProofPhotos((current) => ({
       ...current,
       [proofItem]: { photoUrl, skipped: false },
@@ -303,39 +380,47 @@ function VerifiedInspectionContent() {
   }, [allItems, driverPrintedName, driverSignature, followUps, openDefectGroups, responses, signatureConfirmed]);
 
   const submitInspection = async () => {
+    setSubmitErrorMessage("");
     if (validationErrors.length > 0) {
       toast.error(validationErrors[0]);
       return;
     }
 
-    const submitLocation = await captureLocation();
-    const result = await submitMutation.mutateAsync({
-      inspectionId: inspectionSession.inspectionId,
-      driverPrintedName: driverPrintedName.trim(),
-      driverSignature: driverSignature.trim(),
-      signatureConfirmed,
-      notes,
-      submitLocation,
-      checklistResponses: allItems.map((item: any) => responses[item.id]),
-      proofPhotos: requestedProofItems.map((proofItem) => ({
-        proofItem,
-        photoUrl: proofPhotos[proofItem]?.photoUrl,
-        skipped: proofPhotos[proofItem]?.skipped ?? !proofPhotos[proofItem]?.photoUrl,
-      })),
-      knownDefectFollowUps: openDefectGroups.map((defectGroup) => ({
-        defectIds: defectGroup.defectIds,
-        status: followUps[defectGroup.defectIds[0]]?.status,
-        note: followUps[defectGroup.defectIds[0]]?.note,
-        photoUrls: followUps[defectGroup.defectIds[0]]?.photoUrls ?? [],
-      })),
-    });
-    setSubmitResult(result);
-    toast.success("Verified inspection submitted");
+    try {
+      const submitLocation = await captureLocation();
+      const result = await submitMutation.mutateAsync({
+        inspectionId: inspectionSession.inspectionId,
+        driverPrintedName: driverPrintedName.trim(),
+        driverSignature: driverSignature.trim(),
+        signatureConfirmed,
+        notes,
+        submitLocation,
+        checklistResponses: allItems.map((item: any) => responses[item.id]),
+        proofPhotos: requestedProofItems.map((proofItem) => ({
+          proofItem,
+          photoUrl: proofPhotos[proofItem]?.photoUrl,
+          skipped: proofPhotos[proofItem]?.skipped ?? !proofPhotos[proofItem]?.photoUrl,
+        })),
+        knownDefectFollowUps: openDefectGroups.map((defectGroup) => ({
+          defectIds: defectGroup.defectIds,
+          status: followUps[defectGroup.defectIds[0]]?.status,
+          note: followUps[defectGroup.defectIds[0]]?.note,
+          photoUrls: followUps[defectGroup.defectIds[0]]?.photoUrls ?? [],
+        })),
+      });
+      setSubmitResult(result);
+      toast.success("Verified inspection submitted");
+    } catch (error) {
+      const presentation = getInspectionErrorPresentation(error);
+      setSubmitErrorMessage(presentation.inline);
+      toast.error(presentation.toast);
+    }
   };
 
   if (!inspectionSession) {
     return (
       <div className="app-shell min-h-screen px-4 py-6">
+        {ownerDashboardReturnDialog}
         <div className="mx-auto max-w-3xl space-y-4">
           <Card className="fleet-panel border-[var(--fleet-outline)] shadow-none">
             <CardHeader>
@@ -366,6 +451,12 @@ function VerifiedInspectionContent() {
               >
                 {startMutation.isPending ? "Starting..." : "Start today's inspection"}
               </Button>
+              {startErrorMessage ? (
+                <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                  <AlertTriangle className="mr-2 inline h-4 w-4" />
+                  {startErrorMessage}
+                </div>
+              ) : null}
               <Button
                 type="button"
                 variant="outline"
@@ -375,6 +466,16 @@ function VerifiedInspectionContent() {
                 <ChevronLeft className="mr-2 h-4 w-4" />
                 Back to dashboard
               </Button>
+              {canReturnToOwnerDashboard ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-12 w-full text-base"
+                  onClick={requestReturnToOwnerDashboard}
+                >
+                  Back to Owner Dashboard
+                </Button>
+              ) : null}
               {!isOwnerOperator && (
                 fleetId > 0 ? (
                   <VehicleAccessRequestDialog
@@ -393,9 +494,20 @@ function VerifiedInspectionContent() {
 
   return (
     <div className="app-shell min-h-screen px-3 py-4 sm:px-6">
+      {ownerDashboardReturnDialog}
       <div className="mx-auto max-w-4xl space-y-4">
         <Card className="fleet-panel border-[var(--fleet-outline)] shadow-none">
           <CardHeader>
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-700 ring-1 ring-slate-200">
+                Driver Mode
+              </span>
+              {canReturnToOwnerDashboard ? (
+                <span className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 ring-1 ring-blue-200">
+                  Owner-operator active
+                </span>
+              ) : null}
+            </div>
             <CardTitle className="fleet-page-title flex items-center gap-2">
               <Clock3 className="h-5 w-5 text-[var(--fleet-primary)]" />
               Daily verified inspection
@@ -404,6 +516,13 @@ function VerifiedInspectionContent() {
               Started {new Date(inspectionSession.startedAt).toLocaleTimeString()} by {user?.name || "Driver"}.
               Location: {location?.permissionStatus ?? "unavailable"}.
             </CardDescription>
+            {canReturnToOwnerDashboard ? (
+              <div className="pt-2">
+                <Button type="button" variant="outline" onClick={requestReturnToOwnerDashboard}>
+                  Back to Owner Dashboard
+                </Button>
+              </div>
+            ) : null}
           </CardHeader>
         </Card>
 
@@ -597,6 +716,9 @@ function VerifiedInspectionContent() {
                           <Camera className="mr-2 h-4 w-4" />
                           Take photo
                         </Button>
+                        <p className="text-xs text-slate-500">
+                          Only upload inspection-related evidence. These photos are kept for fleet safety, compliance, and follow-up review.
+                        </p>
                         {response.photoUrls.length > 0 && (
                           <p className="text-xs font-medium text-emerald-700">Defect photo attached</p>
                         )}
@@ -685,6 +807,12 @@ function VerifiedInspectionContent() {
                 {validationErrors[0]}
               </div>
             )}
+            {submitErrorMessage ? (
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                <AlertTriangle className="mr-2 inline h-4 w-4" />
+                {submitErrorMessage}
+              </div>
+            ) : null}
             <Button
               className="fleet-primary-btn h-12 w-full text-base"
               disabled={submitMutation.isPending}

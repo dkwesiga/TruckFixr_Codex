@@ -66,6 +66,7 @@ cp .env.example .env
 
 ```bash
 npm run capture:screenshots
+npm run audio
 npm run captions
 npm run dev
 npm run render:30
@@ -144,6 +145,14 @@ If voiceover or music is missing, the compositions still render. The render scri
 - `voiceover` profile when matching narration audio exists
 - `autoplay` profile when only music exists
 - `silent` profile when neither exists
+
+### Included Local Audio Workflow
+
+- `npm run audio` generates fallback narration MP3 files for the `30`, `60`, and `90` second cuts when manual voiceover files are not present.
+- The same command also generates a subtle procedural `assets/music/background.mp3` music bed when a custom track is not present.
+- `npm run render:30`, `npm run render:60`, `npm run render:90`, and `npm run render:all` automatically prepare fallback audio before rendering, so the render path stays self-sufficient.
+- If you replace the generated files with professionally recorded narration or licensed music, the generator preserves those files unless you intentionally rerun the audio command with `--force`.
+- The built-in narration generator currently uses local Windows speech synthesis. On non-Windows environments, provide manual MP3 files instead.
 
 ## Rendering Notes
 

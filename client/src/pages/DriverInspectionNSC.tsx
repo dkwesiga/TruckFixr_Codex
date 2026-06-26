@@ -1,14 +1,17 @@
-import { startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import OwnerOperatorGate from "@/components/OwnerOperatorGate";
 import SignaturePad from "@/components/SignaturePad";
 import { Textarea } from "@/components/ui/textarea";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import VehicleAccessRequestDialog from "@/components/VehicleAccessRequestDialog";
 import { useAuthContext } from "@/hooks/useAuthContext";
+import { useOwnerOperatorReturnToOwner } from "@/hooks/useOwnerOperatorModeNavigation";
+import { getInspectionErrorPresentation } from "@/lib/actionErrorMessages";
 import {
   clearInspectionDraft,
   enqueueInspectionSubmission,
@@ -20,9 +23,11 @@ import {
   saveChecklistSnapshot,
   saveInspectionDraft,
   type InspectionDraftItemResponse,
+  type InspectionDraftProofPhotoPrompt,
 } from "@/lib/inspectionDrafts";
 import { loadLastDriverVehicleContext, saveLastDriverVehicleContext } from "@/lib/driverVehicleContext";
 import { type DriverVehicleRecord } from "@/lib/driverVehicles";
+import { isOwnerOperatorEnabled } from "@/lib/ownerOperator";
 import { trpc } from "@/lib/trpc";
 import { trackInspectionSubmitted } from "@/lib/analytics";
 import { getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
@@ -35,7 +40,7 @@ import {
 } from "../../../shared/inspection";
 import { getInspectionOdometerRevisionMessage } from "../../../shared/inspectionOdometer";
 import { toast } from "sonner";
-import { AlertCircle, Camera, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Download, MapPin, TriangleAlert, Truck, XCircle } from "lucide-react";
+import { AlertCircle, Camera, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Download, MapPin, TriangleAlert, Truck, Upload, XCircle } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -47,6 +52,43 @@ import {
 } from "@/components/ui/alert-dialog";
 
 type ItemResponse = InspectionDraftItemResponse;
+type ProofPhotoPrompt = InspectionDraftProofPhotoPrompt;
+
+const randomProofCandidateCategories = new Set([
+  "dashboard_warning_lights",
+  "tires_wheels",
+  "tires",
+  "lights",
+  "lights_reflectors",
+  "fluid_leaks",
+  "brakes",
+  "brakes_air_system",
+  "steering",
+  "suspension",
+  "coupling",
+  "mirrors_windshield",
+  "safety_equipment",
+]);
+
+function chooseRandomProofPrompts(items: Array<{ id: string; label: string; category: string }>): ProofPhotoPrompt[] {
+  const candidates = items.filter((item) => randomProofCandidateCategories.has(item.category));
+  const source = (candidates.length > 0 ? candidates : items).filter(
+    (item, index, allItems) => allItems.findIndex((candidate) => candidate.id === item.id) === index
+  );
+
+  if (source.length === 0) return [];
+
+  const shuffled = [...source].sort(() => Math.random() - 0.5);
+  const count = source.length === 1 ? 1 : Math.min(2, Math.random() > 0.5 ? 2 : 1);
+  return shuffled.slice(0, count).map((item) => ({ itemId: item.id, label: item.label }));
+}
+
+function buildEvidencePhotoUrls(response: ItemResponse | undefined, carriedProofPhoto?: string) {
+  const attachedItemPhotos = response?.photoUrls ?? [];
+  return carriedProofPhoto && !attachedItemPhotos.includes(carriedProofPhoto)
+    ? [...attachedItemPhotos, carriedProofPhoto]
+    : attachedItemPhotos;
+}
 
 function formatInspectionTime(value: string | Date) {
   return new Date(value).toLocaleString([], {
@@ -103,6 +145,18 @@ function DriverInspectionContent() {
     hasVehicleSelection && Number.isFinite(Number(rawVehicleId))
       ? Number(rawVehicleId)
       : rawVehicleId ?? "";
+  const pairedTrailerId = searchParams.get("trailer");
+  const pairedTruckId = searchParams.get("truck");
+  const comboStage = searchParams.get("combo");
+  const combinedStage: "truck" | "trailer" | undefined =
+    comboStage === "truck" || comboStage === "trailer" ? comboStage : undefined;
+  const inspectionSessionId = useMemo(() => {
+    const existingSessionId = searchParams.get("session");
+    if (existingSessionId?.trim()) return existingSessionId;
+    return `driver-session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }, [comboStage, pairedTrailerId, pairedTruckId, searchParams]);
+  const nextCombinedVehicleId = combinedStage === "truck" ? pairedTrailerId : null;
+  const isCombinedInspectionSession = Boolean(inspectionSessionId && (pairedTrailerId || pairedTruckId || comboStage));
   const fleetId = useMemo(() => {
     const urlFleet = searchParams.get("fleet");
     if (urlFleet && Number(urlFleet) > 0) return Number(urlFleet);
@@ -112,8 +166,10 @@ function DriverInspectionContent() {
       : 0;
   }, [searchParams, storedVehicle, subscriptionQuery.data?.activeFleetId]);
   const driverName = user?.name?.trim() || user?.email?.trim() || "Driver";
-  const isOwnerOperator =
-    String(user?.role) === "owner_operator" || user?.role === "owner" || user?.role === "manager";
+  if (user?.role === "owner" && !isOwnerOperatorEnabled(user)) {
+    return <OwnerOperatorGate />;
+  }
+  const isOwnerOperator = user?.role === "manager" || isOwnerOperatorEnabled(user);
   const storage = useMemo(() => getBrowserStorage(), []);
   const restoredDraft = useMemo(() => loadInspectionDraft(storage, vehicleId), [storage, vehicleId]);
   const storedChecklistSnapshot = useMemo(
@@ -150,6 +206,7 @@ function DriverInspectionContent() {
     getQueuedInspectionSubmissions(storage).length
   );
   const [submitMode, setSubmitMode] = useState<"send" | "download">("send");
+  const [submitErrorMessage, setSubmitErrorMessage] = useState("");
   const [photoPickerItemId, setPhotoPickerItemId] = useState<string | null>(null);
   const [odometerRevisionPrompt, setOdometerRevisionPrompt] = useState<{
     enteredOdometer: number;
@@ -158,6 +215,12 @@ function DriverInspectionContent() {
   const stepContentRef = useRef<HTMLDivElement | null>(null);
   const hasScrolledBetweenStepsRef = useRef(false);
   const odometerInputRef = useRef<HTMLInputElement | null>(null);
+  const [proofPhotoPrompts, setProofPhotoPrompts] = useState<ProofPhotoPrompt[]>(
+    () => restoredDraft?.data.proofPhotoPrompts ?? []
+  );
+  const [proofPhotos, setProofPhotos] = useState<Record<string, string>>(
+    () => restoredDraft?.data.proofPhotos ?? {}
+  );
 
   const checklistQuery = trpc.inspections.getDailyChecklist.useQuery(
     { vehicleId },
@@ -168,12 +231,15 @@ function DriverInspectionContent() {
     enabled: Boolean(user?.id),
   });
   const submitMutation = trpc.inspections.create.useMutation();
+  const uploadEvidencePhotoMutation = trpc.inspections.uploadEvidencePhoto.useMutation();
   const vehicleChoices = useMemo<DriverVehicleRecord[]>(
     () =>
       (vehiclesQuery.data ?? []).map((vehicle) => ({
         id: vehicle.id,
         fleetId: vehicle.fleetId,
         label: vehicle.unitNumber?.trim() || vehicle.licensePlate?.trim() || vehicle.vin,
+        relationshipSummary:
+          typeof vehicle.linkedVehicleSummary === "string" ? vehicle.linkedVehicleSummary : null,
         vin: vehicle.vin,
         licensePlate: vehicle.licensePlate || "UNKNOWN",
         make: vehicle.make || "Truck",
@@ -243,6 +309,36 @@ function DriverInspectionContent() {
     () => categories.flatMap((category) => category.items),
     [categories]
   );
+  const proofPhotoPromptMap = useMemo(
+    () => new Map(proofPhotoPrompts.map((prompt) => [prompt.itemId, prompt])),
+    [proofPhotoPrompts]
+  );
+  const outstandingProofPrompts = useMemo(
+    () =>
+      proofPhotoPrompts.filter((prompt) => {
+        const response = responses[prompt.itemId];
+        return (
+          response?.status === "pass" &&
+          !proofPhotos[prompt.itemId] &&
+          buildEvidencePhotoUrls(response, proofPhotos[prompt.itemId]).length === 0
+        );
+      }),
+    [proofPhotoPrompts, proofPhotos, responses]
+  );
+  const completedProofPrompts = useMemo(
+    () => {
+      const completed: Array<ProofPhotoPrompt & { photoUrl: string; status: ItemResponse["status"] | undefined }> = [];
+      for (const prompt of proofPhotoPrompts) {
+        const response = responses[prompt.itemId];
+        const evidencePhotos = buildEvidencePhotoUrls(response, proofPhotos[prompt.itemId]);
+        const photoUrl = proofPhotos[prompt.itemId] ?? evidencePhotos[0];
+        if (!photoUrl) continue;
+        completed.push({ ...prompt, photoUrl, status: response?.status });
+      }
+      return completed;
+    },
+    [proofPhotoPrompts, proofPhotos, responses]
+  );
 
   const failedItems = useMemo(
     () =>
@@ -258,8 +354,18 @@ function DriverInspectionContent() {
     driverSignature.trim().length > 0 ||
     drawnSignature.length > 0 ||
     Boolean(inspectionSheetType) ||
+    Object.keys(proofPhotos).length > 0 ||
     Object.keys(responses).length > 0 ||
     stepIndex > 0;
+  const {
+    canReturnToOwnerDashboard,
+    requestReturnToOwnerDashboard,
+    ownerDashboardReturnDialog,
+  } = useOwnerOperatorReturnToOwner({
+    hasInProgressWork: hasDraftData || submitMutation.isPending,
+    description:
+      "You have inspection work in progress. Leaving Driver Mode now may interrupt this inspection.",
+  });
 
   const pendingItems = useMemo(() => {
     const nextPendingItems: string[] = [];
@@ -280,7 +386,7 @@ function DriverInspectionContent() {
       const response = responses[item.id];
 
       if (!response?.status) {
-        nextPendingItems.push(`Mark "${item.label}" as pass or fail.`);
+        nextPendingItems.push(`Mark "${item.label}" as pass, defect, or N/A.`);
         return;
       }
 
@@ -290,6 +396,10 @@ function DriverInspectionContent() {
 
       if (response.status === "fail" && !response.comment?.trim()) {
         nextPendingItems.push(`Add a comment for "${item.label}".`);
+      }
+
+      if (response.status === "fail" && buildEvidencePhotoUrls(response, proofPhotos[item.id]).length === 0) {
+        nextPendingItems.push(`Add at least one photo for "${item.label}".`);
       }
     });
 
@@ -312,6 +422,7 @@ function DriverInspectionContent() {
     drawnSignature,
     location,
     odometer,
+    proofPhotos,
     responses,
     requiresInspectionSheetSelection,
     requiresOdometer,
@@ -338,12 +449,17 @@ function DriverInspectionContent() {
     return currentCategory.items.every((item) => {
       const response = responses[item.id];
       if (!response?.status) return false;
-      if (response.status === "pass") return true;
-      return Boolean(response.classification && response.comment?.trim());
+      if (response.status === "pass" || response.status === "na") return true;
+      return Boolean(
+        response.classification &&
+        response.comment?.trim() &&
+        buildEvidencePhotoUrls(response, proofPhotos[item.id]).length > 0
+      );
     });
   }, [
     currentCategory,
     drawnSignature,
+    proofPhotos,
     isMetadataStep,
     isSummaryStep,
     location,
@@ -367,16 +483,82 @@ function DriverInspectionContent() {
     }));
   };
 
-  const handlePhotoUpload = async (itemId: string, files: FileList | null) => {
+  const handlePhotoUpload = async (
+    itemId: string,
+    files: FileList | null,
+    input?: HTMLInputElement | null
+  ) => {
     try {
-      const photoUrls = await filesToDataUrls(files);
-      startTransition(() => {
-        const existingPhotos = responses[itemId]?.photoUrls ?? [];
-        updateItemResponse(itemId, { photoUrls: [...existingPhotos, ...photoUrls] });
+      const rawUrls = await filesToDataUrls(files);
+      if (rawUrls.length === 0) return;
+
+      const photoUrls = isOnline && fleetId > 0
+        ? await Promise.all(
+            rawUrls.map(async (dataUrl) => {
+              try {
+                const result = await uploadEvidencePhotoMutation.mutateAsync({
+                  fleetId,
+                  vehicleId,
+                  inspectionId: null,
+                  kind: "defect",
+                  dataUrl,
+                });
+                return result.url;
+              } catch {
+                return dataUrl;
+              }
+            })
+          )
+        : rawUrls;
+      if (photoUrls.length === 0) return;
+
+      setResponses((current) => {
+        const existingPhotos = current[itemId]?.photoUrls ?? [];
+        return {
+          ...current,
+          [itemId]: {
+            ...current[itemId],
+            photoUrls: [...existingPhotos, ...photoUrls],
+          },
+        };
       });
       setPhotoPickerItemId((current) => (current === itemId ? null : current));
+      toast.success(`${photoUrls.length} photo${photoUrls.length === 1 ? "" : "s"} attached.`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to read photo");
+    } finally {
+      if (input) input.value = "";
+    }
+  };
+
+  const handleProofPhoto = async (proofItem: string, files: FileList | null, input?: HTMLInputElement | null) => {
+    try {
+      const rawUrls = await filesToDataUrls(files);
+      const firstUrl = rawUrls[0];
+      if (!firstUrl) return;
+
+      let url = firstUrl;
+      if (isOnline && fleetId > 0) {
+        try {
+          const result = await uploadEvidencePhotoMutation.mutateAsync({
+            fleetId,
+            vehicleId,
+            inspectionId: null,
+            kind: "proof",
+            dataUrl: firstUrl,
+          });
+          url = result.url;
+        } catch {
+          url = firstUrl;
+        }
+      }
+
+      setProofPhotos((current) => ({ ...current, [proofItem]: url }));
+        toast.success("Verification photo attached.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Unable to read photo");
+    } finally {
+      if (input) input.value = "";
     }
   };
 
@@ -395,6 +577,22 @@ function DriverInspectionContent() {
   }, [checklistData]);
 
   useEffect(() => {
+    if (restoredDraft || proofPhotoPrompts.length > 0 || allChecklistItems.length === 0) {
+      return;
+    }
+
+    setProofPhotoPrompts(
+      chooseRandomProofPrompts(
+        allChecklistItems.map((item) => ({
+          id: item.id,
+          label: item.label,
+          category: item.category,
+        }))
+      )
+    );
+  }, [allChecklistItems, proofPhotoPrompts.length, restoredDraft]);
+
+  useEffect(() => {
     if (!hasDraftData) {
       clearInspectionDraft(storage, vehicleId);
       return;
@@ -406,6 +604,7 @@ function DriverInspectionContent() {
       fleetId,
       savedAt: new Date().toISOString(),
       data: {
+        inspectionSessionId,
         stepIndex,
         odometer,
         location,
@@ -414,6 +613,8 @@ function DriverInspectionContent() {
         driverSignature,
         drawnSignature,
         inspectionSheetType,
+        proofPhotoPrompts,
+        proofPhotos,
         responses,
       },
     });
@@ -422,9 +623,12 @@ function DriverInspectionContent() {
     drawnSignature,
     driverSignature,
     fleetId,
+    inspectionSessionId,
     inspectionSheetType,
     location,
     odometer,
+    proofPhotoPrompts,
+    proofPhotos,
     requiresOdometer,
     responses,
     signatureMode,
@@ -500,7 +704,7 @@ function DriverInspectionContent() {
         throw new Error(`Missing inspection result for ${item.label}`);
       }
 
-      if (response.status === "pass") {
+      if (response.status === "pass" || response.status === "na") {
         return { itemId: item.id, status: "pass" as const };
       }
 
@@ -509,13 +713,38 @@ function DriverInspectionContent() {
         status: "fail" as const,
         classification: response.classification ?? "not_sure",
         comment: response.comment?.trim() ?? "",
-        photoUrls: response.photoUrls,
+        photoUrls: buildEvidencePhotoUrls(response, proofPhotos[item.id]),
       };
     });
+
+    const selectedProofPhotos: Array<{
+      proofItem: string;
+      proofLabel: string;
+      photoUrl?: string;
+      skipped: boolean;
+    }> = [];
+    for (const prompt of proofPhotoPrompts) {
+        const response = responses[prompt.itemId];
+        const evidencePhotoUrl =
+          proofPhotos[prompt.itemId] ?? buildEvidencePhotoUrls(response, proofPhotos[prompt.itemId])[0];
+        const stillRequired = response?.status === "pass";
+        if (!stillRequired && !evidencePhotoUrl) {
+          continue;
+        }
+        selectedProofPhotos.push({
+          proofItem: prompt.itemId,
+          proofLabel: prompt.label,
+          photoUrl: evidencePhotoUrl,
+          skipped: stillRequired && !evidencePhotoUrl,
+        });
+      }
 
     return {
       vehicleId,
       fleetId,
+      inspectionSessionId,
+      ...((pairedTrailerId || pairedTruckId) ? { linkedVehicleId: pairedTrailerId ?? pairedTruckId ?? undefined } : {}),
+      ...(combinedStage ? { combinedStage } : {}),
       inspectionSheetType: selectedInspectionSheetType,
       ...(requiresOdometer ? { odometer: Number(odometer) } : {}),
       location: location.trim(),
@@ -524,12 +753,23 @@ function DriverInspectionContent() {
       driverSignature: signatureMode === "typed" ? typedSignatureValue : driverName,
       driverSignatureMode: signatureMode,
       driverSignatureImageUrl: signatureMode === "drawn" ? drawnSignature : undefined,
+      proofPhotos: selectedProofPhotos,
       results,
     };
   };
 
   const finishFlow = () => {
     window.setTimeout(() => {
+      if (nextCombinedVehicleId && inspectionSessionId) {
+        window.location.href =
+          `/inspection?vehicle=${encodeURIComponent(String(nextCombinedVehicleId))}` +
+          `&truck=${encodeURIComponent(String(vehicleId))}` +
+          `&fleet=${encodeURIComponent(String(resolvedFleetId))}` +
+          `&session=${encodeURIComponent(inspectionSessionId)}` +
+          "&combo=trailer";
+        return;
+      }
+
       window.location.href = "/driver";
     }, 1400);
   };
@@ -564,6 +804,7 @@ function DriverInspectionContent() {
 
   const handleSubmit = async (mode: "send" | "download") => {
     setSubmitMode(mode);
+    setSubmitErrorMessage("");
 
     if (requiresOdometer) {
       const enteredOdometer = Number(odometer);
@@ -612,18 +853,25 @@ function DriverInspectionContent() {
         return;
       }
 
-      toast.error(error instanceof Error ? error.message : "Inspection submission failed");
+      const presentation = getInspectionErrorPresentation(error);
+      setSubmitErrorMessage(presentation.inline);
+      toast.error(presentation.toast);
       return;
     }
 
     trackInspectionSubmitted(result.inspectionId, result.defectsCreated, {
       vehicle_id: vehicleId,
+      inspection_session_id: inspectionSessionId,
+      combined_stage: combinedStage,
       major_defect_count: result.majorDefectCount,
       minor_defect_count: result.minorDefectCount,
       can_operate: result.canOperate,
     });
 
     clearInspectionDraft(storage, vehicleId);
+    const completionDestination = nextCombinedVehicleId
+      ? "Opening trailer inspection next."
+      : "Returning to dashboard.";
 
     if (mode === "download" && result.reportPdfBase64) {
       downloadBase64Pdf(
@@ -646,12 +894,12 @@ function DriverInspectionContent() {
       result.reportGenerated
         ? result.canOperate
           ? mode === "download"
-            ? `Daily inspection submitted for ${driverName}. ${result.reportFileName} downloaded successfully. Returning to dashboard.`
-            : `Daily inspection submitted for ${driverName}. ${result.reportFileName} was generated. Returning to dashboard.`
+            ? `Daily inspection submitted for ${driverName}. ${result.reportFileName} downloaded successfully. ${completionDestination}`
+            : `Daily inspection submitted for ${driverName}. ${result.reportFileName} was generated. ${completionDestination}`
           : mode === "download"
-            ? `Daily inspection submitted for ${driverName}. Major defect reported, ${result.reportFileName} downloaded successfully, and the vehicle should not operate until corrected. Returning to dashboard.`
-            : `Daily inspection submitted for ${driverName}. Major defect reported, ${result.reportFileName} was generated, and the vehicle should not operate until corrected. Returning to dashboard.`
-        : `Daily inspection submitted for ${driverName}. The record was saved even though PDF generation was unavailable. Returning to dashboard.`,
+            ? `Daily inspection submitted for ${driverName}. Major defect reported, ${result.reportFileName} downloaded successfully, and the vehicle should not operate until corrected. ${completionDestination}`
+            : `Daily inspection submitted for ${driverName}. Major defect reported, ${result.reportFileName} was generated, and the vehicle should not operate until corrected. ${completionDestination}`
+        : `Daily inspection submitted for ${driverName}. The record was saved even though PDF generation was unavailable. ${completionDestination}`,
       {
         description: result.reportGenerated
           ? deliverySummary
@@ -694,6 +942,9 @@ function DriverInspectionContent() {
                           <div>
                             <p className="font-medium text-slate-900">{vehicle.label}</p>
                             <p className="text-sm text-slate-500">{vehicle.make} {vehicle.model} | {vehicle.vin}</p>
+                            {vehicle.relationshipSummary ? (
+                              <p className="mt-1 text-sm font-medium text-blue-700">{vehicle.relationshipSummary}</p>
+                            ) : null}
                           </div>
                         </div>
                         <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
@@ -815,6 +1066,7 @@ function DriverInspectionContent() {
 
   return (
     <div className="min-h-screen bg-slate-50">
+      {ownerDashboardReturnDialog}
       <AlertDialog
         open={Boolean(odometerRevisionPrompt)}
         onOpenChange={(open) => {
@@ -850,14 +1102,32 @@ function DriverInspectionContent() {
       </AlertDialog>
       <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/95 backdrop-blur-xl">
         <div className="mx-auto max-w-4xl px-4 py-4 sm:px-6 sm:py-5">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-700 ring-1 ring-slate-200">
+              Driver Mode
+            </span>
+            {canReturnToOwnerDashboard ? (
+              <span className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 ring-1 ring-blue-200">
+                Owner-operator active
+              </span>
+            ) : null}
+          </div>
           <div className="flex flex-col gap-3 sm:gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <p className="section-label">Daily inspection</p>
+              <p className="section-label">
+                {isCombinedInspectionSession
+                  ? comboStage === "trailer"
+                    ? "Combined session - Trailer inspection"
+                    : "Combined session - Truck inspection"
+                  : "Daily inspection"}
+              </p>
               <h1 className="mt-2 text-xl font-semibold leading-tight text-slate-950 sm:text-2xl">
                 {vehicleLabel} - {vehicle.licensePlate}
               </h1>
               <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">
-                Required every {INSPECTION_VALIDITY_HOURS} hours per vehicle.
+                {isCombinedInspectionSession
+                  ? "TruckFixr will save this asset as its own inspection record while linking the truck and trailer under one session."
+                  : `Required every ${INSPECTION_VALIDITY_HOURS} hours per vehicle.`}
               </p>
               <p className="mt-1 text-sm text-slate-500">
                 {vehicle.year ?? "Year n/a"} {vehicle.make} {vehicle.model}
@@ -865,6 +1135,16 @@ function DriverInspectionContent() {
             </div>
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2 lg:min-w-[360px]">
+                {canReturnToOwnerDashboard ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-10 min-w-0 flex-1 rounded-full border-slate-200 bg-white px-3 text-sm"
+                    onClick={requestReturnToOwnerDashboard}
+                  >
+                    Back to Owner Dashboard
+                  </Button>
+                ) : null}
                 <Button
                   type="button"
                   variant="outline"
@@ -977,7 +1257,7 @@ function DriverInspectionContent() {
             </CardHeader>
             <CardContent className="space-y-5 px-4 pb-5 sm:space-y-6 sm:px-6 sm:pb-6">
               <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-slate-700">
-                A failed item requires a minor, major, or not-sure classification and a comment before you can continue. Photo evidence is strongly recommended for major or uncertain defects.
+                A defect requires a note and at least one photo before you can continue. Critical defects are sent to managers for review.
               </div>
               {requiresInspectionSheetSelection ? (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
@@ -1035,12 +1315,20 @@ function DriverInspectionContent() {
           <Card className="rounded-[24px] sm:rounded-3xl">
             <CardHeader className="space-y-2 px-4 py-5 sm:px-6">
               <CardTitle>{currentCategory.label}</CardTitle>
-              <CardDescription>Every item must be marked pass or fail. Failed items need a classification and comment before you can move on.</CardDescription>
+              <CardDescription>Every item must be marked Pass, Defect, or N/A. Defects need a note and photo before you can move on.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 px-4 pb-5 sm:px-6 sm:pb-6">
               {currentCategory.items.map((item) => {
                 const response = responses[item.id] ?? { photoUrls: [] };
                 const isFail = response.status === "fail";
+                const hasRandomProofPrompt = proofPhotoPromptMap.has(item.id);
+                const carriedProofPhoto = proofPhotos[item.id];
+                const evidencePhotoUrls = buildEvidencePhotoUrls(response, carriedProofPhoto);
+                const showProofCarriedNotice =
+                  hasRandomProofPrompt &&
+                  response.status &&
+                  response.status !== "pass" &&
+                  evidencePhotoUrls.length > 0;
 
                 return (
                   <div key={item.id} className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
@@ -1049,15 +1337,24 @@ function DriverInspectionContent() {
                         <p className="font-semibold text-slate-950">{item.label}</p>
                         <p className="mt-1 text-sm text-slate-600">{item.guidance}</p>
                       </div>
-                      <div className="grid grid-cols-2 gap-2 sm:flex">
-                        <Button type="button" variant={response.status === "pass" ? "default" : "outline"} className="h-10 rounded-full px-4 text-sm sm:min-w-[88px]" onClick={() => updateItemResponse(item.id, { status: "pass", classification: undefined, comment: "", photoUrls: [] })}>
+                      <div className="grid grid-cols-3 gap-2 sm:flex">
+                        <Button type="button" variant={response.status === "pass" ? "default" : "outline"} className="h-10 rounded-full px-4 text-sm sm:min-w-[88px]" onClick={() => updateItemResponse(item.id, { status: "pass", classification: undefined, comment: "" })}>
                           Pass
                         </Button>
                         <Button type="button" variant={isFail ? "destructive" : "outline"} className="h-10 rounded-full px-4 text-sm sm:min-w-[88px]" onClick={() => updateItemResponse(item.id, { status: "fail" })}>
-                          Fail
+                          Defect
+                        </Button>
+                        <Button type="button" variant={response.status === "na" ? "secondary" : "outline"} className="h-10 rounded-full px-4 text-sm sm:min-w-[88px]" onClick={() => updateItemResponse(item.id, { status: "na", classification: undefined, comment: "" })}>
+                          N/A
                         </Button>
                       </div>
                     </div>
+
+                    {showProofCarriedNotice ? (
+                      <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                        Random photo no longer required for this item. The previous photo already attached here will be considered.
+                      </div>
+                    ) : null}
 
                     {isFail ? (
                       <div className="mt-4 grid gap-4 rounded-2xl border border-red-200 bg-white p-4">
@@ -1072,12 +1369,12 @@ function DriverInspectionContent() {
                             >
                               <option value="">Select...</option>
                               <option value="minor">Minor defect</option>
-                              <option value="major">Major defect</option>
+                              <option value="major">Critical defect</option>
                               <option value="not_sure">Not sure - manager review</option>
                             </select>
                           </div>
                           <div>
-                            <Label>Photo evidence (optional)</Label>
+                            <Label>Photo evidence (required)</Label>
                             <div className="mt-2 space-y-2">
                               <Button
                                 type="button"
@@ -1091,27 +1388,26 @@ function DriverInspectionContent() {
                                 Take photo
                               </Button>
                               {photoPickerItemId === item.id ? (
-                                <div className="grid gap-2 sm:grid-cols-2">
-                                  <Button
-                                    type="button"
-                                    variant="secondary"
-                                    className="rounded-xl"
-                                    onClick={() =>
-                                      document.getElementById(`${item.id}-camera-input`)?.click()
-                                    }
-                                  >
-                                    Use camera
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    variant="secondary"
-                                    className="rounded-xl"
-                                    onClick={() =>
-                                      document.getElementById(`${item.id}-upload-input`)?.click()
-                                    }
-                                  >
-                                    Upload photo
-                                  </Button>
+                                <div className="space-y-2">
+                                  <div className="grid gap-2 sm:grid-cols-2">
+                                    <label
+                                      htmlFor={`${item.id}-camera-input`}
+                                      className="inline-flex h-10 cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-slate-100 px-4 text-sm font-medium text-slate-950 transition-colors hover:bg-slate-200"
+                                    >
+                                      <Camera className="mr-2 h-4 w-4" />
+                                      Use camera
+                                    </label>
+                                    <label
+                                      htmlFor={`${item.id}-upload-input`}
+                                      className="inline-flex h-10 cursor-pointer items-center justify-center rounded-xl border border-slate-200 bg-slate-100 px-4 text-sm font-medium text-slate-950 transition-colors hover:bg-slate-200"
+                                    >
+                                      <Upload className="mr-2 h-4 w-4" />
+                                      Upload photo
+                                    </label>
+                                  </div>
+                                  <p className="text-xs text-slate-500">
+                                    Only upload inspection-related evidence. Proof photos are stored for your fleet&apos;s compliance and maintenance record.
+                                  </p>
                                 </div>
                               ) : null}
                               <Input
@@ -1120,16 +1416,16 @@ function DriverInspectionContent() {
                                 accept="image/*"
                                 capture="environment"
                                 multiple
-                                onChange={(event) => void handlePhotoUpload(item.id, event.target.files)}
-                                className="hidden"
+                                onChange={(event) => void handlePhotoUpload(item.id, event.currentTarget.files, event.currentTarget)}
+                                className="sr-only"
                               />
                               <Input
                                 id={`${item.id}-upload-input`}
                                 type="file"
                                 accept="image/*"
                                 multiple
-                                onChange={(event) => void handlePhotoUpload(item.id, event.target.files)}
-                                className="hidden"
+                                onChange={(event) => void handlePhotoUpload(item.id, event.currentTarget.files, event.currentTarget)}
+                                className="sr-only"
                               />
                             </div>
                           </div>
@@ -1145,7 +1441,7 @@ function DriverInspectionContent() {
                           />
                         </div>
                         <div className="flex flex-wrap gap-2">
-                          {response.photoUrls.map((photoUrl, index) => (
+                          {evidencePhotoUrls.map((photoUrl, index) => (
                             <img
                               key={`${item.id}-${index}`}
                               src={photoUrl}
@@ -1153,10 +1449,10 @@ function DriverInspectionContent() {
                               className="h-16 w-16 rounded-xl border border-slate-200 object-cover"
                             />
                           ))}
-                          {response.photoUrls.length === 0 ? (
+                          {evidencePhotoUrls.length === 0 ? (
                             <div className="flex items-center gap-2 text-sm text-slate-500">
                               <Camera className="h-4 w-4" />
-                              Add a photo if it helps show the issue.
+                              Add a required defect photo before continuing.
                             </div>
                           ) : null}
                         </div>
@@ -1176,6 +1472,68 @@ function DriverInspectionContent() {
               <CardDescription>Confirm the report before submitting the inspection record.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-5 px-4 pb-5 sm:space-y-6 sm:px-6 sm:pb-6">
+              {proofPhotoPrompts.length > 0 ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                  <p className="font-semibold text-amber-950">Today&apos;s verification photos</p>
+                  <p className="mt-1 text-sm text-amber-800">TruckFixr picked a couple of spot-check items for this inspection.</p>
+                  {outstandingProofPrompts.length > 0 ? (
+                    <div className="mt-3 space-y-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-800">Still needed today</p>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {outstandingProofPrompts.map((prompt) => (
+                          <div key={prompt.itemId} className="rounded-xl border border-amber-200 bg-white p-3">
+                            <p className="text-sm font-semibold text-slate-900">{prompt.label}</p>
+                            <input
+                              id={`${prompt.itemId}-proof-photo-input`}
+                              type="file"
+                              accept="image/*"
+                              capture="environment"
+                              className="sr-only"
+                              onChange={(event) => void handleProofPhoto(prompt.itemId, event.currentTarget.files, event.currentTarget)}
+                            />
+                            <label
+                              htmlFor={`${prompt.itemId}-proof-photo-input`}
+                              className="mt-2 inline-flex h-9 w-full cursor-pointer items-center justify-center rounded-xl border border-amber-300 bg-white px-3 text-sm font-medium text-amber-900 transition-colors hover:bg-amber-50"
+                            >
+                              <Camera className="mr-2 h-4 w-4" />
+                              Take photo
+                            </label>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-3 rounded-xl border border-amber-200 bg-white px-3 py-2 text-sm text-amber-900">
+                      No additional random proof photos are still required for this inspection.
+                    </div>
+                  )}
+                  {completedProofPrompts.length > 0 ? (
+                    <div className="mt-4 space-y-3">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-amber-800">Completed verification photos</p>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {completedProofPrompts.map((prompt) => (
+                          <div key={`${prompt.itemId}-completed`} className="rounded-xl border border-emerald-200 bg-white p-3">
+                            <p className="text-sm font-semibold text-slate-900">{prompt.label}</p>
+                            <div className="mt-2 flex items-center gap-3">
+                              <img
+                                src={prompt.photoUrl}
+                                alt={`${prompt.label} verification`}
+                                className="h-14 w-14 rounded-lg border border-slate-200 object-cover"
+                              />
+                              <div className="text-xs">
+                                <p className="font-medium text-emerald-700">Photo captured</p>
+                                {prompt.status && prompt.status !== "pass" ? (
+                                  <p className="mt-1 text-slate-600">Requirement cleared because this item did not finish as Pass.</p>
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="grid gap-3 sm:grid-cols-3 sm:gap-4">
                 <div className="rounded-2xl bg-slate-50 p-4">
                   <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Items checked</p>
@@ -1188,7 +1546,7 @@ function DriverInspectionContent() {
                   </p>
                 </div>
                 <div className="rounded-2xl bg-red-50 p-4">
-                  <p className="text-xs uppercase tracking-[0.18em] text-red-700">Major defects</p>
+                  <p className="text-xs uppercase tracking-[0.18em] text-red-700">Critical defects</p>
                   <p className="mt-2 text-2xl font-semibold text-slate-950">
                     {failedItems.filter(({ response }) => response?.classification === "major").length}
                   </p>
@@ -1205,7 +1563,7 @@ function DriverInspectionContent() {
                           <p className="mt-1 text-sm text-slate-600">{response?.comment}</p>
                         </div>
                         <span className={`rounded-full px-3 py-1 text-xs font-semibold ${response?.classification === "major" ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>
-                          {response?.classification === "major" ? "Major" : response?.classification === "not_sure" ? "Not sure" : "Minor"}
+                          {response?.classification === "major" ? "Critical" : response?.classification === "not_sure" ? "Not sure" : "Minor"}
                         </span>
                       </div>
                     </div>
@@ -1304,7 +1662,13 @@ function DriverInspectionContent() {
               {failedItems.some(({ response }) => response?.classification === "major") ? (
                 <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
                   <TriangleAlert className="mt-0.5 h-4 w-4 flex-shrink-0" />
-                  Major defects were reported. The vehicle should not be operated until the defect is corrected.
+                  Critical defects were reported. The vehicle should not be operated until the defect is reviewed.
+                </div>
+              ) : null}
+              {submitErrorMessage ? (
+                <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+                  <TriangleAlert className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                  {submitErrorMessage}
                 </div>
               ) : null}
             </CardContent>
@@ -1369,4 +1733,3 @@ export default function DriverInspectionNSC() {
     </RoleBasedRoute>
   );
 }
-

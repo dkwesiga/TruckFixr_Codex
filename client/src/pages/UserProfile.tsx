@@ -21,6 +21,7 @@ import {
   type PlanKey,
 } from "../../../shared/truckfixrPricing";
 import { Eye, EyeOff } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 
 export default function UserProfile() {
   const { user } = useAuthContext();
@@ -30,7 +31,8 @@ export default function UserProfile() {
     name: user?.name || "",
     email: user?.email || "",
     company: loadCompanyName(),
-    role: (user?.role || "driver") as "driver" | "owner_operator" | "manager" | "owner",
+    role: (user?.role || "driver") as "driver" | "manager" | "owner",
+    ownerOperatorMode: Boolean(user?.ownerOperatorMode),
     managerEmail: user?.managerEmail || "",
   });
   const [isLoading, setIsLoading] = useState(false);
@@ -63,6 +65,9 @@ export default function UserProfile() {
 
   const updateProfileMutation = trpc.auth.updateProfile.useMutation();
   const createFleetMutation = trpc.fleet.create.useMutation();
+  const fleetsQuery = trpc.fleet.list.useQuery(undefined, {
+    enabled: Boolean(user) && (user?.role === "owner" || user?.role === "manager"),
+  });
   const subscriptionQuery = trpc.subscriptions.getCurrent.useQuery(undefined, {
     enabled: Boolean(user),
   });
@@ -89,6 +94,15 @@ export default function UserProfile() {
     lastName: profileNameParts.lastName,
     companyName: formData.company,
   });
+  const hasExistingFleet =
+    typeof subscriptionQuery.data?.activeFleetId === "number" &&
+    subscriptionQuery.data.activeFleetId > 0;
+  const existingFleetName =
+    fleetsQuery.data?.find((fleet) => fleet.id === subscriptionQuery.data?.activeFleetId)?.name ??
+    fleetsQuery.data?.[0]?.name ??
+    "";
+  const requiresCompanyName =
+    (formData.role === "manager" || formData.role === "owner") && !hasExistingFleet;
 
   useEffect(() => {
     if (!user) return;
@@ -98,10 +112,24 @@ export default function UserProfile() {
       name: current.name || user.name || "",
       email: user.email || "",
       role: user.role,
+      ownerOperatorMode: Boolean(user.ownerOperatorMode),
       managerEmail: current.managerEmail || user.managerEmail || "",
       company: current.company || loadCompanyName(),
     }));
   }, [user]);
+
+  useEffect(() => {
+    if (!existingFleetName.trim()) return;
+    setFormData((current) => {
+      if (current.company.trim()) {
+        return current;
+      }
+      return {
+        ...current,
+        company: existingFleetName,
+      };
+    });
+  }, [existingFleetName]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -149,7 +177,7 @@ export default function UserProfile() {
         return;
       }
 
-      if ((formData.role === "manager" || formData.role === "owner") && !formData.company.trim()) {
+      if (requiresCompanyName && !formData.company.trim()) {
         toast.error("Please enter your company name");
         setIsLoading(false);
         return;
@@ -168,6 +196,7 @@ export default function UserProfile() {
       const updatedUser = await updateProfileMutation.mutateAsync({
         name: formData.name.trim(),
         role: formData.role as any,
+        ownerOperatorMode: formData.role === "owner" ? formData.ownerOperatorMode : false,
         managerEmail:
           formData.role === "driver" ? formData.managerEmail.trim().toLowerCase() : undefined,
       });
@@ -189,6 +218,18 @@ export default function UserProfile() {
         toast.success("Profile updated! Redirecting to your dashboard...");
         setTimeout(() => {
           window.location.href = "/driver";
+        }, 500);
+        return;
+      }
+
+      if (hasExistingFleet) {
+        toast.success(
+          updatedUser.ownerOperatorMode
+            ? "Owner-operator mode is on. Your existing fleet and vehicles stay exactly as they are."
+            : "Profile updated."
+        );
+        setTimeout(() => {
+          window.location.href = "/manager";
         }, 500);
         return;
       }
@@ -451,9 +492,14 @@ export default function UserProfile() {
                       ? "Your company name (optional)"
                       : "Your company name"
                   }
-                  required={formData.role === "manager" || formData.role === "owner"}
+                  required={requiresCompanyName}
                   className="border-blue-200 bg-blue-50/60 focus-visible:ring-blue-500"
                 />
+                {hasExistingFleet && !formData.company.trim() ? (
+                  <p className="mt-1 text-xs text-slate-500">
+                    Using your existing fleet setup. Company name is optional for this profile update.
+                  </p>
+                ) : null}
                 </div>
 
                 <div>
@@ -463,16 +509,55 @@ export default function UserProfile() {
                   <select
                     value={formData.role}
                     onChange={(e) =>
-                      setFormData({ ...formData, role: e.target.value as any })
+                      setFormData({
+                        ...formData,
+                        role: e.target.value as any,
+                        ownerOperatorMode: e.target.value === "owner" ? formData.ownerOperatorMode : false,
+                      })
                     }
                     className="w-full px-3 py-2 border border-slate-300 rounded-md text-sm"
                   >
                     <option value="driver">Driver</option>
-                    <option value="owner_operator">Owner Operator</option>
                     <option value="manager">Manager</option>
                     <option value="owner">Owner</option>
                   </select>
                 </div>
+
+                {formData.role === "owner" ? (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">Owner-operator mode</p>
+                        <p className="mt-1 text-sm text-slate-600">
+                          Use driver workflows on your own vehicles while keeping full owner access to the fleet.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={formData.ownerOperatorMode}
+                        onCheckedChange={(checked) =>
+                          setFormData({ ...formData, ownerOperatorMode: checked })
+                        }
+                        className="mt-1"
+                      />
+                    </div>
+                    {formData.ownerOperatorMode ? (
+                      <div className="mt-4 flex flex-wrap items-center gap-3">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => {
+                            window.location.href = "/driver";
+                          }}
+                        >
+                          Open Driver Mode
+                        </Button>
+                        <p className="text-xs text-slate-500">
+                          Owner-operator mode is enabled. Driver pages will use your owner profile as the acting user.
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
 
                 {formData.role === "driver" ? (
                   <div>

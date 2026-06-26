@@ -8,7 +8,38 @@ import App from "./App";
 import { getLoginUrl } from "./const";
 import { getApiUrl } from "./lib/api";
 import { initializeAnalytics } from "./lib/analytics";
+import { initializeClientObservability } from "./lib/observability";
+import { attemptChunkReload, clearChunkReloadParam } from "./lib/chunkRecovery";
 import "./index.css";
+
+window.addEventListener("vite:preloadError", (event) => {
+  if (attemptChunkReload(event.payload)) {
+    event.preventDefault();
+  }
+});
+
+window.addEventListener("error", (event) => {
+  if (attemptChunkReload(event.error ?? event.message ?? event)) {
+    event.preventDefault();
+  }
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  if (attemptChunkReload(event.reason)) {
+    event.preventDefault();
+  }
+});
+
+clearChunkReloadParam();
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker
+      .register("/sw.js", { scope: "/" })
+      .then((registration) => registration.update())
+      .catch((error) => console.warn("[PWA] Service worker registration failed", error));
+  });
+}
 
 function renderBootError(message: string) {
   const root = document.getElementById("root");
@@ -80,6 +111,12 @@ try {
   initializeAnalytics();
 } catch (error) {
   console.error("[Bootstrap] Analytics initialization failed", error);
+}
+
+try {
+  initializeClientObservability();
+} catch (error) {
+  console.error("[Bootstrap] Observability initialization failed", error);
 }
 
 const queryClient = new QueryClient();

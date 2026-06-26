@@ -1,12 +1,15 @@
 import { useMemo } from "react";
 import { useLocation } from "wouter";
 import AppLogo from "@/components/AppLogo";
+import OwnerOperatorGate from "@/components/OwnerOperatorGate";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import { useAuthContext } from "@/hooks/useAuthContext";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { trpc } from "@/lib/trpc";
-import { ChevronLeft, Printer } from "lucide-react";
+import { isOwnerOperatorEnabled } from "@/lib/ownerOperator";
+import { ChevronLeft, Printer, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Link } from "wouter";
 
 type DvirRow = {
   code: string;
@@ -94,8 +97,11 @@ function InspectionReportDvirContent() {
   );
   const report = reportQuery.data as any;
   const role = String(user?.role ?? "");
+  if (user?.role === "owner" && !isOwnerOperatorEnabled(user)) {
+    return <OwnerOperatorGate />;
+  }
   const fallbackPath =
-    role === "driver" || role === "owner_operator"
+    role === "driver" || isOwnerOperatorEnabled(user)
       ? "/driver"
       : role === "manager" || role === "owner"
         ? "/manager"
@@ -137,11 +143,30 @@ function InspectionReportDvirContent() {
     );
   }
 
+  type LinkedDefect = { id: number; title: string; status: string; severity: string | null; category: string | null };
+  const linkedDefects = (report.linkedDefects ?? []) as LinkedDefect[];
   const tractorRows = (report.tractorRows ?? []) as DvirRow[];
   const trailerRows = (report.trailerRows ?? []) as DvirRow[];
   const sheetSections = (report.sheetSections ?? []) as Array<{ label: string; rows: DvirRow[] }>;
   const defects = (report.defectsNotCodedAbove ?? []) as string[];
   const flags = (report.flags ?? []) as Array<{ message?: string }>;
+  const isTractor = report.inspectionSheetType === "tractor";
+  const trailerInspected = report.trailerInspected === true;
+
+  // For Ontario DVIR (tractor): combine all rows under Part A, with trailer rows as Part B if present
+  const ontarioSections = isTractor
+    ? [
+        { label: "Part A – Power Unit (Tractor)", rows: sheetSections.length > 0 ? sheetSections.flatMap((s) => s.rows) : (tractorRows.length > 0 ? tractorRows : []) },
+        ...(trailerInspected && trailerRows.length > 0
+          ? [{ label: "Part B – Trailer (if applicable)", rows: trailerRows }]
+          : []),
+      ].filter((s) => s.rows.length > 0)
+    : sheetSections.length > 0
+      ? sheetSections
+      : [
+          { label: "Tractor / Truck", rows: tractorRows },
+          { label: "Trailer / Load", rows: trailerRows },
+        ].filter((s) => s.rows.length > 0);
 
   return (
     <div className="min-h-screen bg-slate-100 px-3 py-4 print:bg-white">
@@ -156,14 +181,51 @@ function InspectionReportDvirContent() {
         </Button>
       </div>
 
+      {linkedDefects.length > 0 && (
+        <div className="mx-auto mb-4 max-w-6xl print:hidden">
+          <Card className="p-4">
+            <p className="mb-2 text-sm font-semibold text-slate-700">
+              {linkedDefects.length === 1
+                ? "1 defect issue filed from this inspection"
+                : `${linkedDefects.length} defect issues filed from this inspection`}
+            </p>
+            <ul className="space-y-1.5">
+              {linkedDefects.map((d) => (
+                <li key={d.id} className="flex items-center gap-2 text-sm">
+                  {d.severity === "critical" || d.severity === "high" ? (
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-slate-400" />
+                  )}
+                  <Link
+                    href={`/defect/${d.id}`}
+                    className="font-medium text-blue-600 underline-offset-2 hover:underline"
+                  >
+                    {d.title || d.category || `Issue #${d.id}`}
+                  </Link>
+                  <span className="text-xs text-slate-500 capitalize">
+                    {d.severity ? `${d.severity} · ` : ""}{d.status.replace(/_/g, " ")}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        </div>
+      )}
+
       <main className="mx-auto max-w-6xl border-2 border-black bg-white p-4 font-sans text-black shadow-sm print:border print:shadow-none">
+        {/* Header */}
         <div className="mb-2 flex items-center justify-between gap-4 border-b border-black pb-2">
           <div className="w-48">
             <AppLogo imageClassName="h-12 w-auto" href="/driver" />
           </div>
           <div className="text-center">
             <h1 className="text-xl font-black uppercase tracking-wide">Driver&apos;s Vehicle Inspection Report</h1>
-            <p className="text-[11px] uppercase tracking-[0.16em]">TruckFixr verified DVIR record</p>
+            {isTractor ? (
+              <p className="text-[11px] uppercase tracking-[0.16em]">Ontario Regulation 199/07 — Highway Traffic Act</p>
+            ) : (
+              <p className="text-[11px] uppercase tracking-[0.16em]">TruckFixr verified DVIR record</p>
+            )}
           </div>
           <div className="w-48 text-right text-[11px]">
             <p>Report #{report.inspectionId}</p>
@@ -171,20 +233,23 @@ function InspectionReportDvirContent() {
           </div>
         </div>
 
+        {/* Identification fields */}
         <section className="grid gap-x-6 gap-y-1 text-xs md:grid-cols-2">
           <div>
-            <span className="font-bold">Company Name &amp; Address: </span>
+            <span className="font-bold">Carrier Name &amp; Address: </span>
             <span className="border-b border-black px-2">{valueOrLine(report.company.name)}</span>
-            <span className="border-b border-black px-2">{valueOrLine(report.company.address)}</span>
+            {report.company.address ? (
+              <span className="border-b border-black px-2 ml-2">{valueOrLine(report.company.address)}</span>
+            ) : null}
           </div>
           <div className="text-right">
-            <span className="font-bold">Vehicle/Load: </span>
-            <span className="border-b border-black px-2">{valueOrLine(report.vehicle.assetType)}</span>
+            <span className="font-bold">Vehicle Type: </span>
+            <span className="border-b border-black px-2">{valueOrLine(isTractor ? "Tractor" : report.vehicle.assetType)}</span>
           </div>
           <div>
-            <span className="mr-4">X Pre-trip</span>
-            <span className="mr-4">Post-trip</span>
-            <span className="font-bold">Time of Inspection: </span>
+            <span className="mr-4 font-semibold">&#10003; Pre-trip</span>
+            <span className="mr-4 text-slate-400">Post-trip</span>
+            <span className="font-bold">Time: </span>
             <span className="border-b border-black px-2">{valueOrLine(report.time)}</span>
           </div>
           <div className="text-right">
@@ -194,17 +259,24 @@ function InspectionReportDvirContent() {
             <span className="border-b border-black px-2">{valueOrLine(report.location)}</span>
           </div>
           <div>
-            <span className="font-bold">Tractor/Truck Lic. No.: </span>
+            <span className="font-bold">{isTractor ? "Tractor" : "Truck"} Lic. No.: </span>
             <span className="border-b border-black px-2">{valueOrLine(report.vehicle.licensePlate)}</span>
-            <span className="ml-3 font-bold">Unit: </span>
+            <span className="ml-3 font-bold">Unit No.: </span>
             <span className="border-b border-black px-2">{valueOrLine(report.vehicle.unitNumber)}</span>
           </div>
           <div className="text-right">
             <span className="font-bold">VIN: </span>
             <span className="border-b border-black px-2">{valueOrLine(report.vehicle.vin)}</span>
+            {report.odometer != null ? (
+              <>
+                <span className="ml-4 font-bold">Odometer: </span>
+                <span className="border-b border-black px-2">{String(report.odometer)}</span>
+              </>
+            ) : null}
           </div>
         </section>
 
+        {/* Overall result */}
         <section className="mt-2 border-y border-black py-1 text-xs">
           <span className="mr-5">
             <CheckMark checked={report.status.noDefectsFound} /> No Defects Found
@@ -217,17 +289,12 @@ function InspectionReportDvirContent() {
           </span>
         </section>
 
+        {/* Inspection sheet label */}
         <section className="mt-2 space-y-2">
           <div className="border border-black bg-slate-50 px-2 py-1 text-xs font-bold uppercase">
-            {valueOrLine(report.inspectionSheetLabel)}
+            {isTractor ? "Schedule 1 — Tractor Inspection (Ontario Reg. 199/07)" : valueOrLine(report.inspectionSheetLabel)}
           </div>
-          {(sheetSections.length > 0
-            ? sheetSections
-            : [
-                { label: "Tractor / Truck", rows: tractorRows },
-                { label: "Trailer / Load", rows: trailerRows },
-              ].filter((section) => section.rows.length > 0)
-          ).map((section) => (
+          {ontarioSections.map((section) => (
             <table key={section.label} className="w-full border border-black text-left">
               <thead>
                 <tr className="bg-black text-white">
@@ -246,6 +313,7 @@ function InspectionReportDvirContent() {
           ))}
         </section>
 
+        {/* Defects and notes */}
         <section className="mt-2 space-y-2 text-xs">
           <div>
             <p className="font-bold">Minor/Major Defects Not Coded Above:</p>
@@ -254,7 +322,7 @@ function InspectionReportDvirContent() {
             </div>
           </div>
           <div>
-            <p className="font-bold">Inspection Integrity / Follow-up Notes:</p>
+            <p className="font-bold">Inspection Notes / Integrity Follow-up:</p>
             <div className="min-h-10 border-b border-black py-1">
               {report.notes ? <p>{report.notes}</p> : null}
               {flags.map((flag, index) => <p key={`${flag.message}-${index}`}>{flag.message}</p>)}
@@ -263,14 +331,27 @@ function InspectionReportDvirContent() {
           </div>
         </section>
 
+        {/* Driver certification */}
+        {isTractor ? (
+          <section className="mt-3 border border-black p-2 text-xs">
+            <p className="font-bold">Driver&apos;s Declaration:</p>
+            <p className="mt-1 leading-snug">
+              I declare that this motor vehicle has been inspected in accordance with the requirements of the
+              <em> Highway Traffic Act</em>, Ontario Regulation 199/07, and that the results are accurately reported above.
+              I have reported all defects discovered during this inspection.
+            </p>
+          </section>
+        ) : null}
+
+        {/* Signature section */}
         <section className="mt-4 grid gap-4 text-xs md:grid-cols-3">
           <div>
             <p className="border-b border-black pb-1">{valueOrLine(report.driver.name)}</p>
-            <p className="mt-1 font-bold">Inspector / Driver&apos;s Name Print</p>
+            <p className="mt-1 font-bold">Driver&apos;s Printed Name</p>
           </div>
           <div>
             <p className="border-b border-black pb-1 font-cursive">{valueOrLine(report.driver.signature)}</p>
-            <p className="mt-1 font-bold">Inspector / Driver&apos;s Signature</p>
+            <p className="mt-1 font-bold">Driver&apos;s Signature</p>
           </div>
           <div>
             <p className="border-b border-black pb-1">{valueOrLine(report.date)}</p>
@@ -278,6 +359,7 @@ function InspectionReportDvirContent() {
           </div>
         </section>
 
+        {/* Repair review section */}
         <section className="mt-4 grid gap-4 border-t border-black pt-3 text-xs md:grid-cols-3">
           <div>
             <p className="border-b border-black pb-1">&nbsp;</p>
@@ -294,8 +376,9 @@ function InspectionReportDvirContent() {
         </section>
 
         <p className="mt-3 text-[10px] leading-snug">
-          TruckFixr DVIR-style report generated from the verified daily inspection workflow. D = defect reported by driver.
-          R = repair/correction review. Keep this record according to your fleet&apos;s compliance policy.
+          {isTractor
+            ? "This report is required to be kept on the vehicle for 24 hours after completion or until the next required inspection, whichever comes first (Ontario Reg. 199/07). D = defect reported by driver. R = repair/correction certified."
+            : "TruckFixr DVIR-style report. D = defect reported by driver. R = repair/correction review. Retain per your fleet compliance policy."}
         </p>
       </main>
     </div>

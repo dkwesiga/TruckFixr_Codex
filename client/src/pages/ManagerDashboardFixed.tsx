@@ -2,11 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import AppLogo from "@/components/AppLogo";
 import MorningFleetSummary from "@/components/MorningFleetSummary";
+import QuickStartBanner from "@/components/quickStart/QuickStartBanner";
 import VehicleCaptureFlow, {
   type VehicleCaptureDraft,
 } from "@/components/VehicleCaptureFlow";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import { useAuthContext } from "@/hooks/useAuthContext";
+import { goToDriverMode } from "@/hooks/useOwnerOperatorModeNavigation";
+import { isOwnerOperatorEnabled } from "@/lib/ownerOperator";
 import { trpc } from "@/lib/trpc";
 import {
   getFallbackUnitNumber,
@@ -14,6 +17,12 @@ import {
 } from "@/lib/vehicleDisplay";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
 import {
   Card,
   CardContent,
@@ -28,7 +37,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   DropdownMenu,
@@ -48,14 +56,19 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { EarlyWarningList, type EarlyWarning } from "@/components/EarlyWarnings";
+import { NotificationBell } from "@/components/NotificationBell";
 import {
   AlertTriangle,
+  BookOpenCheck,
   Camera,
   CarFront,
   ChevronRight,
   Clock3,
+  LayoutDashboard,
   LogOut,
   MapPin,
+  Menu,
   Plus,
   Search,
   ShieldCheck,
@@ -68,11 +81,30 @@ type DashboardRow = {
   id: number | string;
   truck: string;
   detail: string;
+  relationship: string | null;
   assignedDriver: string;
+  assignedDriverId: number | null;
+  assignedDriverDisplayName: string | null;
   status: "Operational" | "In Shop" | "Dispatch Hold";
   inspection: "Complete" | "Due Today" | "Overdue";
   priority: "Low" | "High" | "Critical";
   issue: string;
+  assetRecordStatus: string | null;
+  isOwnerOperatorSelfAssigned: boolean;
+  ownerOperatorPreviousDriverId: number | null;
+  ownerOperatorPreviousDriverName: string | null;
+};
+
+const DEFAULT_ASSIGNMENT_FORM = {
+  vehicleId: null as string | null,
+  driverUserId: null as string | null,
+  accessType: "permanent" as "permanent" | "temporary",
+  expiresAt: "",
+  notes: "",
+  driverMode: "existing" as "existing" | "invite",
+  inviteFirstName: "",
+  inviteLastName: "",
+  inviteEmail: "",
 };
 
 function badgeClasses(value: string) {
@@ -156,7 +188,62 @@ function formatDefectDescription(value: string | null | undefined) {
   }
 }
 
-function mapVehicleRow(vehicle: any, drivers: any[] = []): DashboardRow {
+const managerReviewOptions = [
+  { value: "reviewed", label: "Reviewed" },
+  { value: "scheduled", label: "Scheduled" },
+  { value: "deferred", label: "Deferred" },
+  { value: "resolved", label: "Resolved" },
+  { value: "escalated", label: "Escalated" },
+] as const;
+
+function formatManagerReviewStatus(value: string | null | undefined) {
+  const match = managerReviewOptions.find(option => option.value === value);
+  return match?.label ?? "Submitted";
+}
+
+function buildVehicleRelationship(vehicle: any, fleetVehicles: any[] = []) {
+  if (typeof vehicle.linkedVehicleSummary === "string" && vehicle.linkedVehicleSummary.trim().length > 0) {
+    return vehicle.linkedVehicleSummary.trim();
+  }
+
+  const linkedPoweredVehicle =
+    vehicle.linkedPoweredVehicleId != null
+      ? fleetVehicles.find(candidate => String(candidate.id) === String(vehicle.linkedPoweredVehicleId))
+      : null;
+  if (linkedPoweredVehicle) {
+    return `Linked to ${getVehicleDisplayLabel({
+      label: linkedPoweredVehicle.unitNumber,
+      vin: linkedPoweredVehicle.vin,
+      vehicleId: linkedPoweredVehicle.id,
+    })}`;
+  }
+
+  const linkedTrailers = fleetVehicles.filter(
+    candidate => candidate.linkedPoweredVehicleId != null && String(candidate.linkedPoweredVehicleId) === String(vehicle.id)
+  );
+  if (linkedTrailers.length === 0) {
+    return null;
+  }
+
+  const linkedTrailerLabels = linkedTrailers.map(candidate =>
+    getVehicleDisplayLabel({
+      label: candidate.unitNumber,
+      vin: candidate.vin,
+      vehicleId: candidate.id,
+    })
+  );
+
+  return linkedTrailerLabels.length === 1
+    ? `Linked trailer ${linkedTrailerLabels[0]}`
+    : `Linked trailers ${linkedTrailerLabels.join(", ")}`;
+}
+
+function mapVehicleRow(
+  vehicle: any,
+  fleetVehicles: any[] = [],
+  drivers: any[] = [],
+  currentUserId?: number | null
+): DashboardRow {
   const priority =
     vehicle.complianceStatus === "red"
       ? "Critical"
@@ -165,6 +252,16 @@ function mapVehicleRow(vehicle: any, drivers: any[] = []): DashboardRow {
         : "Low";
 
   const driver = drivers.find(d => d.id === vehicle.assignedDriverId);
+  const ownerOperatorSelfAssignment = vehicle.ownerOperatorSelfAssignment ?? null;
+  const isOwnerOperatorSelfAssigned =
+    ownerOperatorSelfAssignment?.ownerOperatorUserId != null &&
+    currentUserId != null &&
+    ownerOperatorSelfAssignment.ownerOperatorUserId === currentUserId;
+  const assignedDriverDisplayName =
+    vehicle.assignedDriverDisplayName ??
+    driver?.name ??
+    driver?.email ??
+    (isOwnerOperatorSelfAssigned ? "Assigned to you" : null);
 
   return {
     id: vehicle.id,
@@ -173,7 +270,11 @@ function mapVehicleRow(vehicle: any, drivers: any[] = []): DashboardRow {
       vin: vehicle.vin,
       vehicleId: vehicle.id,
     }),
-    assignedDriver: driver?.name || "Unassigned",
+    relationship: buildVehicleRelationship(vehicle, fleetVehicles),
+    assignedDriver: assignedDriverDisplayName || "Unassigned",
+    assignedDriverId:
+      typeof vehicle.assignedDriverId === "number" ? vehicle.assignedDriverId : null,
+    assignedDriverDisplayName,
     detail:
       [vehicle.make, vehicle.model, vehicle.engineMake, vehicle.licensePlate]
         .filter(Boolean)
@@ -197,10 +298,16 @@ function mapVehicleRow(vehicle: any, drivers: any[] = []): DashboardRow {
         : vehicle.complianceStatus === "yellow"
           ? "Inspection attention needed"
           : "No active defects",
+    assetRecordStatus: vehicle.assetRecordStatus ?? null,
+    isOwnerOperatorSelfAssigned,
+    ownerOperatorPreviousDriverId:
+      ownerOperatorSelfAssignment?.previousDriverUserId ?? null,
+    ownerOperatorPreviousDriverName:
+      ownerOperatorSelfAssignment?.previousDriverName ?? null,
   };
 }
 
-function ManagerDashboardFixedContent() {
+function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole?: string | null }) {
   const { user, logout, isLoading: isAuthLoading } = useAuthContext();
   const utils = trpc.useUtils();
   const [, navigate] = useLocation();
@@ -235,17 +342,12 @@ function ManagerDashboardFixedContent() {
     description: string;
     confirmLabel: string;
   } | null>(null);
-  const [assignmentForm, setAssignmentForm] = useState({
-    vehicleId: null as string | null,
-    driverUserId: null as string | null,
-    accessType: "permanent" as "permanent" | "temporary",
-    expiresAt: "",
-    notes: "",
-    driverMode: "existing" as "existing" | "invite",
-    inviteFirstName: "",
-    inviteLastName: "",
-    inviteEmail: "",
-  });
+  const [selfAssignmentWarning, setSelfAssignmentWarning] = useState<{
+    vehicleId: string;
+    vehicleLabel: string;
+    currentDriverName: string | null;
+  } | null>(null);
+  const [assignmentForm, setAssignmentForm] = useState(DEFAULT_ASSIGNMENT_FORM);
 
   const vehiclesQuery = trpc.vehicles.listByFleet.useQuery(
     { fleetId: resolvedFleetId ?? 0 },
@@ -272,6 +374,10 @@ function ManagerDashboardFixedContent() {
   const pendingAccessRequestsQuery = trpc.vehicleAccess.listPendingRequests.useQuery(
     { fleetId: resolvedFleetId ?? 0 },
     { enabled: resolvedFleetId != null }
+  );
+  const earlyWarningsQuery = trpc.defects.listEarlyWarnings.useQuery(
+    { fleetId: resolvedFleetId ?? 0 },
+    { staleTime: 30_000, enabled: resolvedFleetId != null }
   );
   
   const selectedAsset = useMemo(() => 
@@ -301,38 +407,99 @@ function ManagerDashboardFixedContent() {
       .map(part => part.charAt(0).toUpperCase())
       .join("");
   }, [user?.name]);
+  const isOwnerOperator = isOwnerOperatorEnabled(user);
 
-const assignMutation = trpc.vehicles.assignDriver.useMutation({
+  const resetAssignmentDialog = () => {
+    setAssignmentStep("form");
+    setAssignmentWarning(null);
+    setAssignmentForm(DEFAULT_ASSIGNMENT_FORM);
+  };
+
+  const assignMutation = trpc.vehicles.assignDriver.useMutation({
     onSuccess: () => {
       toast.success("Assignment saved successfully.");
+      resetAssignmentDialog();
       setIsAssignDialogOpen(false);
       void vehiclesQuery.refetch();
     }
   });
+  const assignToSelfMutation = trpc.vehicles.assignOwnerOperatorToSelf.useMutation({
+    onSuccess: async (result) => {
+      setSelfAssignmentWarning(null);
+      await utils.vehicles.listByFleet.invalidate({ fleetId: resolvedFleetId ?? 0 });
+      await vehiclesQuery.refetch();
+      toast.success(
+        result.previousDriverName
+          ? `Assigned to you. ${result.previousDriverName} remains preserved for later restore.`
+          : "Assigned to you."
+      );
+    },
+    onError: (error) => {
+      const message = error.message || "TruckFixr could not assign this vehicle to you.";
+      if (message.startsWith("OWNER_OPERATOR_CONFIRM_TAKEOVER:")) {
+        const currentDriverName = message.split("OWNER_OPERATOR_CONFIRM_TAKEOVER:")[1]?.trim() || null;
+        if (selfAssignmentWarning) {
+          setSelfAssignmentWarning({
+            ...selfAssignmentWarning,
+            currentDriverName,
+          });
+          return;
+        }
+        toast.error(
+          currentDriverName
+            ? `This vehicle is currently assigned to ${currentDriverName}. Please try again to confirm takeover.`
+            : "This vehicle is currently assigned. Please try again to confirm takeover."
+        );
+        return;
+      }
+      toast.error(message);
+    },
+  });
+  const releaseSelfAssignmentMutation = trpc.vehicles.releaseOwnerOperatorSelfAssignment.useMutation({
+    onSuccess: async (result) => {
+      await utils.vehicles.listByFleet.invalidate({ fleetId: resolvedFleetId ?? 0 });
+      await vehiclesQuery.refetch();
+      toast.success(
+        result.restoredDriverName
+          ? `Self-assignment released. ${result.restoredDriverName} was restored.`
+          : "Self-assignment released."
+      );
+    },
+    onError: (error) => {
+      toast.error(error.message || "TruckFixr could not release this self-assignment.");
+    },
+  });
 
-  const approveAccessRequestMutation = trpc.vehicleAccess.approveAccessRequest.useMutation();
-  const denyAccessRequestMutation = trpc.vehicleAccess.denyAccessRequest.useMutation();
+  const approveAccessRequestMutation = trpc.vehicleAccess.approveAccessRequest.useMutation({
+    onSuccess: async () => {
+      toast.success("Vehicle access approved.");
+      await pendingAccessRequestsQuery.refetch();
+    },
+    onError: error => {
+      toast.error(error.message || "Unable to approve vehicle access request.");
+    },
+  });
+  const denyAccessRequestMutation = trpc.vehicleAccess.denyAccessRequest.useMutation({
+    onSuccess: async () => {
+      toast.success("Vehicle access request denied.");
+      await pendingAccessRequestsQuery.refetch();
+    },
+    onError: error => {
+      toast.error(error.message || "Unable to deny vehicle access request.");
+    },
+  });
+  const updateDefectReviewMutation = trpc.defects.updateStatus.useMutation({
+    onSuccess: async () => {
+      toast.success("Manager review status updated.");
+      await verifiedHealthQuery.refetch();
+    },
+  });
 
   const createVehicleMutation = trpc.vehicles.create.useMutation({
     onSuccess: async createdVehicle => {
       if (resolvedFleetId == null) {
         return;
       }
-
-      utils.vehicles.listByFleet.setData({ fleetId: resolvedFleetId }, current => {
-        const vehicles = current ?? [];
-        const existingIndex = vehicles.findIndex(
-          vehicle => vehicle.id === createdVehicle.id
-        );
-
-        if (existingIndex >= 0) {
-          const next = [...vehicles];
-          next[existingIndex] = createdVehicle;
-          return next;
-        }
-
-        return [createdVehicle, ...vehicles];
-      });
 
       await utils.vehicles.listByFleet.invalidate({ fleetId: resolvedFleetId });
       await vehiclesQuery.refetch();
@@ -356,12 +523,12 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
     const explicitVehicleId = parseOptionalVehicleId(vehicleId);
     const defaultVehicleId =
       explicitVehicleId ?? (vehiclesQuery.data?.[0]?.id != null ? String(vehiclesQuery.data[0].id) : null);
-    setAssignmentForm(prev => ({ 
-      ...prev, 
+    setAssignmentForm({
+      ...DEFAULT_ASSIGNMENT_FORM,
       vehicleId: defaultVehicleId,
       driverUserId: parseOptionalDriverId(driverId),
-      driverMode: driverId ? "existing" : prev.driverMode
-    }));
+      driverMode: "existing",
+    });
     setAssignmentStep("form");
     setAssignmentWarning(null);
     setIsAssignDialogOpen(true);
@@ -468,15 +635,18 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
   const verifiedHealth = verifiedHealthQuery.data;
   const drivers = driversQuery.data ?? [];
   const pendingAccessRequests = pendingAccessRequestsQuery.data ?? [];
+  const earlyWarnings = (earlyWarningsQuery.data ?? []) as EarlyWarning[];
 
   const rows = useMemo(() => {
     const liveVehicles = vehiclesQuery.data ?? [];
-    const mapped = liveVehicles.map(vehicle => mapVehicleRow(vehicle, drivers));
+    const mapped = liveVehicles.map(vehicle =>
+      mapVehicleRow(vehicle, liveVehicles, drivers, user?.id ?? null)
+    );
 
     const q = search.trim().toLowerCase();
     if (!q) return mapped;
     return mapped.filter(row =>
-      [row.truck, row.detail, row.assignedDriver, row.issue].some(value =>
+      [row.truck, row.detail, row.relationship ?? "", row.assignedDriver, row.issue].some(value =>
         value.toLowerCase().includes(q)
       )
     );
@@ -494,6 +664,66 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
 
     setVehicleCaptureInitialStep("entry");
     setIsAddVehicleOpen(true);
+  };
+
+  const scrollToSection = (sectionId: string) => {
+    document.getElementById(sectionId)?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  };
+
+  const isOperationalOwnerOperatorAsset = (row: DashboardRow) =>
+    isOwnerOperator &&
+    row.status === "Operational" &&
+    row.assetRecordStatus === "active";
+
+  const handleAssignToSelf = async (
+    row: DashboardRow,
+    confirmed: boolean = false
+  ) => {
+    if (resolvedFleetId == null) {
+      toast.error("TruckFixr is still loading your fleet. Please try again.");
+      return;
+    }
+
+    if (!isOperationalOwnerOperatorAsset(row)) {
+      toast.error("Only operational active vehicles can be assigned to you.");
+      return;
+    }
+
+    if (
+      !confirmed &&
+      row.assignedDriverId != null &&
+      user?.id != null &&
+      row.assignedDriverId !== user.id
+    ) {
+      setSelfAssignmentWarning({
+        vehicleId: String(row.id),
+        vehicleLabel: row.truck,
+        currentDriverName:
+          row.assignedDriverDisplayName || row.assignedDriver || null,
+      });
+      return;
+    }
+
+    await assignToSelfMutation.mutateAsync({
+      fleetId: resolvedFleetId,
+      vehicleId: String(row.id),
+      confirmTakeover: confirmed || undefined,
+    });
+  };
+
+  const handleReleaseSelfAssignment = async (row: DashboardRow) => {
+    if (resolvedFleetId == null) {
+      toast.error("TruckFixr is still loading your fleet. Please try again.");
+      return;
+    }
+
+    await releaseSelfAssignmentMutation.mutateAsync({
+      fleetId: resolvedFleetId,
+      vehicleId: String(row.id),
+    });
   };
 
   const resetVehicleDialog = () => {};
@@ -526,9 +756,6 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
         vehicleId: createdVehicle.id,
       });
 
-      toast.success(`${vehicleLabel} created.`, {
-        description: "Vehicle successfully added to fleet.",
-      });
       resetVehicleDialog();
       return {
         id: createdVehicle.id,
@@ -557,7 +784,8 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
 
   return (
     <div className="app-shell min-h-screen">
-      <div className="fixed right-4 top-4 z-50 sm:right-6 sm:top-6">
+      <div className="fixed right-4 top-4 z-50 flex items-center gap-2 sm:right-6 sm:top-6">
+        <NotificationBell fleetId={resolvedFleetId} />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -599,6 +827,32 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
             >
               Add vehicle
             </DropdownMenuItem>
+            <DropdownMenuItem
+              className="cursor-pointer rounded-xl"
+              onClick={() => navigate("/quick-start-guides/my-guide")}
+            >
+              <BookOpenCheck className="mr-2 h-4 w-4" />
+              My Quick Start Guide
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="cursor-pointer rounded-xl"
+              onClick={() => navigate("/quick-start-guides")}
+            >
+              <BookOpenCheck className="mr-2 h-4 w-4" />
+              Quick Start Guides
+            </DropdownMenuItem>
+            {internalAdminRole ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="cursor-pointer rounded-xl"
+                  onClick={() => navigate("/admin/metrics")}
+                >
+                  <LayoutDashboard className="mr-2 h-4 w-4" />
+                  Admin dashboard
+                </DropdownMenuItem>
+              </>
+            ) : null}
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={logout}
@@ -616,7 +870,14 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
           <div className="flex items-start gap-4">
             <AppLogo imageClassName="h-10" frameClassName="p-1.5" href="/manager" />
             <div>
-              <p className="section-label">Manager dashboard</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="section-label">Manager dashboard</p>
+                {isOwnerOperator ? (
+                  <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-700 ring-1 ring-slate-200">
+                    Owner Mode
+                  </span>
+                ) : null}
+              </div>
               <h1 className="fleet-page-title mt-2 text-3xl font-semibold tracking-tight">
                 Fleet operations center
               </h1>
@@ -643,6 +904,15 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
             >
               Export morning brief
             </Button>
+            {isOwnerOperator ? (
+              <Button
+                variant="outline"
+                className="rounded-full border-[var(--fleet-outline)] bg-white"
+                onClick={() => goToDriverMode()}
+              >
+                Switch to Driver Mode
+              </Button>
+            ) : null}
             <Dialog
               open={isAddVehicleOpen}
               onOpenChange={open => {
@@ -654,16 +924,14 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
                 }
               }}
             >
-              <DialogTrigger asChild>
-                <Button
-                  className="fleet-primary-btn rounded-full"
-                  disabled={resolvedFleetId == null && isFleetContextLoading}
-                  onClick={openAddVehicleDialog}
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add vehicle
-                </Button>
-              </DialogTrigger>
+              <Button
+                className="fleet-primary-btn rounded-full"
+                disabled={resolvedFleetId == null && isFleetContextLoading}
+                onClick={openAddVehicleDialog}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add vehicle
+              </Button>
               <DialogContent className="max-h-[calc(100svh-1rem)] w-[calc(100vw-1rem)] overflow-hidden rounded-[28px] border-[var(--fleet-outline)] p-0 sm:max-h-[calc(100svh-2rem)] sm:max-w-2xl">
                 <VehicleCaptureFlow
                   fleetId={resolvedFleetId ?? 0}
@@ -691,6 +959,8 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
       </header>
 
       <main className="mx-auto max-w-7xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
+        <QuickStartBanner role={user?.role} />
+
         <div className="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-r-xl shadow-sm">
           <div className="flex items-center gap-3">
             <AlertTriangle className="h-5 w-5 text-amber-600" />
@@ -701,7 +971,150 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
           </div>
         </div>
 
-        <section className="grid gap-4 md:grid-cols-3">
+        <section className="space-y-4 lg:hidden">
+          <Card className="saas-card border-0">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-slate-950">Quick actions</CardTitle>
+              <CardDescription>
+                Jump into the next owner task without hunting through the full dashboard.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 sm:grid-cols-2">
+              {isOwnerOperator ? (
+                <>
+                  <Button className="fleet-primary-btn h-12 rounded-2xl justify-start" onClick={() => goToDriverMode()}>
+                    Switch to Driver Mode
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-12 rounded-2xl justify-start border-[var(--fleet-outline)] bg-white"
+                    onClick={() => goToDriverMode("start-inspection")}
+                  >
+                    Start Inspection
+                  </Button>
+                </>
+              ) : null}
+              <Button
+                className="h-12 rounded-2xl justify-start bg-slate-900 text-white hover:bg-slate-800"
+                onClick={openAddVehicleDialog}
+              >
+                Add Vehicle
+              </Button>
+              <Button
+                variant="outline"
+                className="h-12 rounded-2xl justify-start border-[var(--fleet-outline)] bg-white"
+                onClick={() => scrollToSection("manager-open-defects-panel")}
+              >
+                View Open Defects
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card id="manager-open-defects-panel" className="saas-card border-0">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-slate-950">Urgent fleet issues</CardTitle>
+              <CardDescription>
+                The highest-priority items for the fleet right now.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-red-700">Open defects</p>
+                <p className="mt-2 text-2xl font-semibold text-red-950">
+                  {verifiedHealth?.openDefects.length ?? 0}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-700">Missed inspections</p>
+                <p className="mt-2 text-2xl font-semibold text-amber-950">
+                  {verifiedHealth?.today.missedInspections ?? 0}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-700">Needs manager action</p>
+                <p className="mt-2 text-2xl font-semibold text-blue-950">
+                  {managerActionItems.length}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="saas-card border-0">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-slate-950">Today&apos;s inspections</CardTitle>
+              <CardDescription>
+                Keep today&apos;s inspection status visible without opening the full reporting stack.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Inspected</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-950">
+                  {verifiedHealth?.today.inspectedVehicles ?? 0}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Completion</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-950">
+                  {verifiedHealth?.today.completionRate ?? 0}%
+                </p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Integrity score</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-950">
+                  {verifiedHealth?.averages.fleetIntegrityScore ?? 100}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Accordion type="multiple" className="space-y-3">
+            <AccordionItem value="snapshot" className="rounded-3xl border border-slate-200 bg-white px-5">
+              <AccordionTrigger className="text-base font-semibold text-slate-950">
+                Fleet snapshot
+              </AccordionTrigger>
+              <AccordionContent className="space-y-3 pb-4 text-sm text-slate-600">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl bg-slate-50 px-4 py-4">
+                    <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Vehicles in fleet</p>
+                    <p className="mt-2 text-2xl font-semibold text-slate-950">{vehiclesQuery.data?.length ?? 0}</p>
+                  </div>
+                  <div className="rounded-2xl bg-slate-50 px-4 py-4">
+                    <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Linked drivers</p>
+                    <p className="mt-2 text-2xl font-semibold text-slate-950">{drivers.length}</p>
+                  </div>
+                </div>
+                <Button variant="outline" className="w-full rounded-2xl" onClick={() => handleOpenAssign()}>
+                  Assign Vehicle / Trailer
+                </Button>
+              </AccordionContent>
+            </AccordionItem>
+            <AccordionItem value="monitoring" className="rounded-3xl border border-slate-200 bg-white px-5">
+              <AccordionTrigger className="text-base font-semibold text-slate-950">
+                Reports & monitoring
+              </AccordionTrigger>
+              <AccordionContent className="space-y-3 pb-4 text-sm text-slate-600">
+                <p>Daily health, DVIR reports, integrity alerts, and the morning brief remain available below on larger screens.</p>
+                <Button
+                  variant="outline"
+                  className="w-full rounded-2xl"
+                  onClick={() => {
+                    const firstReport = inspectionReportsQuery.data?.[0];
+                    if (firstReport) {
+                      navigate(`/inspection-report/${firstReport.id}`);
+                      return;
+                    }
+                    toast.info("No DVIR inspection reports are available yet.");
+                  }}
+                >
+                  Open latest inspection report
+                </Button>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </section>
+
+        <section className="hidden gap-4 lg:grid lg:grid-cols-3">
           {pilotAccess?.status === "active" ? (
             <Card className="metric-card border-0">
               <CardHeader className="pb-3">
@@ -775,7 +1188,7 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
           </Card>
         </section>
 
-        <section className="grid gap-4 lg:grid-cols-4">
+        <section id="manager-open-defects" className="hidden gap-4 lg:grid lg:grid-cols-4">
           <Card className="metric-card border-0">
             <CardHeader className="pb-3">
               <CardDescription>Inspected today</CardDescription>
@@ -836,7 +1249,7 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
           </Card>
         </section>
 
-        <section>
+        <section className="hidden lg:block">
           <Card className="saas-card">
             <CardHeader>
               <CardTitle className="text-slate-950">DVIR inspection reports</CardTitle>
@@ -883,7 +1296,7 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
           </Card>
         </section>
 
-        <section className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+        <section className="hidden gap-6 xl:grid-cols-[1.15fr_0.85fr] lg:grid">
           <Card className="saas-card">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-slate-950">
@@ -999,6 +1412,35 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
           </Card>
         </section>
 
+        <section>
+          <Card className="saas-card">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-slate-950">
+                <AlertTriangle className="h-5 w-5 text-amber-600" />
+                Early warnings
+              </CardTitle>
+              <CardDescription>
+                Rule-based signals flagging vehicles that need attention before
+                they become costly downtime. Click a warning to open the issue.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <EarlyWarningList
+                warnings={earlyWarnings}
+                showVehicle
+                onSelect={(warning) =>
+                  navigate(
+                    warning.defectId
+                      ? `/defect/${warning.defectId}`
+                      : `/truck/${warning.vehicleId}`
+                  )
+                }
+                emptyMessage="No active early warnings. Vehicles are clear."
+              />
+            </CardContent>
+          </Card>
+        </section>
+
         <section className="grid gap-6 xl:grid-cols-2">
           <Card className="saas-card">
             <CardHeader>
@@ -1037,6 +1479,36 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
                       AI recommendation:{" "}
                       {defect.aiRecommendation ?? "Manager review pending"}
                     </p>
+                    <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">
+                          Manager status
+                        </p>
+                        <span className="text-sm font-semibold text-slate-900">
+                          {formatManagerReviewStatus(defect.managerReviewStatus)}
+                        </span>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {managerReviewOptions.map(option => (
+                          <Button
+                            key={option.value}
+                            type="button"
+                            variant={defect.managerReviewStatus === option.value ? "default" : "outline"}
+                            size="sm"
+                            className="rounded-xl"
+                            disabled={updateDefectReviewMutation.isPending}
+                            onClick={() =>
+                              updateDefectReviewMutation.mutate({
+                                defectId: defect.id,
+                                managerReviewStatus: option.value,
+                              })
+                            }
+                          >
+                            {option.label}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Button
                         variant="outline"
@@ -1115,7 +1587,7 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
           </Card>
         </section>
 
-        <section>
+        <section className="hidden lg:block">
           {resolvedFleetId != null ? <MorningFleetSummary fleetId={resolvedFleetId} /> : null}
         </section>
 
@@ -1151,7 +1623,115 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
               </div>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="space-y-4 px-4 pb-4 lg:hidden">
+              {rows.length === 0 ? (
+                <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-600">
+                  {vehiclesQuery.isLoading
+                    ? "Loading your fleet vehicles..."
+                    : search.trim()
+                      ? "No vehicles match that search."
+                      : "No vehicles in this fleet yet. Add a vehicle to start assigning drivers and tracking fleet health."}
+                </div>
+              ) : (
+                rows.map((row) => (
+                  <div
+                    key={row.id}
+                    className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-slate-950">{row.truck}</p>
+                        <p className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-400">
+                          {row.detail}
+                        </p>
+                        {row.relationship ? (
+                          <p className="mt-2 text-xs font-medium text-blue-700">
+                            {row.relationship}
+                          </p>
+                        ) : null}
+                      </div>
+                      <span
+                        className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${badgeClasses(row.status)}`}
+                      >
+                        {row.status}
+                      </span>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-2xl bg-slate-50 px-3 py-3">
+                        <p className="text-xs uppercase tracking-[0.14em] text-slate-500">
+                          Assigned driver
+                        </p>
+                        <p className="mt-1 text-sm font-semibold text-slate-950">
+                          {row.assignedDriver}
+                        </p>
+                      </div>
+                      <div className="rounded-2xl bg-slate-50 px-3 py-3">
+                        <p className="text-xs uppercase tracking-[0.14em] text-slate-500">
+                          Inspection
+                        </p>
+                        <p className="mt-1 text-sm font-semibold text-slate-950">
+                          {row.inspection}
+                        </p>
+                      </div>
+                    </div>
+
+                    {row.isOwnerOperatorSelfAssigned ? (
+                      <p className="mt-3 text-sm text-blue-700">
+                        Assigned to you
+                        {row.ownerOperatorPreviousDriverName
+                          ? `, will restore ${row.ownerOperatorPreviousDriverName} when released.`
+                          : "."}
+                      </p>
+                    ) : null}
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="rounded-full text-blue-700 hover:bg-blue-50"
+                        onClick={() => navigate(`/truck/${row.id}`)}
+                      >
+                        View details
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-full"
+                        onClick={() => handleOpenAssign(String(row.id))}
+                      >
+                        Assign
+                      </Button>
+                      {isOperationalOwnerOperatorAsset(row) ? (
+                        row.isOwnerOperatorSelfAssigned ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="rounded-full border-blue-200 text-blue-700 hover:bg-blue-50"
+                            disabled={releaseSelfAssignmentMutation.isPending}
+                            onClick={() => void handleReleaseSelfAssignment(row)}
+                          >
+                            Release self-assignment
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            className="rounded-full bg-slate-900 text-white hover:bg-slate-800"
+                            disabled={assignToSelfMutation.isPending}
+                            onClick={() => void handleAssignToSelf(row)}
+                          >
+                            Assign to me
+                          </Button>
+                        )
+                      ) : null}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="hidden overflow-x-auto lg:block">
               <table className="min-w-full text-left text-sm">
                 <thead className="bg-slate-50/80 text-slate-500">
                   <tr>
@@ -1199,6 +1779,11 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
                               <p className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-400">
                                 {row.detail}
                               </p>
+                              {row.relationship ? (
+                                <p className="mt-2 text-xs font-medium text-blue-700">
+                                  {row.relationship}
+                                </p>
+                              ) : null}
                             </div>
                           </div>
                         </td>
@@ -1248,6 +1833,28 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
                             >
                               Assign
                             </Button>
+                            {isOperationalOwnerOperatorAsset(row) ? (
+                              row.isOwnerOperatorSelfAssigned ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="rounded-full border-blue-200 text-blue-700 hover:bg-blue-50"
+                                  disabled={releaseSelfAssignmentMutation.isPending}
+                                  onClick={() => void handleReleaseSelfAssignment(row)}
+                                >
+                                  Release self-assignment
+                                </Button>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  className="rounded-full bg-slate-900 text-white hover:bg-slate-800"
+                                  disabled={assignToSelfMutation.isPending}
+                                  onClick={() => void handleAssignToSelf(row)}
+                                >
+                                  Assign to me
+                                </Button>
+                              )
+                            ) : null}
                           </div>
                         </td>
                       </tr>
@@ -1565,7 +2172,61 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
           </div>
         </section>
 
-        <Dialog open={isAssignDialogOpen} onOpenChange={setIsAssignDialogOpen}>
+        <Dialog
+          open={selfAssignmentWarning != null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setSelfAssignmentWarning(null);
+            }
+          }}
+        >
+          <DialogContent className="rounded-[24px] sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Take over assignment?</DialogTitle>
+              <DialogDescription>
+                {selfAssignmentWarning?.currentDriverName
+                  ? `${selfAssignmentWarning.vehicleLabel} is currently assigned to ${selfAssignmentWarning.currentDriverName}. Assign it to yourself instead?`
+                  : "This vehicle is currently assigned. Assign it to yourself instead?"}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setSelfAssignmentWarning(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="bg-slate-900 text-white hover:bg-slate-800"
+                disabled={assignToSelfMutation.isPending}
+                onClick={() => {
+                  if (!selfAssignmentWarning) return;
+                  const row = rows.find(
+                    (candidate) => String(candidate.id) === selfAssignmentWarning.vehicleId
+                  );
+                  if (!row) {
+                    setSelfAssignmentWarning(null);
+                    toast.error("TruckFixr could not find that vehicle row anymore.");
+                    return;
+                  }
+                  void handleAssignToSelf(row, true);
+                }}
+              >
+                Assign to me
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={isAssignDialogOpen}
+          onOpenChange={open => {
+            setIsAssignDialogOpen(open);
+            if (!open) {
+              resetAssignmentDialog();
+            }
+          }}
+        >
           <DialogContent className="rounded-[24px] sm:max-w-2xl">
             {assignmentStep === "form" ? (
               <>
@@ -1737,9 +2398,11 @@ const assignMutation = trpc.vehicles.assignDriver.useMutation({
 }
 
 export default function ManagerDashboardFixed() {
+  const internalAdminQuery = trpc.admin.me.useQuery(undefined, { retry: false });
+
   return (
     <RoleBasedRoute requiredRoles={["owner", "manager"]}>
-      <ManagerDashboardFixedContent />
+      <ManagerDashboardFixedContent internalAdminRole={internalAdminQuery.data?.role ?? null} />
     </RoleBasedRoute>
   );
 }

@@ -2,6 +2,7 @@ export type DriverVehicleRecord = {
   id: number | string;
   fleetId: number;
   label: string;
+  relationshipSummary?: string | null;
   vin: string;
   licensePlate: string;
   make: string;
@@ -62,6 +63,8 @@ export function loadDriverVehicles(): DriverVehicleRecord[] {
         id: normalizeDriverVehicleId(item.id, Date.now() + index),
         fleetId: typeof item.fleetId === "number" && item.fleetId > 0 ? item.fleetId : 0,
         label: typeof item.label === "string" ? item.label : "Assigned vehicle",
+        relationshipSummary:
+          typeof item.relationshipSummary === "string" ? item.relationshipSummary : null,
         vin: typeof item.vin === "string" ? item.vin : "",
         licensePlate: typeof item.licensePlate === "string" ? item.licensePlate : "",
         make: typeof item.make === "string" ? item.make : "",

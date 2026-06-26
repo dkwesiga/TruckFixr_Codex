@@ -34,9 +34,10 @@ const {
   isStripeConfigured: vi.fn(() => true),
 }));
 
-const { redeemPilotAccessCode, recordPilotMilestone } = vi.hoisted(() => ({
+const { redeemPilotAccessCode, recordPilotMilestone, markPilotAccessConvertedToPaid } = vi.hoisted(() => ({
   redeemPilotAccessCode: vi.fn(),
   recordPilotMilestone: vi.fn(),
+  markPilotAccessConvertedToPaid: vi.fn(),
 }));
 
 vi.mock("./services/subscriptions", () => ({
@@ -89,7 +90,7 @@ vi.mock("./services/pilotAccess", () => ({
   getDefaultFleetIdForUser: vi.fn(async () => 1),
   getPilotAccessOverview: vi.fn(async () => null),
   reconcilePilotAccessForUser: vi.fn(async () => null),
-  markPilotAccessConvertedToPaid: vi.fn(async () => undefined),
+  markPilotAccessConvertedToPaid,
 }));
 
 vi.mock("./services/companyAccess", () => ({
@@ -350,6 +351,76 @@ describe("subscription billing flow", () => {
         billingStatus: "past_due",
       })
     );
+  });
+
+  it("preserves company billing ownership when Stripe completes paid checkout", async () => {
+    findUserIdByStripeReference.mockResolvedValue(null);
+    retrieveStripeSubscription.mockResolvedValue({
+      id: "sub_company_123",
+      customer: "cus_company_123",
+      status: "active",
+      metadata: {
+        company_id: "42",
+        plan_key: "small_fleet",
+        billing_interval: "monthly",
+      },
+      items: { data: [{ price: { id: "price_small_fleet" }, quantity: 1 }] },
+      current_period_start: 1_710_000_000,
+      current_period_end: 1_712_592_000,
+      cancel_at_period_end: false,
+    } as any);
+    getTruckFixrBillingSnapshotFromStripeSubscription.mockReturnValue({
+      companyId: 42,
+      planKey: "small_fleet",
+      billingInterval: "monthly",
+      billingStatus: "active",
+      stripeCustomerId: "cus_company_123",
+      stripeSubscriptionId: "sub_company_123",
+      stripePriceId: "price_small_fleet",
+      subscriptionStartedAt: new Date(1_710_000_000 * 1000),
+      subscriptionRenewsAt: new Date(1_712_592_000 * 1000),
+      trialStartedAt: null,
+      trialEndsAt: null,
+      poweredVehicleLimit: 5,
+      includedTrailerLimit: 5,
+      paidExtraTrailerQuantity: 0,
+      totalActiveTrailerLimit: 5,
+      aiSessionMonthlyLimit: 75,
+      isTrial: false,
+      isPaidPilot: false,
+    });
+
+    await processStripeWebhookEvent({
+      id: "evt_checkout_company_123",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          customer: "cus_company_123",
+          subscription: "sub_company_123",
+          client_reference_id: "7",
+        },
+      },
+    });
+
+    expect(syncSubscriptionState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 7,
+        fleetId: 42,
+        tier: "pro",
+        billingStatus: "active",
+        stripeCustomerId: "cus_company_123",
+        stripeSubscriptionId: "sub_company_123",
+        companyPlanKey: "small_fleet",
+        companyBillingInterval: "monthly",
+        poweredVehicleLimit: 5,
+        includedTrailerLimit: 5,
+        aiSessionMonthlyLimit: 75,
+      })
+    );
+    expect(markPilotAccessConvertedToPaid).toHaveBeenCalledWith({
+      userId: 7,
+      nextTier: "pro",
+    });
   });
 
   it("falls back to the free plan when Stripe deletes the subscription", async () => {

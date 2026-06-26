@@ -17,7 +17,11 @@ const defectActionTypeEnum = pgEnum("defect_action_type", [
   "resolve",
   "comment",
 ]);
-const complianceStatusEnum = pgEnum("compliance_status", ["green", "yellow", "red"]);
+const complianceStatusEnum = pgEnum("compliance_status", [
+  "green",
+  "yellow",
+  "red",
+]);
 const defectSeverityEnum = pgEnum("defect_severity", [
   "low",
   "minor",
@@ -44,18 +48,20 @@ const inspectionStatusEnum = pgEnum("inspection_status", [
   "flagged",
   "needs_review",
 ]);
-const maintenanceTypeEnum = pgEnum("maintenance_type", ["repair", "preventive", "inspection"]);
+const maintenanceTypeEnum = pgEnum("maintenance_type", [
+  "repair",
+  "preventive",
+  "inspection",
+]);
 const pilotAccessCodeStatusEnum = pgEnum("pilot_access_code_status", [
   "active",
   "expired",
   "revoked",
 ]);
-const pilotAccessRedemptionStatusEnum = pgEnum("pilot_access_redemption_status", [
-  "active",
-  "expired",
-  "revoked",
-  "converted",
-]);
+const pilotAccessRedemptionStatusEnum = pgEnum(
+  "pilot_access_redemption_status",
+  ["active", "expired", "revoked", "converted"]
+);
 const subscriptionTierEnum = pgEnum("subscription_tier", [
   "free",
   "pilot",
@@ -75,14 +81,22 @@ const billingStatusEnum = pgEnum("billing_status", [
   "expired",
   "custom",
 ]);
-const tadisUrgencyEnum = pgEnum("tadis_urgency", ["Monitor", "Attention", "Critical"]);
+const tadisUrgencyEnum = pgEnum("tadis_urgency", [
+  "Monitor",
+  "Attention",
+  "Critical",
+]);
 const tadisRecommendedActionEnum = pgEnum("tadis_recommended_action", [
   "Keep Running",
   "Inspect Soon",
   "Stop Now",
 ]);
 const userRoleEnum = pgEnum("user_role", ["owner", "manager", "driver"]);
-const vehicleStatusEnum = pgEnum("vehicle_status", ["active", "maintenance", "retired"]);
+const vehicleStatusEnum = pgEnum("vehicle_status", [
+  "active",
+  "maintenance",
+  "retired",
+]);
 const assetTypeEnum = pgEnum("asset_type", [
   "tractor",
   "straight_truck",
@@ -149,7 +163,7 @@ export const activityLogs = pgTable("activityLogs", {
 
 export const defectActions = pgTable("defectActions", {
   id: serial("id").primaryKey(),
-  defectId: integer("defectId").notNull(),
+  defectId: integer("defectId"),
   managerId: integer("managerId").notNull(),
   actionType: defectActionTypeEnum("actionType").notNull(),
   notes: text("notes"),
@@ -163,12 +177,27 @@ export const defects = pgTable("defects", {
   vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
   inspectionId: integer("inspectionId"),
   driverId: integer("driverId").notNull(),
+  clientDraftId: varchar("clientDraftId", { length: 128 }),
   title: varchar("title", { length: 255 }).notNull(),
   description: text("description"),
   category: varchar("category", { length: 100 }),
   severity: defectSeverityEnum("severity").default("medium"),
-  complianceStatus: complianceStatusEnum("complianceStatus").default("green").notNull(),
+  complianceStatus: complianceStatusEnum("complianceStatus")
+    .default("green")
+    .notNull(),
   status: defectStatusEnum("status").default("open"),
+  managerReviewStatus: varchar("managerReviewStatus", { length: 32 })
+    .default("submitted")
+    .notNull(),
+  managerReviewStatusUpdatedAt: dateTimestamp(),
+  isBlockingOperationally: boolean("isBlockingOperationally")
+    .default(false)
+    .notNull(),
+  escalatedFromMinor: boolean("escalatedFromMinor").default(false).notNull(),
+  latestManagerDecision: varchar("latestManagerDecision", { length: 32 }),
+  latestDriverInstruction: text("latestDriverInstruction"),
+  latestManagerActionByUserId: integer("latestManagerActionByUserId"),
+  latestManagerActionAt: dateTimestamp(),
   latestFollowUpStatus: varchar("latestFollowUpStatus", { length: 64 }),
   latestFollowUpAt: dateTimestamp(),
   resolvedByUserId: integer("resolvedByUserId"),
@@ -176,6 +205,17 @@ export const defects = pgTable("defects", {
   aiRecommendation: varchar("aiRecommendation", { length: 100 }),
   aiConfidenceScore: integer("aiConfidenceScore"),
   aiSummary: text("aiSummary"),
+  // Issue-record fields (V1.0 Early Warning & Repair Decision Workflow).
+  sourceType: varchar("sourceType", { length: 32 })
+    .default("manual_report")
+    .notNull(),
+  sourceRecordId: varchar("sourceRecordId", { length: 128 }),
+  trailerId: varchar("trailerId", { length: 64 }),
+  symptoms: jsonb("symptoms"),
+  faultCodes: jsonb("faultCodes"),
+  safetyRelated: boolean("safetyRelated").default(false).notNull(),
+  recommendedAction: varchar("recommendedAction", { length: 32 }),
+  closedAt: dateTimestamp(),
   photoUrls: jsonb("photoUrls"),
   createdAt: dateTimestamp().defaultNow().notNull(),
   updatedAt: dateTimestamp().defaultNow().notNull(),
@@ -198,20 +238,31 @@ export const fleets = pgTable("fleets", {
   inviteCode: varchar("inviteCode", { length: 32 }),
   subscriptionOwnerUserId: integer("subscriptionOwnerUserId"),
   activeVehicleLimit: integer("activeVehicleLimit"),
-  subscriptionStatus: billingStatusEnum("subscriptionStatus").default("active").notNull(),
+  subscriptionStatus: billingStatusEnum("subscriptionStatus")
+    .default("active")
+    .notNull(),
   planId: integer("planId").default(1),
   planName: varchar("planName", { length: 64 }).default("free_trial").notNull(),
-  billingInterval: varchar("billingInterval", { length: 16 }).default("trial").notNull(),
-  billingStatus: billingStatusEnum("billingStatus").default("trialing").notNull(),
+  billingInterval: varchar("billingInterval", { length: 16 })
+    .default("trial")
+    .notNull(),
+  billingStatus: billingStatusEnum("billingStatus")
+    .default("trialing")
+    .notNull(),
   poweredVehicleLimit: integer("poweredVehicleLimit"),
   includedTrailerLimit: integer("includedTrailerLimit"),
-  paidExtraTrailerQuantity: integer("paidExtraTrailerQuantity").default(0).notNull(),
+  paidExtraTrailerQuantity: integer("paidExtraTrailerQuantity")
+    .default(0)
+    .notNull(),
   totalActiveTrailerLimit: integer("totalActiveTrailerLimit"),
   aiSessionMonthlyLimit: integer("aiSessionMonthlyLimit"),
-  aiSessionsUsedCurrentPeriod: integer("aiSessionsUsedCurrentPeriod").default(0).notNull(),
+  aiSessionsUsedCurrentPeriod: integer("aiSessionsUsedCurrentPeriod")
+    .default(0)
+    .notNull(),
   aiSessionsResetAt: dateTimestamp(),
   trialStartedAt: dateTimestamp(),
   premiumTadis: boolean("premiumTadis").default(false),
+  driverModeEnabled: boolean("driverModeEnabled").default(false).notNull(),
   trialEndsAt: dateTimestamp(),
   subscriptionStartedAt: dateTimestamp(),
   subscriptionRenewsAt: dateTimestamp(),
@@ -222,6 +273,34 @@ export const fleets = pgTable("fleets", {
   paidPilotStartedAt: dateTimestamp(),
   paidPilotEndsAt: dateTimestamp(),
   salesStatus: varchar("salesStatus", { length: 64 }).default("none"),
+  accountType: varchar("accountType", { length: 32 })
+    .default("production")
+    .notNull(),
+  isDemoAccount: boolean("isDemoAccount").default(false).notNull(),
+  lastActiveAt: dateTimestamp(),
+  setupCompletedAt: dateTimestamp(),
+  onboardingStatus: varchar("onboardingStatus", { length: 64 })
+    .default("not_started")
+    .notNull(),
+  adminFollowUpStatus: varchar("adminFollowUpStatus", { length: 64 })
+    .default("healthy")
+    .notNull(),
+  riskStatus: varchar("riskStatus", { length: 64 })
+    .default("healthy")
+    .notNull(),
+  riskReason: text("riskReason"),
+  nextFollowUpAt: dateTimestamp(),
+  adminOwnerId: integer("adminOwnerId"),
+  createdAt: dateTimestamp().defaultNow().notNull(),
+  updatedAt: dateTimestamp().defaultNow().notNull(),
+});
+
+export const adminFleetNotes = pgTable("adminFleetNotes", {
+  id: serial("id").primaryKey(),
+  fleetId: integer("fleetId").notNull(),
+  createdByUserId: integer("createdByUserId").notNull(),
+  note: text("note").notNull(),
+  noteType: varchar("noteType", { length: 64 }).default("general").notNull(),
   createdAt: dateTimestamp().defaultNow().notNull(),
   updatedAt: dateTimestamp().defaultNow().notNull(),
 });
@@ -241,48 +320,84 @@ export const inspections = pgTable("inspections", {
   fleetId: integer("fleetId").notNull(),
   vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
   driverId: integer("driverId").notNull(),
+  inspectionSessionId: varchar("inspectionSessionId", { length: 128 }),
+  linkedVehicleId: varchar("linkedVehicleId", { length: 64 }),
+  combinedStage: varchar("combinedStage", { length: 16 }),
   templateId: integer("templateId"),
   status: inspectionStatusEnum("status").default("in_progress"),
   inspectionDate: dateTimestamp(),
   startedAt: dateTimestamp(),
   durationSeconds: integer("durationSeconds"),
-  overallVehicleResult: varchar("overallVehicleResult", { length: 64 }).default("no_defect"),
+  overallVehicleResult: varchar("overallVehicleResult", { length: 64 }).default(
+    "no_defect"
+  ),
+  reportOutcome: varchar("reportOutcome", { length: 32 })
+    .default("clean")
+    .notNull(),
+  highestDefectSeverity: varchar("highestDefectSeverity", { length: 16 })
+    .default("none")
+    .notNull(),
+  managerReviewRequired: boolean("managerReviewRequired")
+    .default(false)
+    .notNull(),
+  provisionalDriverGuidance: text("provisionalDriverGuidance"),
+  latestManagerDecision: varchar("latestManagerDecision", { length: 32 }),
+  latestManagerInstruction: text("latestManagerInstruction"),
+  latestManagerReviewedByUserId: integer("latestManagerReviewedByUserId"),
+  latestManagerReviewedAt: dateTimestamp(),
+  supersededByInspectionId: integer("supersededByInspectionId"),
+  supersededAt: dateTimestamp(),
   notes: text("notes"),
-  locationStatus: varchar("locationStatus", { length: 64 }).default("unavailable"),
+  locationStatus: varchar("locationStatus", { length: 64 }).default(
+    "unavailable"
+  ),
   startLatitude: numeric("startLatitude", { precision: 10, scale: 7 }),
   startLongitude: numeric("startLongitude", { precision: 10, scale: 7 }),
-  startLocationAccuracy: numeric("startLocationAccuracy", { precision: 10, scale: 2 }),
+  startLocationAccuracy: numeric("startLocationAccuracy", {
+    precision: 10,
+    scale: 2,
+  }),
   startLocationCapturedAt: dateTimestamp(),
   submitLatitude: numeric("submitLatitude", { precision: 10, scale: 7 }),
   submitLongitude: numeric("submitLongitude", { precision: 10, scale: 7 }),
-  submitLocationAccuracy: numeric("submitLocationAccuracy", { precision: 10, scale: 2 }),
+  submitLocationAccuracy: numeric("submitLocationAccuracy", {
+    precision: 10,
+    scale: 2,
+  }),
   submitLocationCapturedAt: dateTimestamp(),
   integrityScore: integer("integrityScore").default(100),
-  complianceStatus: complianceStatusEnum("complianceStatus").default("green").notNull(),
+  complianceStatus: complianceStatusEnum("complianceStatus")
+    .default("green")
+    .notNull(),
   results: jsonb("results"),
   createdAt: dateTimestamp().defaultNow().notNull(),
   submittedAt: dateTimestamp(),
   updatedAt: dateTimestamp().defaultNow().notNull(),
 });
 
-export const inspectionChecklistResponses = pgTable("inspectionChecklistResponses", {
-  id: serial("id").primaryKey(),
-  inspectionId: integer("inspectionId").notNull(),
-  fleetId: integer("fleetId").notNull(),
-  vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
-  driverId: integer("driverId").notNull(),
-  checklistItemId: varchar("checklistItemId", { length: 120 }).notNull(),
-  checklistItemLabel: varchar("checklistItemLabel", { length: 255 }).notNull(),
-  category: varchar("category", { length: 100 }).notNull(),
-  result: varchar("result", { length: 32 }).notNull(),
-  defectDescription: text("defectDescription"),
-  severity: defectSeverityEnum("severity"),
-  note: text("note"),
-  unableToTakePhoto: boolean("unableToTakePhoto").default(false).notNull(),
-  unableToTakePhotoReason: text("unableToTakePhotoReason"),
-  createdAt: dateTimestamp().defaultNow().notNull(),
-  updatedAt: dateTimestamp().defaultNow().notNull(),
-});
+export const inspectionChecklistResponses = pgTable(
+  "inspectionChecklistResponses",
+  {
+    id: serial("id").primaryKey(),
+    inspectionId: integer("inspectionId").notNull(),
+    fleetId: integer("fleetId").notNull(),
+    vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
+    driverId: integer("driverId").notNull(),
+    checklistItemId: varchar("checklistItemId", { length: 120 }).notNull(),
+    checklistItemLabel: varchar("checklistItemLabel", {
+      length: 255,
+    }).notNull(),
+    category: varchar("category", { length: 100 }).notNull(),
+    result: varchar("result", { length: 32 }).notNull(),
+    defectDescription: text("defectDescription"),
+    severity: defectSeverityEnum("severity"),
+    note: text("note"),
+    unableToTakePhoto: boolean("unableToTakePhoto").default(false).notNull(),
+    unableToTakePhotoReason: text("unableToTakePhotoReason"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  }
+);
 
 export const inspectionPhotos = pgTable("inspectionPhotos", {
   id: serial("id").primaryKey(),
@@ -307,7 +422,9 @@ export const randomProofRequests = pgTable("randomProofRequests", {
   proofItem: varchar("proofItem", { length: 120 }).notNull(),
   photoSubmitted: boolean("photoSubmitted").default(false).notNull(),
   photoUrl: text("photoUrl"),
-  complianceStatus: varchar("complianceStatus", { length: 32 }).default("skipped").notNull(),
+  complianceStatus: varchar("complianceStatus", { length: 32 })
+    .default("skipped")
+    .notNull(),
   createdAt: dateTimestamp().defaultNow().notNull(),
   updatedAt: dateTimestamp().defaultNow().notNull(),
 });
@@ -323,6 +440,84 @@ export const inspectionFlags = pgTable("inspectionFlags", {
   message: text("message").notNull(),
   createdAt: dateTimestamp().defaultNow().notNull(),
 });
+
+export const inspectionReviewQueueItems = pgTable(
+  "inspectionReviewQueueItems",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId").notNull(),
+    inspectionId: integer("inspectionId"),
+    defectId: integer("defectId"),
+    vehicleId: varchar("vehicleId", { length: 64 }),
+    inspectionSessionId: varchar("inspectionSessionId", { length: 128 }),
+    parentQueueItemId: integer("parentQueueItemId"),
+    queueType: varchar("queueType", { length: 32 }).notNull(),
+    status: varchar("status", { length: 32 }).default("new").notNull(),
+    headlineStatus: varchar("headlineStatus", { length: 32 })
+      .default("review_needed")
+      .notNull(),
+    priority: varchar("priority", { length: 16 }).default("normal").notNull(),
+    highestSeverity: varchar("highestSeverity", { length: 16 })
+      .default("none")
+      .notNull(),
+    managerDecisionRequired: boolean("managerDecisionRequired")
+      .default(false)
+      .notNull(),
+    requiresDriverInstruction: boolean("requiresDriverInstruction")
+      .default(false)
+      .notNull(),
+    provisionalGuidanceSnapshot: text("provisionalGuidanceSnapshot"),
+    latestManagerDecision: varchar("latestManagerDecision", { length: 32 }),
+    latestDriverInstruction: text("latestDriverInstruction"),
+    latestInternalNote: text("latestInternalNote"),
+    agingState: varchar("agingState", { length: 32 }).default("new").notNull(),
+    openedDetailsAt: dateTimestamp(),
+    firstSeenAt: dateTimestamp(),
+    reviewStartedAt: dateTimestamp(),
+    decisionMadeAt: dateTimestamp(),
+    reviewedAt: dateTimestamp(),
+    reviewedByUserId: integer("reviewedByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  }
+);
+
+export const inspectionReviewActions = pgTable("inspectionReviewActions", {
+  id: serial("id").primaryKey(),
+  queueItemId: integer("queueItemId").notNull(),
+  inspectionId: integer("inspectionId").notNull(),
+  defectId: integer("defectId"),
+  vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
+  managerUserId: integer("managerUserId").notNull(),
+  actionType: varchar("actionType", { length: 32 }).notNull(),
+  driverInstructionNote: text("driverInstructionNote"),
+  internalNote: text("internalNote"),
+  createdAt: dateTimestamp().defaultNow().notNull(),
+});
+
+export const combinedInspectionSessions = pgTable(
+  "combinedInspectionSessions",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId").notNull(),
+    inspectionSessionId: varchar("inspectionSessionId", { length: 128 })
+      .notNull()
+      .unique(),
+    truckVehicleId: varchar("truckVehicleId", { length: 64 }),
+    trailerVehicleId: varchar("trailerVehicleId", { length: 64 }),
+    truckInspectionId: integer("truckInspectionId"),
+    trailerInspectionId: integer("trailerInspectionId"),
+    groupedQueueItemId: integer("groupedQueueItemId"),
+    headlineStatus: varchar("headlineStatus", { length: 32 })
+      .default("review_needed")
+      .notNull(),
+    completionState: varchar("completionState", { length: 64 })
+      .default("truck_pending_trailer_pending")
+      .notNull(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  }
+);
 
 export const aiTriageRecords = pgTable("aiTriageRecords", {
   id: serial("id").primaryKey(),
@@ -347,7 +542,9 @@ export const aiRequestLogs = pgTable("aiRequestLogs", {
   id: serial("id").primaryKey(),
   companyId: integer("companyId").notNull(),
   assetId: varchar("assetId", { length: 64 }).notNull(),
-  diagnosticSessionId: varchar("diagnosticSessionId", { length: 128 }).notNull(),
+  diagnosticSessionId: varchar("diagnosticSessionId", {
+    length: 128,
+  }).notNull(),
   callType: varchar("callType", { length: 32 }).notNull(),
   provider: varchar("provider", { length: 32 }),
   model: varchar("model", { length: 255 }),
@@ -356,7 +553,9 @@ export const aiRequestLogs = pgTable("aiRequestLogs", {
   messageCount: integer("messageCount"),
   maxTokens: integer("maxTokens"),
   temperature: numeric("temperature", { precision: 4, scale: 2 }),
-  responseFormatEnabled: boolean("responseFormatEnabled").default(false).notNull(),
+  responseFormatEnabled: boolean("responseFormatEnabled")
+    .default(false)
+    .notNull(),
   simpleTadisMode: boolean("simpleTadisMode").default(false).notNull(),
   truncationApplied: boolean("truncationApplied").default(false).notNull(),
   status: varchar("status", { length: 32 }).notNull(),
@@ -372,7 +571,9 @@ export const faultCodeReferenceSources = pgTable("faultCodeReferenceSources", {
   sourceType: varchar("sourceType", { length: 80 }).notNull(),
   urlOrPath: text("urlOrPath"),
   importedAt: dateTimestamp().defaultNow().notNull(),
-  reviewStatus: varchar("reviewStatus", { length: 32 }).default("needs_review").notNull(),
+  reviewStatus: varchar("reviewStatus", { length: 32 })
+    .default("needs_review")
+    .notNull(),
   reviewerUserId: integer("reviewerUserId"),
   approvedAt: dateTimestamp(),
   metadata: jsonb("metadata"),
@@ -391,7 +592,9 @@ export const faultCodeReferences = pgTable("faultCodeReferences", {
   summary: text("summary").notNull(),
   recommendedChecks: jsonb("recommendedChecks"),
   riskLevel: varchar("riskLevel", { length: 32 }).default("medium").notNull(),
-  reviewStatus: varchar("reviewStatus", { length: 32 }).default("needs_review").notNull(),
+  reviewStatus: varchar("reviewStatus", { length: 32 })
+    .default("needs_review")
+    .notNull(),
   reviewerUserId: integer("reviewerUserId"),
   approvedAt: dateTimestamp(),
   archivedAt: dateTimestamp(),
@@ -400,15 +603,18 @@ export const faultCodeReferences = pgTable("faultCodeReferences", {
   updatedAt: dateTimestamp().defaultNow().notNull(),
 });
 
-export const faultCodeReferenceApprovals = pgTable("faultCodeReferenceApprovals", {
-  id: serial("id").primaryKey(),
-  referenceId: integer("referenceId").notNull(),
-  reviewerUserId: integer("reviewerUserId").notNull(),
-  previousStatus: varchar("previousStatus", { length: 32 }),
-  nextStatus: varchar("nextStatus", { length: 32 }).notNull(),
-  notes: text("notes"),
-  createdAt: dateTimestamp().defaultNow().notNull(),
-});
+export const faultCodeReferenceApprovals = pgTable(
+  "faultCodeReferenceApprovals",
+  {
+    id: serial("id").primaryKey(),
+    referenceId: integer("referenceId").notNull(),
+    reviewerUserId: integer("reviewerUserId").notNull(),
+    previousStatus: varchar("previousStatus", { length: 32 }),
+    nextStatus: varchar("nextStatus", { length: 32 }).notNull(),
+    notes: text("notes"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+  }
+);
 
 export const aiQualityReviews = pgTable("aiQualityReviews", {
   id: serial("id").primaryKey(),
@@ -426,11 +632,15 @@ export const aiQualityReviews = pgTable("aiQualityReviews", {
   classificationConfidence: integer("classificationConfidence"),
   finalDiagnosisConfidence: integer("finalDiagnosisConfidence"),
   referenceLookupUsed: boolean("referenceLookupUsed").default(false).notNull(),
-  referenceMatchStatus: varchar("referenceMatchStatus", { length: 64 }).default("none").notNull(),
+  referenceMatchStatus: varchar("referenceMatchStatus", { length: 64 })
+    .default("none")
+    .notNull(),
   clarificationCount: integer("clarificationCount").default(0).notNull(),
   totalAiCalls: integer("totalAiCalls").default(0).notNull(),
   estimatedPromptTokens: integer("estimatedPromptTokens").default(0).notNull(),
-  estimatedCompletionTokens: integer("estimatedCompletionTokens").default(0).notNull(),
+  estimatedCompletionTokens: integer("estimatedCompletionTokens")
+    .default(0)
+    .notNull(),
   estimatedTotalTokens: integer("estimatedTotalTokens").default(0).notNull(),
   estimatedCostUsd: numeric("estimatedCostUsd", { precision: 10, scale: 6 }),
   finalSafeToDriveDecision: varchar("finalSafeToDriveDecision", { length: 64 }),
@@ -442,31 +652,43 @@ export const aiQualityReviews = pgTable("aiQualityReviews", {
   createdAt: dateTimestamp().defaultNow().notNull(),
 });
 
-export const diagnosticModelComparisons = pgTable("diagnosticModelComparisons", {
-  id: serial("id").primaryKey(),
-  diagnosticCaseId: varchar("diagnosticCaseId", { length: 128 }).notNull(),
-  fleetId: integer("fleetId"),
-  vehicleId: varchar("vehicleId", { length: 64 }),
-  requestedByUserId: integer("requestedByUserId").notNull(),
-  lowCostModel: varchar("lowCostModel", { length: 255 }),
-  advancedModel: varchar("advancedModel", { length: 255 }),
-  lowCostOutput: jsonb("lowCostOutput"),
-  advancedOutput: jsonb("advancedOutput"),
-  selectedOutput: varchar("selectedOutput", { length: 32 }),
-  estimatedCostUsd: numeric("estimatedCostUsd", { precision: 10, scale: 6 }),
-  createdAt: dateTimestamp().defaultNow().notNull(),
-});
+export const diagnosticModelComparisons = pgTable(
+  "diagnosticModelComparisons",
+  {
+    id: serial("id").primaryKey(),
+    diagnosticCaseId: varchar("diagnosticCaseId", { length: 128 }).notNull(),
+    fleetId: integer("fleetId"),
+    vehicleId: varchar("vehicleId", { length: 64 }),
+    requestedByUserId: integer("requestedByUserId").notNull(),
+    lowCostModel: varchar("lowCostModel", { length: 255 }),
+    advancedModel: varchar("advancedModel", { length: 255 }),
+    lowCostOutput: jsonb("lowCostOutput"),
+    advancedOutput: jsonb("advancedOutput"),
+    selectedOutput: varchar("selectedOutput", { length: 32 }),
+    estimatedCostUsd: numeric("estimatedCostUsd", { precision: 10, scale: 6 }),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+  }
+);
 
 export const repairOutcomes = pgTable("repairOutcomes", {
   id: serial("id").primaryKey(),
   fleetId: integer("fleetId").notNull(),
   vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
-  defectId: integer("defectId").notNull(),
+  defectId: integer("defectId"),
+  diagnosticCaseId: varchar("diagnosticCaseId", { length: 128 }),
   recordedByUserId: integer("recordedByUserId").notNull(),
   confirmedFault: text("confirmedFault").notNull(),
   repairPerformed: text("repairPerformed").notNull(),
   partsReplaced: jsonb("partsReplaced"),
-  aiDiagnosisCorrect: varchar("aiDiagnosisCorrect", { length: 32 }).default("unknown").notNull(),
+  aiDiagnosisCorrect: varchar("aiDiagnosisCorrect", { length: 32 })
+    .default("unknown")
+    .notNull(),
+  confirmationState: varchar("confirmationState", { length: 64 })
+    .default("manager_confirmed")
+    .notNull(),
+  source: varchar("source", { length: 64 })
+    .default("inspection_repair_outcome")
+    .notNull(),
   downtimeStart: dateTimestamp(),
   downtimeEnd: dateTimestamp(),
   returnedToServiceAt: dateTimestamp(),
@@ -512,6 +734,19 @@ export const onboardingSteps = pgTable("onboardingSteps", {
   createdAt: dateTimestamp().defaultNow().notNull(),
 });
 
+export const quickStartGuideProgress = pgTable("quickStartGuideProgress", {
+  id: serial("id").primaryKey(),
+  userId: integer("userId").notNull(),
+  fleetId: integer("fleetId"),
+  role: varchar("role", { length: 64 }).notNull(),
+  manualSlug: varchar("manualSlug", { length: 80 }).notNull(),
+  manualViewedAt: dateTimestamp(),
+  manualCompletedAt: dateTimestamp(),
+  completionSource: varchar("completionSource", { length: 64 }),
+  createdAt: dateTimestamp().defaultNow().notNull(),
+  updatedAt: dateTimestamp().defaultNow().notNull(),
+});
+
 export const planFeatures = pgTable("planFeatures", {
   id: serial("id").primaryKey(),
   planId: integer("planId").notNull(),
@@ -535,7 +770,9 @@ export const pilotAccessCodes = pgTable("pilotAccessCodes", {
   status: pilotAccessCodeStatusEnum("status").default("active").notNull(),
   maxUsers: integer("maxUsers").default(1).notNull(),
   maxVehicles: integer("maxVehicles").default(3).notNull(),
-  activationDurationDays: integer("activationDurationDays").default(14).notNull(),
+  activationDurationDays: integer("activationDurationDays")
+    .default(14)
+    .notNull(),
   hardExpiryDate: timestamp("hardExpiryDate", { mode: "date" }),
   activatedAt: timestamp("activatedAt", { mode: "date" }),
   expiresAt: timestamp("expiresAt", { mode: "date" }),
@@ -588,6 +825,23 @@ export const tadisAlerts = pgTable("tadisAlerts", {
   createdAt: dateTimestamp().defaultNow().notNull(),
 });
 
+export const earlyWarningFlags = pgTable("earlyWarningFlags", {
+  id: serial("id").primaryKey(),
+  fleetId: integer("fleetId").notNull(),
+  vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
+  defectId: integer("defectId"),
+  warningType: varchar("warningType", { length: 64 }).notNull(),
+  warningReason: text("warningReason").notNull(),
+  severity: varchar("severity", { length: 32 }).default("medium").notNull(),
+  dedupeKey: varchar("dedupeKey", { length: 255 }),
+  isActive: boolean("isActive").default(true).notNull(),
+  metadata: jsonb("metadata"),
+  resolvedByUserId: integer("resolvedByUserId"),
+  resolvedAt: dateTimestamp(),
+  createdAt: dateTimestamp().defaultNow().notNull(),
+  updatedAt: dateTimestamp().defaultNow().notNull(),
+});
+
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   openId: varchar("openId", { length: 64 }).notNull().unique(),
@@ -597,10 +851,16 @@ export const users = pgTable("users", {
   loginMethod: varchar("loginMethod", { length: 64 }),
   emailVerified: boolean("emailVerified").default(false).notNull(),
   role: userRoleEnum("role").default("driver").notNull(),
+  ownerOperatorMode: boolean("ownerOperatorMode").default(false).notNull(),
+  internalAdminRole: varchar("internalAdminRole", { length: 32 }),
   managerEmail: varchar("managerEmail", { length: 320 }),
   managerUserId: integer("managerUserId"),
-  subscriptionTier: subscriptionTierEnum("subscriptionTier").default("free").notNull(),
-  billingCadence: billingCadenceEnum("billingCadence").default("monthly").notNull(),
+  subscriptionTier: subscriptionTierEnum("subscriptionTier")
+    .default("free")
+    .notNull(),
+  billingCadence: billingCadenceEnum("billingCadence")
+    .default("monthly")
+    .notNull(),
   billingStatus: billingStatusEnum("billingStatus").default("active").notNull(),
   stripeCustomerId: varchar("stripeCustomerId", { length: 255 }),
   stripeSubscriptionId: varchar("stripeSubscriptionId", { length: 255 }),
@@ -665,7 +925,9 @@ export const vehicles = pgTable("vehicles", {
   fleetId: integer("fleetId").notNull(),
   assignedDriverId: integer("assignedDriverId"),
   assetType: assetTypeEnum("assetType").default("tractor").notNull(),
-  assetCategory: varchar("assetCategory", { length: 32 }).default("powered_vehicle").notNull(),
+  assetCategory: varchar("assetCategory", { length: 32 })
+    .default("powered_vehicle")
+    .notNull(),
   vehicleType: varchar("vehicleType", { length: 64 }),
   isPoweredVehicle: boolean("isPoweredVehicle").default(true).notNull(),
   isTrailer: boolean("isTrailer").default(false).notNull(),
@@ -679,9 +941,23 @@ export const vehicles = pgTable("vehicles", {
   mileage: integer("mileage").default(0),
   engineHours: integer("engineHours").default(0),
   configuration: jsonb("configuration"),
-  complianceStatus: complianceStatusEnum("complianceStatus").default("green").notNull(),
+  complianceStatus: complianceStatusEnum("complianceStatus")
+    .default("green")
+    .notNull(),
   status: vehicleStatusEnum("status").default("active"),
-  assetRecordStatus: assetRecordStatusEnum("assetRecordStatus").default("active").notNull(),
+  operationalState: varchar("operationalState", { length: 32 })
+    .default("active")
+    .notNull(),
+  operationalDecisionInspectionId: integer("operationalDecisionInspectionId"),
+  operationalDecisionDefectId: integer("operationalDecisionDefectId"),
+  operationalDecisionByUserId: integer("operationalDecisionByUserId"),
+  operationalDecisionAt: dateTimestamp(),
+  operationalInstruction: text("operationalInstruction"),
+  lastCleanInspectionId: integer("lastCleanInspectionId"),
+  lastCleanInspectionAt: dateTimestamp(),
+  assetRecordStatus: assetRecordStatusEnum("assetRecordStatus")
+    .default("active")
+    .notNull(),
   trailerLinkStatus: varchar("trailerLinkStatus", { length: 32 }),
   linkedPoweredVehicleId: varchar("linkedPoweredVehicleId", { length: 64 }),
   createdByUserId: integer("createdByUserId"),
@@ -696,7 +972,9 @@ export const vehicleAssignments = pgTable("vehicleAssignments", {
   driverUserId: integer("driverUserId"),
   driverInvitationId: integer("driverInvitationId"),
   assignedByUserId: integer("assignedByUserId").notNull(),
-  accessType: varchar("accessType", { length: 32 }).default("permanent").notNull(),
+  accessType: varchar("accessType", { length: 32 })
+    .default("permanent")
+    .notNull(),
   startsAt: dateTimestamp().defaultNow().notNull(),
   expiresAt: dateTimestamp(),
   status: varchar("status", { length: 32 }).default("active").notNull(),
@@ -711,7 +989,9 @@ export const vehicleAccessRequests = pgTable("vehicleAccessRequests", {
   id: serial("id").primaryKey(),
   fleetId: integer("fleetId").notNull(),
   vehicleId: varchar("vehicleId", { length: 64 }),
-  requestedVehicleIdentifier: varchar("requestedVehicleIdentifier", { length: 255 }),
+  requestedVehicleIdentifier: varchar("requestedVehicleIdentifier", {
+    length: 255,
+  }),
   requestedByDriverId: integer("requestedByDriverId").notNull(),
   reason: varchar("reason", { length: 64 }).notNull(),
   note: text("note"),
@@ -733,7 +1013,9 @@ export const subscriptions = pgTable("subscriptions", {
   stripeSubscriptionId: varchar("stripeSubscriptionId", { length: 255 }),
   stripePriceId: varchar("stripePriceId", { length: 255 }),
   tier: subscriptionTierEnum("tier").default("free").notNull(),
-  billingCadence: billingCadenceEnum("billingCadence").default("monthly").notNull(),
+  billingCadence: billingCadenceEnum("billingCadence")
+    .default("monthly")
+    .notNull(),
   billingStatus: billingStatusEnum("billingStatus").default("active").notNull(),
   currentPeriodStart: dateTimestamp(),
   currentPeriodEnd: dateTimestamp(),
@@ -756,7 +1038,9 @@ export const fleetQuoteRequests = pgTable("fleetQuoteRequests", {
   driverCount: integer("driverCount").default(0).notNull(),
   mainNeeds: text("mainNeeds").notNull(),
   notes: text("notes"),
-  status: varchar("status", { length: 64 }).default("pending_fleet_review").notNull(),
+  status: varchar("status", { length: 64 })
+    .default("pending_fleet_review")
+    .notNull(),
   createdAt: dateTimestamp().defaultNow().notNull(),
   updatedAt: dateTimestamp().defaultNow().notNull(),
 });
@@ -771,7 +1055,9 @@ export const leadSubmissions = pgTable("lead_submissions", {
   vehicleTypes: text("vehicle_types"),
   location: varchar("location", { length: 255 }),
   biggestMaintenanceChallenge: text("biggest_maintenance_challenge").notNull(),
-  interestType: leadInterestTypeEnum("interest_type").default("book_a_demo").notNull(),
+  interestType: leadInterestTypeEnum("interest_type")
+    .default("book_a_demo")
+    .notNull(),
   preferredDemoTime: varchar("preferred_demo_time", { length: 255 }),
   sourcePage: varchar("source_page", { length: 255 }),
   utmSource: varchar("utm_source", { length: 255 }),
@@ -785,6 +1071,48 @@ export const leadSubmissions = pgTable("lead_submissions", {
   updatedAt: dateTimestamp().defaultNow().notNull(),
 });
 
+// Leads from the public Fleet Downtime Cost Calculator. Stored server-side only;
+// see drizzle/0029_downtime_calculator_leads.sql for RLS (no public read).
+export const downtimeCalculatorLeads = pgTable("downtime_calculator_leads", {
+  id: serial("id").primaryKey(),
+  createdAt: dateTimestamp().defaultNow().notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  email: varchar("email", { length: 320 }).notNull(),
+  phone: varchar("phone", { length: 50 }),
+  company: varchar("company", { length: 255 }).notNull(),
+  role: varchar("role", { length: 255 }).notNull(),
+  fleetSize: integer("fleet_size").notNull(),
+  vehicleTypes: text("vehicle_types"),
+  currentMaintenanceWorkflow: varchar("current_maintenance_workflow", {
+    length: 64,
+  }),
+  biggestDowntimeIssue: text("biggest_downtime_issue"),
+  affectedVehiclesPerMonth: integer("affected_vehicles_per_month"),
+  averageDowntimeDays: numeric("average_downtime_days"),
+  revenuePerVehiclePerDay: numeric("revenue_per_vehicle_per_day"),
+  driverLabourCostPerDay: numeric("driver_labour_cost_per_day"),
+  repairDecisionDelayDays: numeric("repair_decision_delay_days"),
+  repeatRepairEventsPerMonth: integer("repeat_repair_events_per_month"),
+  downtimeCostPerVehiclePerDay: numeric("downtime_cost_per_vehicle_per_day"),
+  monthlyDirectDowntimeCost: numeric("monthly_direct_downtime_cost"),
+  decisionDelayCost: numeric("decision_delay_cost"),
+  repeatRepairRiskCost: numeric("repeat_repair_risk_cost"),
+  estimatedMonthlyDowntimeExposure: numeric(
+    "estimated_monthly_downtime_exposure"
+  ),
+  estimatedAnnualDowntimeExposure: numeric(
+    "estimated_annual_downtime_exposure"
+  ),
+  workflowRiskScore: integer("workflow_risk_score"),
+  workflowRiskBand: varchar("workflow_risk_band", { length: 32 }),
+  source: varchar("source", { length: 64 })
+    .default("fleet_downtime_cost_calculator")
+    .notNull(),
+  pagePath: varchar("page_path", { length: 255 }),
+  userAgent: text("user_agent"),
+  metadata: jsonb("metadata"),
+});
+
 export const adminAlerts = pgTable("adminAlerts", {
   id: serial("id").primaryKey(),
   userId: integer("userId"),
@@ -796,6 +1124,23 @@ export const adminAlerts = pgTable("adminAlerts", {
   status: varchar("status", { length: 64 }).default("open").notNull(),
   createdAt: dateTimestamp().defaultNow().notNull(),
   updatedAt: dateTimestamp().defaultNow().notNull(),
+});
+
+export const supportRecoveryActions = pgTable("supportRecoveryActions", {
+  id: serial("id").primaryKey(),
+  actionType: varchar("actionType", { length: 100 }).notNull(),
+  staffUserId: integer("staffUserId").notNull(),
+  targetFleetId: integer("targetFleetId"),
+  targetUserId: integer("targetUserId"),
+  targetVehicleId: varchar("targetVehicleId", { length: 64 }),
+  targetInspectionId: integer("targetInspectionId"),
+  targetDiagnosticCaseId: varchar("targetDiagnosticCaseId", { length: 128 }),
+  targetMembershipId: integer("targetMembershipId"),
+  targetPilotCodeId: integer("targetPilotCodeId"),
+  reason: text("reason").notNull(),
+  beforeState: jsonb("beforeState"),
+  afterState: jsonb("afterState"),
+  createdAt: dateTimestamp().defaultNow().notNull(),
 });
 
 export const aiUsageLogs = pgTable("aiUsageLogs", {

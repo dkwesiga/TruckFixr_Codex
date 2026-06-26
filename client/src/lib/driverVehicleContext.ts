@@ -2,6 +2,7 @@ export type DriverVehicleContext = {
   id: number | string;
   fleetId: number;
   label: string;
+  relationshipSummary?: string | null;
   vin: string;
   licensePlate: string;
   make: string;
@@ -30,6 +31,7 @@ export function saveLastDriverVehicleContext(
       id: vehicle.id,
       fleetId: vehicle.fleetId,
       label: vehicle.label ?? "",
+      relationshipSummary: vehicle.relationshipSummary ?? null,
       vin: vehicle.vin ?? "",
       licensePlate: vehicle.licensePlate ?? "",
       make: vehicle.make ?? "",
@@ -69,6 +71,10 @@ export function loadLastDriverVehicleContext(): DriverVehicleContext | null {
       id: parsed.id,
       fleetId,
       label: typeof parsed.label === "string" ? parsed.label : "",
+      relationshipSummary:
+        typeof parsed.relationshipSummary === "string"
+          ? parsed.relationshipSummary
+          : null,
       vin: typeof parsed.vin === "string" ? parsed.vin : "",
       licensePlate: typeof parsed.licensePlate === "string" ? parsed.licensePlate : "",
       make: typeof parsed.make === "string" ? parsed.make : "",

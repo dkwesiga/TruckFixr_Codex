@@ -33,6 +33,7 @@ describe("inspection draft storage", () => {
       fleetId: 1,
       savedAt: new Date().toISOString(),
       data: {
+        inspectionSessionId: "driver-session-test-42",
         stepIndex: 2,
         odometer: "245320",
         location: "Toronto yard",
@@ -65,6 +66,7 @@ describe("inspection draft storage", () => {
     enqueueInspectionSubmission(storage, {
       vehicleId: 42,
       fleetId: 1,
+      inspectionSessionId: "driver-session-test-42",
       odometer: 245320,
       location: "Toronto yard",
       attested: true,
@@ -77,6 +79,7 @@ describe("inspection draft storage", () => {
     enqueueInspectionSubmission(storage, {
       vehicleId: 43,
       fleetId: 1,
+      inspectionSessionId: "driver-session-test-43",
       odometer: 300100,
       location: "Ottawa yard",
       attested: true,
@@ -94,5 +97,83 @@ describe("inspection draft storage", () => {
       flushedCount: 2,
       remainingCount: 0,
     });
+  });
+
+  it("replaces queued submissions for the same vehicle session", async () => {
+    const storage = createMemoryStorage();
+
+    enqueueInspectionSubmission(storage, {
+      vehicleId: 42,
+      fleetId: 1,
+      inspectionSessionId: "driver-session-test-42",
+      odometer: 245320,
+      location: "Toronto yard",
+      attested: true,
+      driverPrintedName: "Driver One",
+      driverSignature: "Driver One",
+      driverSignatureMode: "typed",
+      results: [{ itemId: "brakes-service-response", status: "pass" }],
+    });
+
+    enqueueInspectionSubmission(storage, {
+      vehicleId: 42,
+      fleetId: 1,
+      inspectionSessionId: "driver-session-test-42",
+      odometer: 245500,
+      location: "Toronto gate",
+      attested: true,
+      driverPrintedName: "Driver One",
+      driverSignature: "Driver One",
+      driverSignatureMode: "typed",
+      results: [{ itemId: "brakes-service-response", status: "pass" }],
+    });
+
+    await expect(
+      flushQueuedInspectionSubmissions(storage, async () => ({ ok: true }))
+    ).resolves.toEqual({
+      flushedCount: 1,
+      remainingCount: 0,
+    });
+  });
+
+  it("does not clear a newer draft from a different inspection session", async () => {
+    const storage = createMemoryStorage();
+
+    saveInspectionDraft(storage, {
+      version: 1,
+      vehicleId: 42,
+      fleetId: 1,
+      savedAt: new Date().toISOString(),
+      data: {
+        inspectionSessionId: "driver-session-newer",
+        stepIndex: 1,
+        odometer: "245999",
+        location: "Mississauga",
+        attested: false,
+        signatureMode: "typed",
+        driverSignature: "",
+        drawnSignature: "",
+        responses: {},
+      },
+    });
+
+    enqueueInspectionSubmission(storage, {
+      vehicleId: 42,
+      fleetId: 1,
+      inspectionSessionId: "driver-session-older",
+      odometer: 245320,
+      location: "Toronto yard",
+      attested: true,
+      driverPrintedName: "Driver One",
+      driverSignature: "Driver One",
+      driverSignatureMode: "typed",
+      results: [{ itemId: "brakes-service-response", status: "pass" }],
+    });
+
+    await flushQueuedInspectionSubmissions(storage, async () => ({ ok: true }));
+
+    expect(loadInspectionDraft(storage, 42)?.data.inspectionSessionId).toBe(
+      "driver-session-newer"
+    );
   });
 });

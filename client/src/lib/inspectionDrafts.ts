@@ -6,10 +6,15 @@ import {
 } from "../../../shared/inspection";
 
 export type InspectionDraftItemResponse = {
-  status?: "pass" | "fail";
+  status?: "pass" | "fail" | "na";
   classification?: "minor" | "major" | "not_sure";
   comment?: string;
   photoUrls: string[];
+};
+
+export type InspectionDraftProofPhotoPrompt = {
+  itemId: string;
+  label: string;
 };
 
 export type InspectionChecklistSnapshot = {
@@ -58,6 +63,7 @@ export type InspectionDraft = {
   fleetId: number;
   savedAt: string;
   data: {
+    inspectionSessionId?: string | null;
     stepIndex: number;
     odometer: string;
     location: string;
@@ -66,6 +72,8 @@ export type InspectionDraft = {
     driverSignature: string;
     drawnSignature: string;
     inspectionSheetType?: InspectionSheetType | null;
+    proofPhotoPrompts?: InspectionDraftProofPhotoPrompt[];
+    proofPhotos?: Record<string, string>;
     responses: Record<string, InspectionDraftItemResponse>;
   };
 };
@@ -90,22 +98,32 @@ const draftSchema: z.ZodType<InspectionDraft> = z.object({
   fleetId: z.number(),
   savedAt: z.string(),
   data: z.object({
+    inspectionSessionId: z.string().nullable().optional(),
     stepIndex: z.number(),
     odometer: z.string(),
     location: z.string(),
     attested: z.boolean(),
-        signatureMode: z.enum(["typed", "drawn"]),
-        driverSignature: z.string(),
-        drawnSignature: z.string(),
-        inspectionSheetType: inspectionSheetTypeSchema.nullable().optional(),
-        responses: z.record(
-          z.string(),
-          z.object({
-            status: z.enum(["pass", "fail"]).optional(),
-            classification: z.enum(["minor", "major", "not_sure"]).optional(),
-            comment: z.string().optional(),
-            photoUrls: z.array(z.string()),
-          })
+    signatureMode: z.enum(["typed", "drawn"]),
+    driverSignature: z.string(),
+    drawnSignature: z.string(),
+    inspectionSheetType: inspectionSheetTypeSchema.nullable().optional(),
+    proofPhotoPrompts: z
+      .array(
+        z.object({
+          itemId: z.string(),
+          label: z.string(),
+        })
+      )
+      .optional(),
+    proofPhotos: z.record(z.string(), z.string()).optional(),
+    responses: z.record(
+      z.string(),
+      z.object({
+        status: z.enum(["pass", "fail", "na"]).optional(),
+        classification: z.enum(["minor", "major", "not_sure"]).optional(),
+        comment: z.string().optional(),
+        photoUrls: z.array(z.string()),
+      })
     ),
   }),
 });
@@ -153,7 +171,11 @@ export function saveInspectionDraft(
   draft: InspectionDraft
 ) {
   if (!storage) return;
-  storage.setItem(getDraftKey(draft.vehicleId), JSON.stringify(draft));
+  try {
+    storage.setItem(getDraftKey(draft.vehicleId), JSON.stringify(draft));
+  } catch (error) {
+    console.warn("[InspectionDrafts] Unable to save inspection draft:", error);
+  }
 }
 
 export function loadInspectionDraft(storage: LocalStorageLike | null, vehicleId: string | number) {
@@ -252,7 +274,11 @@ export function enqueueInspectionSubmission(
   if (!storage) return null;
 
   const nextItem: QueuedInspectionSubmission = {
-    id: `${submission.vehicleId}-${Date.now()}`,
+    id:
+      submission.inspectionSessionId?.trim()
+        ? `${submission.vehicleId}:${submission.inspectionSessionId.trim()}`
+        :
+      `${submission.vehicleId}-${Date.now()}`,
     vehicleId: submission.vehicleId,
     fleetId: submission.fleetId,
     queuedAt: new Date().toISOString(),
@@ -260,8 +286,37 @@ export function enqueueInspectionSubmission(
   };
 
   const current = getQueuedInspectionSubmissions(storage);
-  setQueuedInspectionSubmissions(storage, [...current, nextItem]);
+  const nextQueue = nextItem.submission.inspectionSessionId
+    ? [
+        ...current.filter(
+          (entry) =>
+            !(
+              String(entry.vehicleId) === String(nextItem.vehicleId) &&
+              entry.submission.inspectionSessionId === nextItem.submission.inspectionSessionId
+            )
+        ),
+        nextItem,
+      ]
+    : [...current, nextItem];
+  setQueuedInspectionSubmissions(storage, nextQueue);
   return nextItem;
+}
+
+function clearInspectionDraftIfMatchesQueueEntry(
+  storage: LocalStorageLike | null,
+  entry: QueuedInspectionSubmission
+) {
+  const activeDraft = loadInspectionDraft(storage, entry.vehicleId);
+  if (!activeDraft) return;
+
+  const queuedSessionId = entry.submission.inspectionSessionId?.trim();
+  const draftSessionId = activeDraft.data.inspectionSessionId?.trim();
+
+  if (draftSessionId && queuedSessionId !== draftSessionId) {
+    return;
+  }
+
+  clearInspectionDraft(storage, entry.vehicleId);
 }
 
 export async function flushQueuedInspectionSubmissions(
@@ -282,7 +337,7 @@ export async function flushQueuedInspectionSubmissions(
     try {
       await submitter(entry.submission);
       flushedCount += 1;
-      clearInspectionDraft(storage, entry.vehicleId);
+      clearInspectionDraftIfMatchesQueueEntry(storage, entry);
     } catch {
       remaining.push(entry);
     }

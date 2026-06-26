@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
+import OwnerOperatorGate from "@/components/OwnerOperatorGate";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -9,9 +10,12 @@ import VehicleAccessRequestDialog from "@/components/VehicleAccessRequestDialog"
 import { trackFeatureAccessed } from "@/lib/analytics";
 import { loadLastDriverVehicleContext, saveLastDriverVehicleContext } from "@/lib/driverVehicleContext";
 import { type DriverVehicleRecord } from "@/lib/driverVehicles";
+import { useOwnerOperatorReturnToOwner } from "@/hooks/useOwnerOperatorModeNavigation";
 import { useAuthContext } from "@/hooks/useAuthContext";
 import { trpc } from "@/lib/trpc";
 import { getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
+import { isOwnerOperatorEnabled } from "@/lib/ownerOperator";
+import { getDemoDiagnosisCase } from "../../../shared/demoAssets";
 import { toast } from "sonner";
 import { AlertTriangle, ChevronLeft, CheckCircle2, Sparkles, Stethoscope, Truck, Wrench } from "lucide-react";
 
@@ -175,6 +179,9 @@ function DriverDiagnosisContent() {
     () => new URLSearchParams(window.location.search),
     []
   );
+  const demoCaseKey = params.get("demoCase");
+  const demoMode = params.get("demoMode");
+  const demoCase = useMemo(() => getDemoDiagnosisCase(demoCaseKey), [demoCaseKey]);
   const storedVehicle = useMemo(() => loadLastDriverVehicleContext(), []);
   const vehicleId = params.get("vehicle") ?? (storedVehicle ? String(storedVehicle.id) : null);
   const fleetId = useMemo(() => {
@@ -189,11 +196,14 @@ function DriverDiagnosisContent() {
     vin: params.get("vin") ?? storedVehicle?.vin,
     vehicleId: vehicleId ?? undefined,
   });
-  const isOwnerOperator = user?.role === "owner" || user?.role === "manager";
+  if (user?.role === "owner" && !isOwnerOperatorEnabled(user)) {
+    return <OwnerOperatorGate />;
+  }
+  const isOwnerOperator = user?.role === "manager" || isOwnerOperatorEnabled(user);
 
-  const [symptom, setSymptom] = useState("");
-  const [faultCode, setFaultCode] = useState("");
-  const [diagnosisStarted, setDiagnosisStarted] = useState(false);
+  const [symptom, setSymptom] = useState(() => demoCase?.symptom ?? "");
+  const [faultCode, setFaultCode] = useState(() => demoCase?.faultCodes.join(", ") ?? "");
+  const [diagnosisStarted, setDiagnosisStarted] = useState(() => demoMode === "result" && Boolean(demoCase));
   const [clarificationHistory, setClarificationHistory] = useState<Array<{ question: string; answer: string }>>([]);
   const [clarificationAnswer, setClarificationAnswer] = useState("");
   const [diagnosisSessionId, setDiagnosisSessionId] = useState<string | null>(null);
@@ -203,8 +213,42 @@ function DriverDiagnosisContent() {
     enabled: Boolean(user?.id),
   });
 
+  const demoDiagnosisPayload = useMemo(() => {
+    if (!demoCase || demoMode !== "result") return null;
+
+    return {
+      ...demoCase.result,
+      case_id: `demo-${demoCase.key}`,
+      vehicle_id: vehicleId ?? "demo-vehicle",
+      issue_summary: demoCase.result.top_most_likely_cause,
+      likely_causes: demoCase.result.possible_causes.map((cause: { cause: string; probability: number }) => ({
+        cause: cause.cause,
+        probability: cause.probability,
+        likelihood: cause.probability >= 70 ? "high" : cause.probability >= 40 ? "medium" : "low",
+        reasoning:
+          demoCase.result.final_llm_ranking.find((entry: { cause_name: string; ranking_rationale: string }) => entry.cause_name === cause.cause)?.ranking_rationale ?? "",
+      })),
+      clarifying_question: demoCase.result.clarifying_question ?? "",
+      clarification_reason: demoCase.result.question_rationale ?? "",
+      recommended_tests: demoCase.result.recommended_tests,
+      likely_parts: demoCase.result.possible_replacement_parts,
+      safe_to_drive_decision:
+        demoCase.key === "air_leak"
+          ? "tow_or_repair_immediately"
+          : demoCase.result.risk_level === "high"
+            ? "stop_and_inspect"
+            : "drive_with_caution",
+      maintenance_recommendation: demoCase.result.recommended_fix,
+      driver_friendly_explanation: demoCase.result.driver_message,
+      advanced_ai_review_used: false,
+      model_used: "demo-precomputed",
+      fallback_used: demoCase.result.fallback_used,
+      status: demoCase.result.next_action === "ask_question" ? "clarification_needed" : "final",
+    };
+  }, [demoCase, demoMode, vehicleId]);
+
   const hasDiagnosisInput = symptom.trim().length > 0;
-  const diagnosis = diagnoseMutation.data;
+  const diagnosis = diagnoseMutation.data ?? demoDiagnosisPayload;
   const diagnosisView = useMemo(() => normalizeDiagnosisView(diagnosis), [diagnosis]);
   const activeClarifyingQuestion = diagnosisView?.clarifyingQuestion.trim() ?? "";
   const isAwaitingClarification =
@@ -232,6 +276,8 @@ function DriverDiagnosisContent() {
         id: vehicle.id,
         fleetId: vehicle.fleetId,
         label: vehicle.unitNumber?.trim() || vehicle.licensePlate?.trim() || vehicle.vin,
+        relationshipSummary:
+          typeof vehicle.linkedVehicleSummary === "string" ? vehicle.linkedVehicleSummary : null,
         vin: vehicle.vin,
         licensePlate: vehicle.licensePlate || "UNKNOWN",
         make: vehicle.make || "Truck",
@@ -255,6 +301,31 @@ function DriverDiagnosisContent() {
     Boolean(vehicleId) && !selectedVehicle && !vehiclesQuery.isLoading;
   const clarificationPanelRef = useRef<HTMLDivElement | null>(null);
   const lastAnnouncedQuestionRef = useRef("");
+  const hasDriverModeWorkInProgress =
+    symptom.trim().length > 0 ||
+    faultCode.trim().length > 0 ||
+    clarificationHistory.length > 0 ||
+    clarificationAnswer.trim().length > 0 ||
+    diagnosisStarted ||
+    diagnoseMutation.isPending;
+  const {
+    canReturnToOwnerDashboard,
+    requestReturnToOwnerDashboard,
+    ownerDashboardReturnDialog,
+  } = useOwnerOperatorReturnToOwner({
+    hasInProgressWork: hasDriverModeWorkInProgress,
+    description:
+      "You have diagnosis work in progress. Leaving Driver Mode now may interrupt this intake and clarification flow.",
+  });
+
+  useEffect(() => {
+    if (!demoCase) return;
+    setSymptom((current: string) => current || demoCase.symptom);
+    setFaultCode((current: string) => current || demoCase.faultCodes.join(", "));
+    if (demoMode === "result") {
+      setDiagnosisStarted(true);
+    }
+  }, [demoCase, demoMode]);
 
   useEffect(() => {
     if (!diagnosisStarted || !diagnosisView) {
@@ -298,10 +369,16 @@ function DriverDiagnosisContent() {
 
     const normalizedFaultCodes = faultCode
       .split(/[,;\n]+/)
-      .map((code) => code.trim().toUpperCase())
+      .map((code: string) => code.trim().toUpperCase())
       .filter(Boolean);
 
     try {
+      if (demoDiagnosisPayload && nextClarificationHistory.length === 0) {
+        setDiagnosisStarted(true);
+        setClarificationAnswer("");
+        return;
+      }
+
       if (!hasResolvedFleetContext) {
         toast.error("Select or join a company fleet before starting diagnosis.");
         return;
@@ -343,6 +420,7 @@ function DriverDiagnosisContent() {
   if (!vehicleId) {
     return (
       <div className="app-shell min-h-screen">
+        {ownerDashboardReturnDialog}
         <main className="mx-auto max-w-4xl px-4 py-12 sm:px-6 lg:px-8">
           <Card className="fleet-panel border-[#ffdbcb] bg-[#fff6f0] shadow-none">
             <CardHeader>
@@ -378,6 +456,9 @@ function DriverDiagnosisContent() {
                           <div>
                             <p className="font-medium text-slate-900">{vehicle.label}</p>
                             <p className="text-sm text-slate-500">{vehicle.make} {vehicle.model} | {vehicle.vin}</p>
+                            {vehicle.relationshipSummary ? (
+                              <p className="mt-1 text-sm font-medium text-blue-700">{vehicle.relationshipSummary}</p>
+                            ) : null}
                           </div>
                         </div>
                         <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
@@ -406,6 +487,11 @@ function DriverDiagnosisContent() {
                       />
                     ) : null
                   )}
+                  {canReturnToOwnerDashboard ? (
+                    <Button variant="outline" onClick={requestReturnToOwnerDashboard}>
+                      Back to Owner Dashboard
+                    </Button>
+                  ) : null}
                   <Button variant="outline" onClick={() => (window.location.href = "/driver")}>Back to Dashboard</Button>
                 </div>
               </div>
@@ -429,6 +515,7 @@ function DriverDiagnosisContent() {
   if (isBlockedVehicleSelection) {
     return (
       <div className="app-shell min-h-screen">
+        {ownerDashboardReturnDialog}
         <main className="mx-auto max-w-4xl px-4 py-12 sm:px-6 lg:px-8">
           <Card className="fleet-panel border-[#ffdbcb] bg-[#fff6f0] shadow-none">
             <CardHeader>
@@ -447,6 +534,11 @@ function DriverDiagnosisContent() {
                   />
                 ) : null
               )}
+              {canReturnToOwnerDashboard ? (
+                <Button variant="outline" onClick={requestReturnToOwnerDashboard}>
+                  Back to Owner Dashboard
+                </Button>
+              ) : null}
               <Button variant="outline" onClick={() => (window.location.href = "/driver")}>
                 Back to Dashboard
               </Button>
@@ -459,16 +551,36 @@ function DriverDiagnosisContent() {
 
   return (
     <div className="app-shell min-h-screen">
+      {ownerDashboardReturnDialog}
       <header className="border-b border-[var(--fleet-outline)] bg-white/95 backdrop-blur">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-5 flex items-center justify-between">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-700 ring-1 ring-slate-200">
+              Driver Mode
+            </span>
+            {canReturnToOwnerDashboard ? (
+              <span className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 ring-1 ring-blue-200">
+                Owner-operator active
+              </span>
+            ) : null}
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="fleet-page-title text-2xl font-bold">Start Diagnosis</h1>
             <p className="text-sm text-slate-600">{vehicleLabel} diagnostic intake</p>
           </div>
-          <Button variant="outline" onClick={() => (window.location.href = "/driver")}>
-            <ChevronLeft className="w-4 h-4 mr-2" />
-            Back to Dashboard
-          </Button>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              {canReturnToOwnerDashboard ? (
+                <Button variant="outline" onClick={requestReturnToOwnerDashboard}>
+                  Back to Owner Dashboard
+                </Button>
+              ) : null}
+              <Button variant="outline" onClick={() => (window.location.href = "/driver")}>
+                <ChevronLeft className="w-4 h-4 mr-2" />
+                Back to Dashboard
+              </Button>
+            </div>
+          </div>
         </div>
       </header>
 

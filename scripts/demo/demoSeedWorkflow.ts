@@ -18,6 +18,7 @@ import {
   diagnosticModelComparisons,
   diagnosticReviewQueue,
   driverInvitations,
+  earlyWarningFlags,
   fleets,
   inAppAlerts,
   inspectionChecklistResponses,
@@ -36,6 +37,7 @@ import {
   vehicles,
 } from "../../drizzle/schema";
 import { canManageCompanyOperations } from "../../server/services/companyAccess";
+import { evaluateEarlyWarnings } from "../../server/services/earlyWarning";
 import {
   canViewVehicle,
   listDriverAccessibleVehiclesAcrossFleets,
@@ -203,21 +205,21 @@ function getPlanLimits(company: DemoCompanySeed) {
   switch (company.planName) {
     case "small_fleet":
       return {
-        poweredVehicleLimit: 10,
-        includedTrailerLimit: 8,
-        totalActiveTrailerLimit: 8,
+        poweredVehicleLimit: 5,
+        includedTrailerLimit: 5,
+        totalActiveTrailerLimit: 5,
         aiSessionMonthlyLimit: 250,
       };
     case "fleet_growth":
       return {
-        poweredVehicleLimit: 20,
-        includedTrailerLimit: 12,
-        totalActiveTrailerLimit: 12,
+        poweredVehicleLimit: 10,
+        includedTrailerLimit: 10,
+        totalActiveTrailerLimit: 10,
         aiSessionMonthlyLimit: 500,
       };
     case "fleet_pro":
       return {
-        poweredVehicleLimit: 35,
+        poweredVehicleLimit: 20,
         includedTrailerLimit: 20,
         totalActiveTrailerLimit: 20,
         aiSessionMonthlyLimit: 1000,
@@ -495,6 +497,9 @@ async function upsertFleetRow(db: DemoDb, company: DemoCompanySeed, ownerId: num
     paidPilotStartedAt: null,
     paidPilotEndsAt: null,
     salesStatus: "demo",
+    accountType: "demo" as const,
+    isDemoAccount: true,
+    driverModeEnabled: true,
     updatedAt: now(),
   };
 
@@ -551,6 +556,7 @@ async function clearFleetScopedDemoData(db: DemoDb, fleetId: number) {
     db.delete(inspectionPhotos).where(eq(inspectionPhotos.fleetId, fleetId)),
     db.delete(randomProofRequests).where(eq(randomProofRequests.fleetId, fleetId)),
     db.delete(inspectionFlags).where(eq(inspectionFlags.fleetId, fleetId)),
+    db.delete(earlyWarningFlags).where(eq(earlyWarningFlags.fleetId, fleetId)),
     db.delete(aiTriageRecords).where(eq(aiTriageRecords.fleetId, fleetId)),
     db.delete(aiQualityReviews).where(eq(aiQualityReviews.fleetId, fleetId)),
     db.delete(diagnosticModelComparisons).where(eq(diagnosticModelComparisons.fleetId, fleetId)),
@@ -2057,6 +2063,19 @@ export async function seedDemoData() {
     await seedDemoCompany(db, company, authMode);
   }
 
+  // Generate rule-based early-warning flags from the seeded issue history so
+  // the dashboard and vehicle profile show realistic warnings out of the box.
+  const seededFleets = await fetchDemoFleets(db);
+  for (const fleet of seededFleets) {
+    const fleetVehicles = await db
+      .select({ id: vehicles.id })
+      .from(vehicles)
+      .where(eq(vehicles.fleetId, fleet.id));
+    for (const vehicle of fleetVehicles) {
+      await evaluateEarlyWarnings({ fleetId: fleet.id, vehicleId: vehicle.id });
+    }
+  }
+
   return buildSeedSummary(db, authMode);
 }
 
@@ -2149,11 +2168,21 @@ export async function validateDemoSeed() {
     fleetIds.length > 0
       ? await db.select().from(inspectionFlags).where(inArray(inspectionFlags.fleetId, fleetIds))
       : [];
+  const earlyWarningsByFleet =
+    fleetIds.length > 0
+      ? await db.select().from(earlyWarningFlags).where(inArray(earlyWarningFlags.fleetId, fleetIds))
+      : [];
 
   checks.push({
     name: "demo_companies_exist",
     ok: demoFleets.length === 3,
     details: `Expected 3 demo companies, found ${demoFleets.length}.`,
+  });
+
+  checks.push({
+    name: "demo_early_warnings_generated",
+    ok: earlyWarningsByFleet.some((flag) => flag.isActive),
+    details: `Expected active rule-based early-warning flags across demo fleets, found ${earlyWarningsByFleet.filter((flag) => flag.isActive).length}.`,
   });
 
   checks.push({
@@ -2204,6 +2233,66 @@ export async function validateDemoSeed() {
     name: "trailers_are_separate_assets",
     ok: trailerCount === 5,
     details: `Expected 5 trailer assets with independent records, found ${trailerCount}.`,
+  });
+
+  const expectedTrailerLinks = DEMO_COMPANIES.flatMap((company) =>
+    company.vehicles
+      .filter((vehicle) => vehicle.assetType === "trailer" && vehicle.linkedPoweredVehicleId)
+      .map((vehicle) => ({
+        vehicleId: vehicle.id,
+        linkedPoweredVehicleId: vehicle.linkedPoweredVehicleId!,
+      }))
+  );
+  const missingTrailerLinks = expectedTrailerLinks.filter((expectedLink) => {
+    const trailer = vehiclesByFleet.find((vehicle) => vehicle.id === expectedLink.vehicleId);
+    const poweredVehicle = vehiclesByFleet.find(
+      (vehicle) => vehicle.id === expectedLink.linkedPoweredVehicleId
+    );
+    return (
+      !trailer ||
+      trailer.linkedPoweredVehicleId !== expectedLink.linkedPoweredVehicleId ||
+      trailer.trailerLinkStatus !== "linked" ||
+      !poweredVehicle ||
+      poweredVehicle.fleetId !== trailer.fleetId
+    );
+  });
+  checks.push({
+    name: "trailer_links_persisted",
+    ok: missingTrailerLinks.length === 0,
+    details:
+      missingTrailerLinks.length === 0
+        ? `Validated ${expectedTrailerLinks.length} seeded trailer links across the demo fleets.`
+        : `Trailer link mismatch for: ${missingTrailerLinks
+            .map((link) => `${link.vehicleId}->${link.linkedPoweredVehicleId}`)
+            .join(", ")}.`,
+  });
+
+  const activeDriverIdsByVehicle = new Map<string, Set<number>>();
+  for (const assignment of assignmentsByFleet) {
+    if (assignment.status !== "active" || assignment.driverUserId == null) continue;
+    const currentDrivers = activeDriverIdsByVehicle.get(String(assignment.vehicleId)) ?? new Set<number>();
+    currentDrivers.add(assignment.driverUserId);
+    activeDriverIdsByVehicle.set(String(assignment.vehicleId), currentDrivers);
+  }
+
+  const inaccessibleLinkedPairs = expectedTrailerLinks.filter((expectedLink) => {
+    const trailerDriverIds = activeDriverIdsByVehicle.get(expectedLink.vehicleId) ?? new Set<number>();
+    const poweredVehicleDriverIds =
+      activeDriverIdsByVehicle.get(expectedLink.linkedPoweredVehicleId) ?? new Set<number>();
+
+    return !Array.from(trailerDriverIds).some((driverUserId) =>
+      poweredVehicleDriverIds.has(driverUserId)
+    );
+  });
+  checks.push({
+    name: "linked_pairs_share_driver_access",
+    ok: inaccessibleLinkedPairs.length === 0,
+    details:
+      inaccessibleLinkedPairs.length === 0
+        ? `Validated ${expectedTrailerLinks.length} linked demo truck and trailer pairs with overlapping driver access.`
+        : `Linked pairs missing shared driver access: ${inaccessibleLinkedPairs
+            .map((link) => `${link.vehicleId}<->${link.linkedPoweredVehicleId}`)
+            .join(", ")}.`,
   });
 
   checks.push({

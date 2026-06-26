@@ -1,10 +1,12 @@
 import { z } from "zod";
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
+import { randomUUID } from "node:crypto";
 import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import {
   activityLogs,
+  aiQualityReviews,
   defects,
   inspectionChecklistResponses,
   inspections,
@@ -40,6 +42,18 @@ import {
   type MinimalDiagnosisContext,
 } from "../services/diagnosisWorkflow";
 import { preprocessDiagnosticInput } from "../services/faultCodeReferences";
+import {
+  buildConfirmedOutcomeReferences,
+  getStoredSolvedCaseSignals,
+  jaccardSimilarity,
+  scoreHistoricalDiagnosticCase,
+  tokenizeDiagnosticText,
+} from "../services/confirmedOutcomes";
+import { recordObservabilityEvent } from "../services/observability";
+
+// Re-exported for backward compatibility with existing importers/tests that
+// pull these TADIS scoring helpers from the diagnostics router.
+export { jaccardSimilarity, scoreHistoricalDiagnosticCase, tokenizeDiagnosticText };
 
 const recentPartKeywords = [
   "hose",
@@ -70,51 +84,6 @@ const recentPartKeywords = [
 function extractRecentParts(description: string | null | undefined) {
   const normalized = description?.toLowerCase() ?? "";
   return recentPartKeywords.filter((part) => normalized.includes(part));
-}
-
-export function tokenizeDiagnosticText(text: string) {
-  return new Set(
-    text
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, " ")
-      .split(/\s+/)
-      .filter((word) => word.length > 2)
-  );
-}
-
-export function jaccardSimilarity(a: Set<string>, b: Set<string>) {
-  if (a.size === 0 || b.size === 0) return 0;
-
-  let intersection = 0;
-  for (const token of Array.from(a)) {
-    if (b.has(token)) intersection += 1;
-  }
-
-  const union = a.size + b.size - intersection;
-  return union > 0 ? intersection / union : 0;
-}
-
-export function scoreHistoricalDiagnosticCase(input: {
-  caseSignals: string[];
-  caseFaultCodes: string[];
-  currentSymptoms: string[];
-  currentFaultCodes: string[];
-}) {
-  const symptomScore = jaccardSimilarity(
-    tokenizeDiagnosticText(input.caseSignals.join(" ")),
-    tokenizeDiagnosticText(input.currentSymptoms.join(" "))
-  );
-
-  const normalizedCaseCodes = new Set(normalizeFaultCodes(input.caseFaultCodes));
-  const normalizedCurrentCodes = new Set(normalizeFaultCodes(input.currentFaultCodes));
-  let codeMatches = 0;
-  for (const code of Array.from(normalizedCaseCodes)) {
-    if (normalizedCurrentCodes.has(code)) codeMatches += 1;
-  }
-  const codeUnion = normalizedCaseCodes.size + normalizedCurrentCodes.size - codeMatches;
-  const codeScore = codeUnion > 0 ? codeMatches / codeUnion : 0;
-
-  return Math.min(1, symptomScore * 0.7 + codeScore * 0.3);
 }
 
 function getVehicleLifecycleStatus(complianceStatus: "green" | "yellow" | "red") {
@@ -257,6 +226,318 @@ export function inferHistoricalCauseId(text: string) {
   return "unclassified";
 }
 
+type DiagnosticAssetScope =
+  | "truck"
+  | "dry_van_trailer"
+  | "reefer_trailer"
+  | "trailer"
+  | "unknown";
+
+type TrailerDiagnosisScopeResult =
+  | {
+      action: "continue";
+      scope: DiagnosticAssetScope | "reefer_unit";
+      scopeInstruction: string | null;
+      metadata: Record<string, unknown>;
+    }
+  | {
+      action: "clarify";
+      reason: "truck_issue_on_trailer" | "wrong_asset_selected" | "dry_van_impossible_issue";
+      question: string;
+      metadata: Record<string, unknown>;
+    };
+
+const TRUCK_ONLY_DIAGNOSIS_PATTERNS = [
+  /\bengine\b/i,
+  /\btransmission\b/i,
+  /\bclutch\b/i,
+  /\bturbo(?:charger)?\b/i,
+  /\bdef\b|\bdpf\b|\bscr\b|\baftertreatment\b|\bregen\b/i,
+  /\boil pressure\b|\blow oil\b|\bengine oil\b/i,
+  /\bdriveline\b|\bdrive\s*shaft\b|\bdifferential\b/i,
+  /\bstarter\b|\balternator\b/i,
+  /\bfuel injector\b|\bfuel rail\b|\brough idle\b|\bmisfire\b/i,
+];
+
+const HARD_TRUCK_POWERTRAIN_PATTERNS = [
+  /\btransmission\b/i,
+  /\bclutch\b/i,
+  /\bturbo(?:charger)?\b/i,
+  /\bdef\b|\bdpf\b|\bscr\b|\baftertreatment\b|\bregen\b/i,
+  /\boil pressure\b|\blow oil\b|\bengine oil\b/i,
+  /\bdriveline\b|\bdrive\s*shaft\b|\bdifferential\b/i,
+  /\bfuel injector\b|\bfuel rail\b|\brough idle\b|\bmisfire\b/i,
+];
+
+const REEFER_UNIT_PATTERNS = [
+  /\breefer\b/i,
+  /\brefrigerat(?:ion|ed)\b/i,
+  /\bthermo\s*king\b/i,
+  /\bcarrier\b/i,
+  /\btrailer\s+unit\b/i,
+  /\breefer\s+unit\b/i,
+  /\bbox\s+temp(?:erature)?\b/i,
+  /\bset\s*point\b/i,
+  /\bevaporator\b|\bcondenser\b/i,
+  /\breefer\s+(engine|fuel|battery|alarm|code)\b/i,
+];
+
+function normalizeAssetText(value: unknown) {
+  return typeof value === "string" ? value.trim().toLowerCase().replace(/[\s-]+/g, "_") : "";
+}
+
+function inferDiagnosticAssetScope(vehicleContext: Awaited<ReturnType<typeof resolveVehicleContext>>): DiagnosticAssetScope {
+  const assetType = normalizeAssetText("assetType" in vehicleContext ? vehicleContext.assetType : "");
+  const vehicleType = normalizeAssetText("vehicleType" in vehicleContext ? vehicleContext.vehicleType : "");
+  const assetCategory = normalizeAssetText("assetCategory" in vehicleContext ? vehicleContext.assetCategory : "");
+  const model = normalizeAssetText(vehicleContext.model);
+  const configuration =
+    vehicleContext.configuration && typeof vehicleContext.configuration === "object"
+      ? vehicleContext.configuration
+      : {};
+  const configText = Object.entries(configuration)
+    .map(([key, value]) => `${key}:${String(value)}`)
+    .join(" ")
+    .toLowerCase();
+  const combined = [assetType, vehicleType, assetCategory, model, configText].join(" ");
+  const isTrailer =
+    ("isTrailer" in vehicleContext && vehicleContext.isTrailer === true) ||
+    /\btrailer\b|dry_van|reefer/.test(combined);
+
+  if (!isTrailer) {
+    return assetType === "other" ? "unknown" : "truck";
+  }
+  if (/reefer/.test(combined)) return "reefer_trailer";
+  if (/dry_van|dryvan|van_trailer/.test(combined)) return "dry_van_trailer";
+  return "trailer";
+}
+
+function hasAnyPattern(text: string, patterns: RegExp[]) {
+  return patterns.some((pattern) => pattern.test(text));
+}
+
+function isAssetMismatchClarificationQuestion(question: string) {
+  return /selected.*trailer|sounds like a truck issue|did you mean to select a truck|trailer\/reefer unit/i.test(question);
+}
+
+function answerConfirmsWrongTruckAsset(answer: string) {
+  return /\b(wrong|truck|tractor|power unit|different vehicle|selected the wrong|meant to select)\b/i.test(answer);
+}
+
+function answerConfirmsTrailerOrReeferScope(answer: string) {
+  return /\b(this trailer|the trailer|trailer|reefer|refrigeration|reefer unit|dry van|box|unit)\b/i.test(answer);
+}
+
+function trailerScopeInstruction(scope: DiagnosticAssetScope | "reefer_unit") {
+  if (scope === "dry_van_trailer") {
+    return "Asset diagnosis scope: dry_van_trailer. This asset is a dry van trailer, so do not diagnose engine, transmission, aftertreatment, driveline, or truck powertrain issues. Stay within trailer systems such as brakes, lights, tires, doors, landing gear, suspension, and air lines.";
+  }
+  if (scope === "reefer_trailer" || scope === "reefer_unit") {
+    return "Asset diagnosis scope: reefer_trailer. This asset is a reefer trailer. Diagnose trailer and refrigeration-unit systems only; do not diagnose truck engine, transmission, aftertreatment, or driveline issues unless the user switches to a truck.";
+  }
+  if (scope === "trailer") {
+    return "Asset diagnosis scope: trailer. Diagnose trailer systems only; do not diagnose truck engine, transmission, aftertreatment, or driveline issues unless the user switches to a truck.";
+  }
+  return null;
+}
+
+function evaluateTrailerDiagnosisScope(input: {
+  vehicleContext: Awaited<ReturnType<typeof resolveVehicleContext>>;
+  symptoms: string[];
+  faultCodes: string[];
+  clarificationHistory: z.infer<typeof ClarificationTurnSchema>[];
+}): TrailerDiagnosisScopeResult {
+  const assetScope = inferDiagnosticAssetScope(input.vehicleContext);
+  const reportText = [...input.symptoms, ...input.faultCodes].join(" ").toLowerCase();
+  const hasTruckOnlySignal = hasAnyPattern(reportText, TRUCK_ONLY_DIAGNOSIS_PATTERNS);
+  const hasHardTruckPowertrainSignal = hasAnyPattern(reportText, HARD_TRUCK_POWERTRAIN_PATTERNS);
+  const hasReeferSignal = hasAnyPattern(reportText, REEFER_UNIT_PATTERNS);
+  const lastClarification = input.clarificationHistory.at(-1);
+  const lastAnswer = lastClarification?.answer ?? "";
+  const answeredAssetMismatchQuestion = lastClarification
+    ? isAssetMismatchClarificationQuestion(lastClarification.question)
+    : false;
+  const metadata = {
+    selectedAssetScope: assetScope,
+    detectedTruckOnlySignal: hasTruckOnlySignal,
+    detectedHardTruckPowertrainSignal: hasHardTruckPowertrainSignal,
+    detectedReeferSignal: hasReeferSignal,
+    answeredAssetMismatchQuestion,
+  };
+
+  if (assetScope === "truck" || assetScope === "unknown" || !hasTruckOnlySignal) {
+    return {
+      action: "continue",
+      scope: assetScope,
+      scopeInstruction: trailerScopeInstruction(assetScope),
+      metadata: {
+        ...metadata,
+        finalDiagnosisScope: assetScope,
+        mismatchDetected: false,
+      },
+    };
+  }
+
+  if (assetScope === "reefer_trailer" && hasReeferSignal && !hasHardTruckPowertrainSignal) {
+    return {
+      action: "continue",
+      scope: "reefer_unit",
+      scopeInstruction: trailerScopeInstruction("reefer_unit"),
+      metadata: {
+        ...metadata,
+        finalDiagnosisScope: "reefer_unit",
+        mismatchDetected: false,
+      },
+    };
+  }
+
+  if (answeredAssetMismatchQuestion && answerConfirmsWrongTruckAsset(lastAnswer)) {
+    return {
+      action: "clarify",
+      reason: "wrong_asset_selected",
+      question:
+        "No problem — this sounds like it belongs on the truck or power unit, not this trailer. Please select a different vehicle and choose the truck before running this diagnosis.",
+      metadata: {
+        ...metadata,
+        finalDiagnosisScope: "truck",
+        mismatchDetected: true,
+        userConfirmedWrongAsset: true,
+      },
+    };
+  }
+
+  if (answeredAssetMismatchQuestion && answerConfirmsTrailerOrReeferScope(lastAnswer)) {
+    if (assetScope === "reefer_trailer" && !hasHardTruckPowertrainSignal) {
+      return {
+        action: "continue",
+        scope: "reefer_unit",
+        scopeInstruction: trailerScopeInstruction("reefer_unit"),
+        metadata: {
+          ...metadata,
+          finalDiagnosisScope: "reefer_unit",
+          mismatchDetected: true,
+          userConfirmedTrailerScope: true,
+        },
+      };
+    }
+
+    return {
+      action: "clarify",
+      reason: "dry_van_impossible_issue",
+      question:
+        "Thanks — because this trailer does not have a truck engine or transmission, describe the trailer-side issue instead, such as brakes, lights, tires, air lines, doors, landing gear, suspension, or the reefer unit if equipped.",
+      metadata: {
+        ...metadata,
+        finalDiagnosisScope: assetScope,
+        mismatchDetected: true,
+        userConfirmedTrailerScope: true,
+      },
+    };
+  }
+
+  const assetLabel =
+    assetScope === "reefer_trailer"
+      ? "reefer trailer"
+      : assetScope === "dry_van_trailer"
+        ? "dry van trailer"
+        : "trailer";
+
+  return {
+    action: "clarify",
+    reason: "truck_issue_on_trailer",
+    question: `This sounds like a truck issue, but you selected a ${assetLabel}. Is the problem with this trailer${assetScope === "reefer_trailer" ? " or its reefer unit" : ""}, or did you mean to select a truck?`,
+    metadata: {
+      ...metadata,
+      finalDiagnosisScope: null,
+      mismatchDetected: true,
+    },
+  };
+}
+
+function buildAssetScopeClarificationDiagnosis(input: {
+  caseId: string;
+  vehicleId: string;
+  result: Extract<TrailerDiagnosisScopeResult, { action: "clarify" }>;
+}) {
+  const diagnosis: DiagnosisOutput = {
+    case_id: input.caseId,
+    vehicle_id: input.vehicleId,
+    status: "clarification_needed",
+    issue_summary: "TruckFixr needs to confirm whether this issue belongs to the selected trailer or a truck.",
+    systems_affected: ["asset_selection"],
+    likely_causes: [
+      {
+        cause: "Selected asset may not match the reported issue",
+        likelihood: "high",
+        probability: 80,
+        reasoning:
+          "The selected vehicle is a trailer, but the reported symptom includes truck-only systems such as engine, transmission, aftertreatment, or drivetrain.",
+      },
+    ],
+    confidence_score: 35,
+    clarifying_question: input.result.question,
+    clarification_reason:
+      input.result.reason === "wrong_asset_selected"
+        ? "The user indicated this likely belongs on a truck or power unit."
+        : "Trailers do not share the same engine, transmission, or truck powertrain systems as a truck.",
+    recommended_tests: [],
+    likely_parts: [],
+    safe_to_drive_decision: "drive_with_caution",
+    risk_level: "medium",
+    maintenance_recommendation:
+      "Confirm the correct asset before creating a repair recommendation so the diagnostic history stays clean.",
+    compliance_impact: "none",
+    driver_friendly_explanation:
+      "Let’s make sure we diagnose the right piece of equipment before suggesting repairs.",
+    manager_summary:
+      "TruckFixr paused diagnosis because the selected trailer may not match the reported truck-only symptom.",
+    advanced_ai_review_used: false,
+    model_used: "asset-scope-rule",
+    fallback_used: false,
+  };
+
+  return {
+    ...diagnosis,
+    ...toLegacyDiagnosisAliases(diagnosis),
+    asset_diagnosis_scope: input.result.metadata,
+  };
+}
+
+async function persistAssetScopeClarification(input: {
+  fleetId: number;
+  userId: number;
+  vehicleId: string;
+  clarificationHistory: z.infer<typeof ClarificationTurnSchema>[];
+  analysis: ReturnType<typeof buildAssetScopeClarificationDiagnosis>;
+  metadata: Record<string, unknown>;
+}) {
+  const db = await getDb();
+  if (!db) return;
+
+  const numericVehicleId = Number(input.vehicleId);
+  try {
+    await db.insert(activityLogs).values({
+      fleetId: input.fleetId,
+      userId: input.userId,
+      action: "diagnostic_clarification",
+      entityType: "vehicle",
+      entityId: Number.isFinite(numericVehicleId) ? numericVehicleId : null,
+      details: {
+        diagnosticSessionId: input.analysis.case_id,
+        vehicleId: input.vehicleId,
+        status: input.analysis.status,
+        clarificationHistory: input.clarificationHistory,
+        clarifyingQuestion: input.analysis.clarifying_question,
+        clarificationReason: input.analysis.clarification_reason,
+        assetDiagnosisScope: input.metadata,
+        rule: "truck_trailer_diagnosis_scope",
+      },
+    });
+  } catch (error) {
+    console.warn("[Diagnostics] Unable to persist asset-scope clarification:", error);
+  }
+}
+
 const vehicleSnapshotSchema = DiagnosticVehicleSchema.extend({
   complianceStatus: z.enum(["green", "yellow", "red"]).optional(),
 });
@@ -286,6 +567,11 @@ async function resolveVehicleContext(
           make: vehicle.make ?? undefined,
           model: vehicle.model ?? undefined,
           year: vehicle.year ?? null,
+          assetType: vehicle.assetType ?? undefined,
+          assetCategory: vehicle.assetCategory ?? undefined,
+          vehicleType: vehicle.vehicleType ?? undefined,
+          isPoweredVehicle: vehicle.isPoweredVehicle,
+          isTrailer: vehicle.isTrailer,
           mileage: vehicle.mileage ?? 0,
           engineHours: vehicle.engineHours ?? 0,
           status: vehicle.status ?? "active",
@@ -349,7 +635,7 @@ async function loadDiagnosticSupportData(
     }
   };
 
-  const [defectRows, inspectionRows, repairRows, feedbackRows, repairOutcomeRows] = await Promise.all([
+  const [defectRows, inspectionRows, repairRows, feedbackRows, repairOutcomeRows, solvedReviewRows] = await Promise.all([
     safeQuery(
       "defect history",
       db
@@ -395,12 +681,29 @@ async function loadDiagnosticSupportData(
       db
         .select()
         .from(repairOutcomes)
-        .where(and(eq(repairOutcomes.fleetId, fleetId), eq(repairOutcomes.vehicleId, vehicleId)))
+        .where(eq(repairOutcomes.fleetId, fleetId))
         .orderBy(desc(repairOutcomes.createdAt))
-        .limit(12),
+        .limit(30),
+      []
+    ),
+    safeQuery(
+      "solved diagnostic reviews",
+      db
+        .select()
+        .from(aiQualityReviews)
+        .where(eq(aiQualityReviews.fleetId, fleetId))
+        .orderBy(desc(aiQualityReviews.createdAt))
+        .limit(30),
       []
     ),
   ]);
+
+  const repairOutcomeReviewMap = new Map(
+    solvedReviewRows
+      .filter((row) => row.confirmedOutcomeStatus && row.diagnosticCaseId)
+      .map((row) => [row.diagnosticCaseId, row])
+  );
+  const currentVehicleRepairOutcomeRows = repairOutcomeRows.filter((row) => row.vehicleId === vehicleId);
 
   const priorDefects = defectRows
     .filter((row) => String(row.vehicleId) === vehicleId)
@@ -436,7 +739,7 @@ async function loadDiagnosticSupportData(
       outcome: row.completedAt ? "repair completed" : "repair pending",
     }));
 
-  const confirmedRepairOutcomes = repairOutcomeRows.map((row) => {
+  const confirmedRepairOutcomes = currentVehicleRepairOutcomeRows.map((row) => {
     const parts = Array.isArray(row.partsReplaced)
       ? row.partsReplaced.filter((value): value is string => typeof value === "string")
       : [];
@@ -545,7 +848,24 @@ async function loadDiagnosticSupportData(
     const parts = Array.isArray(row.partsReplaced)
       ? row.partsReplaced.filter((value): value is string => typeof value === "string")
       : [];
-    const caseSignals = [row.confirmedFault, row.repairPerformed, row.repairNotes ?? "", ...parts].filter(Boolean);
+    const review = row.diagnosticCaseId ? repairOutcomeReviewMap.get(row.diagnosticCaseId) : null;
+    const storedSignals = getStoredSolvedCaseSignals(
+      review?.metadata && typeof review.metadata === "object"
+        ? (review.metadata as Record<string, unknown>)
+        : null
+    );
+    const caseSignals = [
+      ...storedSignals.symptoms,
+      row.confirmedFault,
+      row.repairPerformed,
+      row.repairNotes ?? "",
+      ...storedSignals.partsReplaced,
+      ...parts,
+    ].filter(Boolean);
+    const caseFaultCodes = storedSignals.faultCodes;
+    const summary =
+      storedSignals.summary ||
+      [row.confirmedFault, row.repairPerformed].filter(Boolean).join(" - ");
 
     similarCases.push(
       SimilarCaseSchema.parse({
@@ -555,15 +875,15 @@ async function loadDiagnosticSupportData(
         cause: row.confirmedFault,
         systems_affected: [],
         symptomSignals: caseSignals,
-        faultCodes: [],
-        summary: [row.confirmedFault, row.repairPerformed].filter(Boolean).join(" - "),
+        faultCodes: caseFaultCodes,
+        summary,
         resolution: row.repairPerformed,
         confirmedFix: row.repairPerformed,
         resolutionSuccess: row.aiDiagnosisCorrect !== "no",
         risk_level: "medium",
         similarity: scoreHistoricalDiagnosticCase({
           caseSignals,
-          caseFaultCodes: [],
+          caseFaultCodes,
           currentSymptoms,
           currentFaultCodes,
         }),
@@ -645,6 +965,58 @@ function inspectionStatusForContext(row: {
   return /red|defect|failed|fail|flagged|needs_review/.test(text) ? "failed" as const : "passed" as const;
 }
 
+function isMinimalDiagnosisContext(value: unknown): value is MinimalDiagnosisContext {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  const userReport = record.user_report as Record<string, unknown> | undefined;
+  return (
+    typeof record.vehicle === "object" &&
+    typeof userReport === "object" &&
+    typeof userReport?.symptoms === "string" &&
+    Array.isArray(userReport?.fault_codes)
+  );
+}
+
+async function loadPersistedDiagnosisContext(input: {
+  fleetId: number;
+  userId: number;
+  vehicleId: string;
+  diagnosisSessionId?: string;
+  clarificationHistory: Array<{ question: string; answer: string }>;
+}) {
+  if (!input.diagnosisSessionId) return null;
+  const db = await getDb();
+  if (!db) return null;
+
+  const rows = await db
+    .select()
+    .from(activityLogs)
+    .where(and(eq(activityLogs.fleetId, input.fleetId), eq(activityLogs.userId, input.userId)))
+    .orderBy(desc(activityLogs.createdAt))
+    .limit(20);
+
+  for (const row of rows) {
+    const details =
+      row.details && typeof row.details === "object"
+        ? (row.details as Record<string, unknown>)
+        : null;
+    if (!details) continue;
+    if (details.diagnosticSessionId !== input.diagnosisSessionId) continue;
+    if (String(details.vehicleId ?? "") !== input.vehicleId) continue;
+    if (!isMinimalDiagnosisContext(details.compactContext)) continue;
+
+    return {
+      ...details.compactContext,
+      clarification_history: input.clarificationHistory.map((turn) => ({
+        question: turn.question,
+        answer: turn.answer,
+      })),
+    };
+  }
+
+  return null;
+}
+
 async function buildMinimalDiagnosisContext(input: {
   fleetId: number;
   vehicleId: string;
@@ -692,7 +1064,7 @@ async function buildMinimalDiagnosisContext(input: {
     }
   };
 
-  const [maintenanceRows, inspectionRows, confirmedFeedbackRows, repairOutcomeRows] = await Promise.all([
+  const [maintenanceRows, inspectionRows, confirmedFeedbackRows, repairOutcomeRows, solvedReviewRows] = await Promise.all([
     safeQuery(
       "maintenance history",
       db
@@ -728,12 +1100,27 @@ async function buildMinimalDiagnosisContext(input: {
       db
         .select()
         .from(repairOutcomes)
-        .where(and(eq(repairOutcomes.fleetId, input.fleetId), eq(repairOutcomes.vehicleId, input.vehicleId)))
+        .where(eq(repairOutcomes.fleetId, input.fleetId))
         .orderBy(desc(repairOutcomes.createdAt))
-        .limit(3),
+        .limit(20),
+      []
+    ),
+    safeQuery(
+      "solved diagnostic reviews",
+      db
+        .select()
+        .from(aiQualityReviews)
+        .where(eq(aiQualityReviews.fleetId, input.fleetId))
+        .orderBy(desc(aiQualityReviews.createdAt))
+        .limit(20),
       []
     ),
   ]);
+  const reviewMap = new Map(
+    solvedReviewRows
+      .filter((row) => row.confirmedOutcomeStatus && row.diagnosticCaseId)
+      .map((row) => [row.diagnosticCaseId, row])
+  );
 
   const lastInspection = inspectionRows[0];
   const defectsForInspection = lastInspection
@@ -777,31 +1164,35 @@ async function buildMinimalDiagnosisContext(input: {
     })
     .filter((row) => row.summary);
 
-  const normalizedRepairReferences = repairOutcomeRows
-    .map((row) => {
-      const parts = Array.isArray(row.partsReplaced)
-        ? row.partsReplaced.filter((value): value is string => typeof value === "string")
-        : [];
-      const partsSummary = parts.length > 0 ? ` Parts: ${parts.join(", ")}.` : "";
-      const aiAccuracy =
-        row.aiDiagnosisCorrect && row.aiDiagnosisCorrect !== "unknown"
-          ? ` AI diagnosis: ${row.aiDiagnosisCorrect}.`
-          : "";
+  const { references: confirmedOutcomeReferences, droppedForeignFleetCount } =
+    buildConfirmedOutcomeReferences({
+      fleetId: input.fleetId,
+      repairOutcomeRows,
+      reviewMetadataByCaseId: new Map(
+        Array.from(reviewMap.entries()).map(([caseId, review]) => [
+          caseId,
+          review?.metadata && typeof review.metadata === "object"
+            ? (review.metadata as Record<string, unknown>)
+            : null,
+        ])
+      ),
+      currentSymptoms: input.symptoms,
+      currentFaultCodes: normalizeFaultCodes(input.faultCodes),
+      confirmedFeedbackReferences,
+      limit: 3,
+    });
 
-      return {
-        date:
-          row.returnedToServiceAt?.toISOString?.().slice(0, 10) ??
-          row.createdAt?.toISOString?.().slice(0, 10) ??
-          "",
-        summary: `${row.confirmedFault}: ${row.repairPerformed}.${partsSummary}${aiAccuracy}`.slice(0, 180),
-      };
-    })
-    .filter((row) => row.summary);
-
-  const confirmedOutcomeReferences = [
-    ...normalizedRepairReferences,
-    ...confirmedFeedbackReferences,
-  ].slice(0, 3);
+  // Defense in depth: the SQL above is fleet-scoped, but if a future query
+  // regression ever loads another fleet's outcomes, the guard above drops them
+  // before they reach the AI prompt. Surface any such drop as a signal.
+  if (droppedForeignFleetCount > 0) {
+    recordObservabilityEvent({
+      category: "workflow",
+      event: "cross_fleet_outcome_filtered",
+      severity: "warning",
+      context: { fleetId: input.fleetId, dropped: droppedForeignFleetCount },
+    });
+  }
 
   return {
     ...baseContext,
@@ -962,17 +1353,71 @@ export const diagnosticsRouter = router({
         .filter(Boolean)
         .map((value) => String(value).trim())
         .filter(Boolean);
-      const minimalContext = await buildMinimalDiagnosisContext({
-        fleetId: input.fleetId,
-        vehicleId: input.vehicleId,
+      const assetScopeCheck = evaluateTrailerDiagnosisScope({
         vehicleContext,
         symptoms: userSymptoms,
-        faultCodes: input.faultCodes,
+        faultCodes: normalizedInputFaultCodes,
+        clarificationHistory: input.clarificationHistory,
       });
+
+      if (assetScopeCheck.action === "clarify") {
+        const analysis = buildAssetScopeClarificationDiagnosis({
+          caseId: input.diagnosisSessionId ?? randomUUID(),
+          vehicleId: input.vehicleId,
+          result: assetScopeCheck,
+        });
+        await persistAssetScopeClarification({
+          fleetId: input.fleetId,
+          userId: ctx.user.id,
+          vehicleId: input.vehicleId,
+          clarificationHistory: input.clarificationHistory,
+          analysis,
+          metadata: assetScopeCheck.metadata,
+        });
+        return analysis;
+      }
+
+      const scopedUserSymptoms = assetScopeCheck.scopeInstruction
+        ? [...userSymptoms, assetScopeCheck.scopeInstruction]
+        : userSymptoms;
+      const minimalContext =
+        input.clarificationHistory.length > 0
+          ? (await loadPersistedDiagnosisContext({
+              fleetId: input.fleetId,
+              userId: ctx.user.id,
+              vehicleId: input.vehicleId,
+              diagnosisSessionId: input.diagnosisSessionId,
+              clarificationHistory: input.clarificationHistory,
+            })) ??
+            (await buildMinimalDiagnosisContext({
+              fleetId: input.fleetId,
+              vehicleId: input.vehicleId,
+              vehicleContext,
+              symptoms: scopedUserSymptoms,
+              faultCodes: input.faultCodes,
+            }))
+          : await buildMinimalDiagnosisContext({
+              fleetId: input.fleetId,
+              vehicleId: input.vehicleId,
+              vehicleContext,
+              symptoms: scopedUserSymptoms,
+              faultCodes: input.faultCodes,
+            });
+      const workflowContext =
+        assetScopeCheck.scopeInstruction &&
+        !minimalContext.user_report.symptoms.includes(assetScopeCheck.scopeInstruction)
+          ? {
+              ...minimalContext,
+              user_report: {
+                ...minimalContext.user_report,
+                symptoms: `${minimalContext.user_report.symptoms}; ${assetScopeCheck.scopeInstruction}`,
+              },
+            }
+          : minimalContext;
       const workflow = await runDiagnosisWorkflow({
         caseId: input.clarificationHistory.length > 0 ? input.diagnosisSessionId : undefined,
         vehicleId: input.vehicleId,
-        context: minimalContext,
+        context: workflowContext,
         clarificationHistory: input.clarificationHistory,
         planType: toDiagnosisPlanType(entitlement.effectiveTier),
         includeInternalReferences: false,
@@ -1013,6 +1458,15 @@ export const diagnosticsRouter = router({
         (total, call) => total + (call.estimatedCostUsd ?? 0),
         0
       );
+      const enumCoercionCalls = workflow.aiCallHistory
+        .map((call) => call.enumCoercions)
+        .filter((value): value is NonNullable<typeof value> => Boolean(value));
+      const enumCoercionSummary = {
+        callsWithCoercions: enumCoercionCalls.length,
+        totalCoercions: enumCoercionCalls.reduce((total, entry) => total + entry.count, 0),
+        totalDefaulted: enumCoercionCalls.reduce((total, entry) => total + entry.defaulted, 0),
+        fields: Array.from(new Set(enumCoercionCalls.flatMap((entry) => entry.fields))).sort(),
+      };
 
       await Promise.all(
         workflow.aiCallHistory.map((call) =>
@@ -1065,9 +1519,17 @@ export const diagnosticsRouter = router({
         estimatedCostUsd,
         finalSafeToDriveDecision: analysis.safe_to_drive_decision,
         metadata: {
+          diagnosisContext: {
+            symptoms: input.symptoms,
+            faultCodes: normalizeFaultCodes(input.faultCodes),
+            vehicleId: input.vehicleId,
+            topCause: analysis.likely_causes[0]?.cause ?? null,
+          },
           routing: workflow.routing,
           preprocessing: workflow.preprocessing,
           providerErrors: workflow.providerErrors.slice(-3),
+          assetDiagnosisScope: assetScopeCheck.metadata,
+          enumCoercions: enumCoercionSummary.callsWithCoercions > 0 ? enumCoercionSummary : undefined,
         },
       });
 
@@ -1097,6 +1559,7 @@ export const diagnosticsRouter = router({
               fallbackUsed: analysis.fallback_used,
               diagnosisComplexity: workflow.classification,
               aiErrorMetadata: workflow.providerErrors.slice(-3),
+              assetDiagnosisScope: assetScopeCheck.metadata,
               compactContext: workflow.promptContext,
             },
           });
@@ -1133,6 +1596,7 @@ export const diagnosticsRouter = router({
             riskLevel: workflow.routing.risk_level,
             referenceMatchStatus: workflow.referenceLookup.match_status,
           },
+          assetDiagnosisScope: assetScopeCheck.metadata,
         },
       });
 
@@ -1460,6 +1924,7 @@ export const diagnosticsRouter = router({
         fleetId: z.number(),
         vehicleId: vehicleIdInputSchema,
         defectId: z.number().int().positive().optional(),
+        diagnosticCaseId: z.string().trim().min(8).max(128).optional(),
         cause: z.string().trim().min(1),
         confirmedFix: z.string().trim().min(1),
         successful: z.boolean(),
@@ -1507,33 +1972,37 @@ export const diagnosticsRouter = router({
       let normalizedRepairOutcomeSaved = false;
 
       if (
-        input.defectId &&
         (ctx.user.role === "owner" || ctx.user.role === "manager") &&
         (confirmationState === "manager_confirmed" || confirmationState === "mechanic_confirmed")
       ) {
-        const [defect] = await db
-          .select()
-          .from(defects)
-          .where(eq(defects.id, input.defectId))
-          .limit(1);
+        if (input.defectId) {
+          const [defect] = await db
+            .select()
+            .from(defects)
+            .where(eq(defects.id, input.defectId))
+            .limit(1);
 
-        if (!defect || defect.fleetId !== input.fleetId || String(defect.vehicleId) !== normalizedVehicleId) {
-          throw new TRPCError({
-            code: "BAD_REQUEST",
-            message: "The selected defect does not belong to this vehicle and fleet.",
-          });
+          if (!defect || defect.fleetId !== input.fleetId || String(defect.vehicleId) !== normalizedVehicleId) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "The selected defect does not belong to this vehicle and fleet.",
+            });
+          }
         }
 
         try {
           await db.insert(repairOutcomes).values({
             fleetId: input.fleetId,
             vehicleId: normalizedVehicleId,
-            defectId: input.defectId,
+            defectId: input.defectId ?? null,
+            diagnosticCaseId: input.diagnosticCaseId ?? null,
             recordedByUserId: ctx.user.id,
             confirmedFault: input.cause,
             repairPerformed: input.confirmedFix,
             partsReplaced: input.partsReplaced,
             aiDiagnosisCorrect: input.aiDiagnosisCorrect,
+            confirmationState,
+            source: "diagnostic_feedback",
             returnedToServiceAt: input.successful ? new Date() : null,
             repairNotes: `Captured from diagnostic feedback (${confirmationState}).`,
           });
@@ -1541,6 +2010,35 @@ export const diagnosticsRouter = router({
         } catch (error) {
           console.warn("[Diagnostics] Unable to persist normalized repair outcome from feedback:", error);
         }
+      }
+
+      if (input.diagnosticCaseId) {
+        const feedbackMetadata = {
+          feedbackCapturedAt: new Date().toISOString(),
+          fleetId: input.fleetId,
+          vehicleId: input.vehicleId,
+          cause: input.cause,
+          confirmedFix: input.confirmedFix,
+          partsReplaced: input.partsReplaced,
+          successful: input.successful,
+          aiDiagnosisCorrect: input.aiDiagnosisCorrect,
+          confirmationState,
+        };
+
+        await db
+          .update(aiQualityReviews)
+          .set({
+            confirmedOutcomeStatus: input.successful ? "confirmed_successful" : "confirmed_unsuccessful",
+            managerConfirmed: confirmationState === "manager_confirmed",
+            mechanicConfirmed: confirmationState === "mechanic_confirmed",
+            metadata: sql`coalesce(${aiQualityReviews.metadata}, '{}'::jsonb) || ${JSON.stringify({
+              feedback: feedbackMetadata,
+            })}::jsonb`,
+          } as any)
+          .where(eq(aiQualityReviews.diagnosticCaseId, input.diagnosticCaseId))
+          .catch((error) => {
+            console.warn("[Diagnostics] Unable to link feedback to AI quality review:", error);
+          });
       }
 
       await db.insert(activityLogs).values({
@@ -1552,6 +2050,7 @@ export const diagnosticsRouter = router({
         details: {
           vehicleId: normalizedVehicleId,
           defectId: input.defectId ?? null,
+          diagnosticCaseId: input.diagnosticCaseId ?? null,
           cause: input.cause,
           confirmedFix: input.confirmedFix,
           successful: input.successful,

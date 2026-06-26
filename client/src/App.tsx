@@ -1,31 +1,76 @@
-import { lazy, Suspense } from "react";
+import { Suspense, useEffect } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
-import VerifiedInspection from "./pages/VerifiedInspection";
-import LandingSaaS from "./pages/LandingSaaS";
+import { lazyWithChunkRecovery } from "./lib/chunkRecovery";
+import { useAuthContext } from "./hooks/useAuthContext";
+import { useLocation } from "wouter";
 
-const Home = lazy(() => import("./pages/Home"));
-const ManagerDashboard = lazy(() => import("./pages/ManagerDashboard"));
-const DriverDashboardSaaS = lazy(() => import("./pages/DriverDashboardSaaS"));
-const DriverDiagnosis = lazy(() => import("./pages/DriverDiagnosis"));
-const Onboarding = lazy(() => import("./pages/Onboarding"));
-const DefectDetail = lazy(() => import("./pages/DefectDetail"));
-const TruckDetail = lazy(() => import("./pages/TruckDetail"));
-const Pricing = lazy(() => import("./pages/Pricing"));
-const EmailAuth = lazy(() => import("./pages/EmailAuth"));
-const UserProfile = lazy(() => import("./pages/UserProfile"));
-const AdminBillingDashboard = lazy(() => import("./pages/AdminBillingDashboard"));
-const FaultCodeReviewDashboard = lazy(() => import("./pages/FaultCodeReviewDashboard"));
-const InspectionReportDvir = lazy(() => import("./pages/InspectionReportDvir"));
-const AccessGateway = lazy(() => import("./pages/AccessGateway"));
-const AccessStartTrial = lazy(() => import("./pages/AccessStartTrial"));
-const AccessPilotCode = lazy(() => import("./pages/AccessPilotCode"));
-const AccessDriverInvite = lazy(() => import("./pages/AccessDriverInvite"));
-const PilotRedirect = lazy(() => import("./pages/PilotRedirect"));
+const NotFound = lazyWithChunkRecovery(() => import("./pages/NotFound"));
+const LandingSaaS = lazyWithChunkRecovery(() => import("./pages/LandingSaaS"));
+const VerifiedInspection = lazyWithChunkRecovery(
+  () => import("./pages/VerifiedInspection")
+);
+const Home = lazyWithChunkRecovery(() => import("./pages/Home"));
+const ManagerDashboard = lazyWithChunkRecovery(
+  () => import("./pages/ManagerDashboard")
+);
+const DriverDashboardSaaS = lazyWithChunkRecovery(
+  () => import("./pages/DriverDashboardSaaS")
+);
+const DriverDiagnosis = lazyWithChunkRecovery(
+  () => import("./pages/DriverDiagnosis")
+);
+const Onboarding = lazyWithChunkRecovery(() => import("./pages/Onboarding"));
+const DefectDetail = lazyWithChunkRecovery(
+  () => import("./pages/DefectDetail")
+);
+const TruckDetail = lazyWithChunkRecovery(() => import("./pages/TruckDetail"));
+const Pricing = lazyWithChunkRecovery(() => import("./pages/Pricing"));
+const EmailAuth = lazyWithChunkRecovery(() => import("./pages/EmailAuth"));
+const UserProfile = lazyWithChunkRecovery(() => import("./pages/UserProfile"));
+const AdminBillingDashboard = lazyWithChunkRecovery(
+  () => import("./pages/AdminBillingDashboard")
+);
+const FaultCodeReviewDashboard = lazyWithChunkRecovery(
+  () => import("./pages/FaultCodeReviewDashboard")
+);
+const AdminMetricsDashboard = lazyWithChunkRecovery(
+  () => import("./pages/AdminMetricsDashboard")
+);
+const AdminFleetDetail = lazyWithChunkRecovery(
+  () => import("./pages/AdminFleetDetail")
+);
+const InspectionReportDvir = lazyWithChunkRecovery(
+  () => import("./pages/InspectionReportDvir")
+);
+const DriverInspectionNSC = lazyWithChunkRecovery(
+  () => import("./pages/DriverInspectionNSC")
+);
+const AccessGateway = lazyWithChunkRecovery(
+  () => import("./pages/AccessGateway")
+);
+const AccessStartTrial = lazyWithChunkRecovery(
+  () => import("./pages/AccessStartTrial")
+);
+const AccessPilotCode = lazyWithChunkRecovery(
+  () => import("./pages/AccessPilotCode")
+);
+const AccessDriverInvite = lazyWithChunkRecovery(
+  () => import("./pages/AccessDriverInvite")
+);
+const PilotRedirect = lazyWithChunkRecovery(
+  () => import("./pages/PilotRedirect")
+);
+const QuickStartGuides = lazyWithChunkRecovery(
+  () => import("./pages/QuickStartGuides")
+);
+const FleetDowntimeCostCalculator = lazyWithChunkRecovery(
+  () => import("./pages/FleetDowntimeCostCalculator")
+);
+const Offline = lazyWithChunkRecovery(() => import("./pages/Offline"));
 
 function RouteFallback() {
   return (
@@ -37,6 +82,26 @@ function RouteFallback() {
   );
 }
 
+function DashboardRedirect() {
+  const { user, isLoading } = useAuthContext();
+  const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    if (isLoading) return;
+    if (!user) {
+      setLocation("/login?next=%2Fdashboard");
+      return;
+    }
+    if (user.internalAdminRole) {
+      setLocation("/admin/metrics");
+      return;
+    }
+    setLocation(user.role === "manager" || user.role === "owner" ? "/manager" : "/driver");
+  }, [isLoading, setLocation, user]);
+
+  return <RouteFallback />;
+}
+
 function Router() {
   return (
     <Suspense fallback={<RouteFallback />}>
@@ -46,21 +111,73 @@ function Router() {
         <Route path={"/access/driver-invite"} component={AccessDriverInvite} />
         <Route path={"/access"} component={AccessGateway} />
         <Route path={"/pilot"} component={PilotRedirect} />
+        <Route path={"/login"} component={EmailAuth} />
         <Route path={"/signup"} component={EmailAuth} />
+        <Route path={"/forgot-password"} component={EmailAuth} />
         <Route path={"/auth/email"} component={EmailAuth} />
+        <Route path={"/dashboard"} component={DashboardRedirect} />
+        <Route path={"/offline"} component={Offline} />
         <Route path={"/profile"} component={UserProfile} />
         <Route path={"/app"} component={Home} />
         <Route path={"/onboarding"} component={Onboarding} />
+        <Route path={"/onboarding/guides"} component={QuickStartGuides} />
+        <Route path={"/onboarding/my-guide"} component={QuickStartGuides} />
+        <Route path={"/onboarding/driver"} component={QuickStartGuides} />
+        <Route
+          path={"/onboarding/owner-operator"}
+          component={QuickStartGuides}
+        />
+        <Route
+          path={"/onboarding/fleet-manager"}
+          component={QuickStartGuides}
+        />
+        <Route path={"/onboarding/fleet-owner"} component={QuickStartGuides} />
+        <Route path={"/quick-start-guides"} component={QuickStartGuides} />
+        <Route
+          path={"/quick-start-guides/my-guide"}
+          component={QuickStartGuides}
+        />
+        <Route
+          path={"/quick-start-guides/driver"}
+          component={QuickStartGuides}
+        />
+        <Route
+          path={"/quick-start-guides/owner-operator"}
+          component={QuickStartGuides}
+        />
+        <Route
+          path={"/quick-start-guides/fleet-manager"}
+          component={QuickStartGuides}
+        />
+        <Route
+          path={"/quick-start-guides/fleet-owner"}
+          component={QuickStartGuides}
+        />
         <Route path={"/manager"} component={ManagerDashboard} />
         <Route path={"/driver"} component={DriverDashboardSaaS} />
         <Route path={"/diagnosis"} component={DriverDiagnosis} />
-        <Route path={"/inspection"} component={VerifiedInspection} />
-        <Route path={"/inspection-report/:id"} component={InspectionReportDvir} />
+        <Route path={"/inspection"} component={DriverInspectionNSC} />
+        <Route path={"/inspection/verified"} component={VerifiedInspection} />
+        <Route
+          path={"/inspection-report/:id"}
+          component={InspectionReportDvir}
+        />
         <Route path={"/defect/:id"} component={DefectDetail} />
         <Route path={"/truck/:id"} component={TruckDetail} />
         <Route path={"/pricing"} component={Pricing} />
+        <Route
+          path={"/fleet-downtime-cost-calculator"}
+          component={FleetDowntimeCostCalculator}
+        />
+        <Route path={"/admin"} component={AdminMetricsDashboard} />
+        <Route path={"/admin/metrics"} component={AdminMetricsDashboard} />
+        <Route path={"/admin/fleets"} component={AdminMetricsDashboard} />
+        <Route path={"/admin/fleets/:fleetId"} component={AdminFleetDetail} />
         <Route path={"/admin/billing"} component={AdminBillingDashboard} />
-        <Route path={"/admin/fault-codes"} component={FaultCodeReviewDashboard} />
+        <Route
+          path={"/admin/fault-codes"}
+          component={FaultCodeReviewDashboard}
+        />
         <Route path={"/404"} component={NotFound} />
         <Route path={"/"} component={LandingSaaS} />
         <Route component={NotFound} />

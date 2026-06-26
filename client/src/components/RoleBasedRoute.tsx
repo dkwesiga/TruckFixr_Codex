@@ -1,4 +1,5 @@
 import { useAuthContext } from "@/hooks/useAuthContext";
+import { hasRoleBasedAccess } from "@/lib/roleBasedAccess";
 import { Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useEffect } from "react";
@@ -19,13 +20,13 @@ export function RoleBasedRoute({
   fallback,
 }: RoleBasedRouteProps) {
   const { user, isLoading, isAuthenticated, logout } = useAuthContext();
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
-      setLocation("/");
+      setLocation(`/login?next=${encodeURIComponent(location)}`);
     }
-  }, [isLoading, isAuthenticated, setLocation]);
+  }, [isLoading, isAuthenticated, location, setLocation]);
 
   useEffect(() => {
     if (!isAuthenticated || typeof window === "undefined") return;
@@ -76,7 +77,14 @@ export function RoleBasedRoute({
   }
 
   if (!isAuthenticated) {
-    return fallback || null;
+    return fallback || (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 p-6 text-center">
+        <div>
+          <h1 className="text-xl font-semibold text-slate-900">Sign in required</h1>
+          <p className="mt-2 text-sm text-slate-600">Taking you to the TruckFixr sign-in page…</p>
+        </div>
+      </div>
+    );
   }
 
   if (user && user.emailVerified === false) {
@@ -112,7 +120,7 @@ export function RoleBasedRoute({
     );
   }
 
-  if (requiredRoles && user && !requiredRoles.includes(user.role as any)) {
+  if (!hasRoleBasedAccess({ user, requiredRoles })) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">

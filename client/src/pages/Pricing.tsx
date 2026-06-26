@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useLocation } from "wouter";
 import AppLogo from "@/components/AppLogo";
 import { Button } from "@/components/ui/button";
@@ -68,6 +68,9 @@ const faqItems = [
   },
 ];
 
+const publicPricingPlans = getPublicTruckFixrPlans();
+const comparisonPricingPlans = publicPricingPlans.filter((plan) => plan.planKey !== "free_trial");
+
 export default function Pricing() {
   const { user, logout } = useAuthContext();
   const [, navigate] = useLocation();
@@ -83,8 +86,6 @@ export default function Pricing() {
     notes: "",
   });
 
-  const plans = useMemo(() => getPublicTruckFixrPlans(), []);
-  const comparisonPlans = useMemo(() => plans.filter((plan) => plan.planKey !== "free_trial"), [plans]);
   const quoteMutation = trpc.subscriptions.requestFleetQuote.useMutation();
   const checkoutMutation = trpc.subscriptions.createCheckoutSession.useMutation();
   const pilotMutation = trpc.subscriptions.createPilotCheckoutSession.useMutation();
@@ -282,7 +283,7 @@ export default function Pricing() {
               </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              {plans.map((plan) => {
+              {publicPricingPlans.map((plan) => {
                 const price = getTruckFixrPlanPrice(plan.planKey, billingInterval === "annual" ? "annual" : "monthly");
                 const isRecommended = plan.planKey === "fleet_growth";
                 const periodLabel =
@@ -357,26 +358,34 @@ export default function Pricing() {
               </p>
             </div>
 
+            <p className="mb-3 text-sm text-slate-500 sm:hidden">Swipe to compare plans →</p>
             <div className="overflow-hidden rounded-3xl border border-slate-200 shadow-sm">
-              <div className="grid grid-cols-[1.4fr_repeat(5,minmax(0,1fr))] bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
-                <div>Feature</div>
-                {comparisonPlans.map((plan) => (
-                  <div key={plan.planKey} className={plan.recommended ? "text-red-700" : ""}>
-                    {plan.name}
-                  </div>
-                ))}
-              </div>
-              <div className="divide-y divide-slate-200 bg-white">
-                {featureRows.map(([label, ...values]) => (
-                  <div key={label} className="grid grid-cols-[1.4fr_repeat(5,minmax(0,1fr))] px-4 py-4 text-sm">
-                    <div className="font-medium text-slate-900">{label}</div>
-                    {values.map((value, index) => (
-                      <div key={`${label}-${index}`} className="text-slate-600">
-                        {value}
+              {/* On small screens the 6-column comparison scrolls horizontally
+                  inside this container (with a pinned Feature column) so it never
+                  forces the whole page to scroll sideways. */}
+              <div className="overflow-x-auto">
+                <div className="min-w-[760px]">
+                  <div className="grid grid-cols-[1.4fr_repeat(5,minmax(0,1fr))] bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
+                    <div className="sticky left-0 z-10 bg-slate-50">Feature</div>
+                    {comparisonPricingPlans.map((plan) => (
+                      <div key={plan.planKey} className={plan.recommended ? "text-red-700" : ""}>
+                        {plan.name}
                       </div>
                     ))}
                   </div>
-                ))}
+                  <div className="divide-y divide-slate-200 bg-white">
+                    {featureRows.map(([label, ...values]) => (
+                      <div key={label} className="grid grid-cols-[1.4fr_repeat(5,minmax(0,1fr))] px-4 py-4 text-sm">
+                        <div className="sticky left-0 z-10 bg-white font-medium text-slate-900">{label}</div>
+                        {values.map((value, index) => (
+                          <div key={`${label}-${index}`} className="text-slate-600">
+                            {value}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           </div>

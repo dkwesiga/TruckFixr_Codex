@@ -14,6 +14,12 @@ import {
   type BillingStatus as TruckFixrBillingStatus,
   type PlanKey,
 } from "../../shared/truckfixrPricing";
+import {
+  formatMissingStripePriceMessage,
+  getStripePriceResolutionTarget,
+  resolveLegacyTierPrice,
+  resolveTruckFixrPrice,
+} from "./stripeReadiness";
 
 type StripeCustomer = {
   id: string;
@@ -61,7 +67,7 @@ type StripeSubscription = {
 type TruckFixrStripeCheckoutInput = {
   customerId: string;
   companyId: number;
-  planKey: PlanKey;
+  planKey: Extract<PlanKey, "owner_operator" | "small_fleet" | "fleet_growth" | "fleet_pro">;
   billingInterval: Exclude<TruckFixrBillingInterval, "trial" | "pilot" | "custom">;
   extraTrailerQuantity?: number;
   successUrl: string;
@@ -87,6 +93,12 @@ type StripeEvent = {
   data: {
     object: Record<string, unknown>;
   };
+};
+
+type StripePrice = {
+  id: string;
+  lookup_key?: string | null;
+  active?: boolean;
 };
 
 function getStripeHeaders(contentType: string) {
@@ -140,43 +152,54 @@ async function stripeRequest<T>(
   return payload as T;
 }
 
+const stripePriceLookupCache = new Map<string, string>();
+
+async function findStripePriceIdByLookupKey(lookupKey: string) {
+  const normalizedLookupKey = lookupKey.trim();
+  if (!normalizedLookupKey) return null;
+
+  const cached = stripePriceLookupCache.get(normalizedLookupKey);
+  if (cached) return cached;
+
+  const response = await stripeRequest<{ data?: StripePrice[] }>(
+    `/v1/prices?lookup_keys[]=${encodeURIComponent(normalizedLookupKey)}&active=true&limit=1`,
+    {
+      method: "GET",
+    }
+  );
+
+  const resolved = response.data?.find((price) => price.id)?.id ?? null;
+  if (resolved) {
+    stripePriceLookupCache.set(normalizedLookupKey, resolved);
+  }
+
+  return resolved;
+}
+
 export function isStripeConfigured() {
   return Boolean(ENV.stripeSecretKey && ENV.stripeWebhookSecret);
 }
 
 export function getPriceIdForTier(tier: SubscriptionTier, cadence: BillingCadence = "monthly") {
-  if (tier === "pro") {
-    return cadence === "annual" ? ENV.stripePriceProAnnual : ENV.stripePriceProMonthly;
-  }
-  if (tier === "fleet") return ENV.stripePriceFleetMonthly;
-  return "";
+  return resolveLegacyTierPrice(tier, cadence).value;
 }
 
 function getTruckFixrPriceId(planKey: PlanKey, billingInterval: Exclude<TruckFixrBillingInterval, "trial" | "pilot" | "custom">) {
-  const plan = getTruckFixrPlan(planKey);
-  if (billingInterval === "annual") {
-    if (planKey === "owner_operator") return ENV.stripePriceOwnerOperatorAnnual;
-    if (planKey === "small_fleet") return ENV.stripePriceSmallFleetAnnual;
-    if (planKey === "fleet_growth") return ENV.stripePriceFleetGrowthAnnual;
-    if (planKey === "fleet_pro") return ENV.stripePriceFleetProAnnual;
-  } else {
-    if (planKey === "owner_operator") return ENV.stripePriceOwnerOperatorMonthly;
-    if (planKey === "small_fleet") return ENV.stripePriceSmallFleetMonthly;
-    if (planKey === "fleet_growth") return ENV.stripePriceFleetGrowthMonthly;
-    if (planKey === "fleet_pro") return ENV.stripePriceFleetProMonthly;
-  }
-
-  if (!plan.publicSelectable) {
-    return "";
-  }
-
-  return "";
+  return resolveTruckFixrPrice(planKey, billingInterval).value;
 }
 
 export async function createTruckFixrCheckoutSession(input: TruckFixrStripeCheckoutInput) {
-  const priceId = getTruckFixrPriceId(input.planKey, input.billingInterval);
+  const priceResolution = resolveTruckFixrPrice(input.planKey, input.billingInterval);
+  const configuredPriceId = priceResolution.value || getTruckFixrPriceId(input.planKey, input.billingInterval);
+  const resolutionTarget = getStripePriceResolutionTarget(input.planKey, input.billingInterval);
+  const priceId =
+    resolutionTarget.priceId ||
+    (configuredPriceId.startsWith("price_") ? configuredPriceId : null) ||
+    (await findStripePriceIdByLookupKey(resolutionTarget.lookupKey));
   if (!priceId) {
-    throw new Error(`Stripe price is not configured for the ${input.planKey} plan.`);
+    throw new Error(
+      `${formatMissingStripePriceMessage(`${input.planKey} (${input.billingInterval})`, priceResolution)} Expected an active Stripe price for lookup key ${resolutionTarget.lookupKey}.`
+    );
   }
 
   const planLimits = getTruckFixrPlanLimits(input.planKey);
@@ -267,9 +290,12 @@ export async function createStripeCheckoutSession(input: {
   successUrl: string;
   cancelUrl: string;
 }) {
-  const priceId = getPriceIdForTier(input.tier, input.billingCadence);
+  const priceResolution = resolveLegacyTierPrice(input.tier, input.billingCadence);
+  const priceId = priceResolution.value || getPriceIdForTier(input.tier, input.billingCadence);
   if (!priceId) {
-    throw new Error(`Stripe price is not configured for the ${input.tier} plan.`);
+    throw new Error(
+      formatMissingStripePriceMessage(`${input.tier} (${input.billingCadence})`, priceResolution)
+    );
   }
 
   const quantity =

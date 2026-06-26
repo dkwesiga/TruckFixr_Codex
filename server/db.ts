@@ -37,6 +37,11 @@ async function ensureAuthSchema(pool: Pool) {
     `);
 
     await pool.query(`
+      ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "ownerOperatorMode" boolean NOT NULL DEFAULT false;
+    `);
+
+    await pool.query(`
       DO $$
       BEGIN
         CREATE TYPE subscription_tier AS ENUM ('free', 'pilot', 'pro', 'fleet');
@@ -124,6 +129,7 @@ async function ensureAuthSchema(pool: Pool) {
         "loginMethod" varchar(64),
         "emailVerified" boolean NOT NULL DEFAULT false,
         "role" user_role NOT NULL DEFAULT 'driver',
+        "internalAdminRole" varchar(32),
         "managerEmail" varchar(320),
         "managerUserId" integer,
         "subscriptionTier" subscription_tier NOT NULL DEFAULT 'free',
@@ -296,6 +302,11 @@ async function ensureAuthSchema(pool: Pool) {
     await pool.query(`
       ALTER TABLE "users"
       ADD COLUMN IF NOT EXISTS "managerEmail" varchar(320);
+    `);
+
+    await pool.query(`
+      ALTER TABLE "users"
+      ADD COLUMN IF NOT EXISTS "internalAdminRole" varchar(32);
     `);
 
     await pool.query(`
@@ -507,7 +518,18 @@ async function ensureAuthSchema(pool: Pool) {
         "subscriptionStatus" billing_status NOT NULL DEFAULT 'active',
         "planId" integer DEFAULT 1,
         "premiumTadis" boolean DEFAULT false,
+        "driverModeEnabled" boolean NOT NULL DEFAULT false,
         "trialEndsAt" timestamp,
+        "accountType" varchar(32) NOT NULL DEFAULT 'production',
+        "isDemoAccount" boolean NOT NULL DEFAULT false,
+        "lastActiveAt" timestamp,
+        "setupCompletedAt" timestamp,
+        "onboardingStatus" varchar(64) NOT NULL DEFAULT 'not_started',
+        "adminFollowUpStatus" varchar(64) NOT NULL DEFAULT 'healthy',
+        "riskStatus" varchar(64) NOT NULL DEFAULT 'healthy',
+        "riskReason" text,
+        "nextFollowUpAt" timestamp,
+        "adminOwnerId" integer,
         "createdAt" timestamp NOT NULL DEFAULT now(),
         "updatedAt" timestamp NOT NULL DEFAULT now()
       );
@@ -610,6 +632,20 @@ async function ensureAuthSchema(pool: Pool) {
 
     await pool.query(`
       ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "driverModeEnabled" boolean NOT NULL DEFAULT false;
+    `);
+
+    await pool.query(`
+      UPDATE "fleets"
+      SET "driverModeEnabled" = true
+      WHERE "accountType" = 'demo'
+        OR "isDemoAccount" = true
+        OR "salesStatus" = 'demo'
+        OR lower(coalesce("companyEmail", '')) LIKE '%@truckfixr-demo.example.com';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
       ADD COLUMN IF NOT EXISTS "subscriptionStartedAt" timestamp;
     `);
 
@@ -654,6 +690,68 @@ async function ensureAuthSchema(pool: Pool) {
     `);
 
     await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "accountType" varchar(32) NOT NULL DEFAULT 'production';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "isDemoAccount" boolean NOT NULL DEFAULT false;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "lastActiveAt" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "setupCompletedAt" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "onboardingStatus" varchar(64) NOT NULL DEFAULT 'not_started';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "adminFollowUpStatus" varchar(64) NOT NULL DEFAULT 'healthy';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "riskStatus" varchar(64) NOT NULL DEFAULT 'healthy';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "riskReason" text;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "nextFollowUpAt" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "adminOwnerId" integer;
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "adminFleetNotes" (
+        "id" serial PRIMARY KEY,
+        "fleetId" integer NOT NULL,
+        "createdByUserId" integer NOT NULL,
+        "note" text NOT NULL,
+        "noteType" varchar(64) NOT NULL DEFAULT 'general',
+        "createdAt" timestamp NOT NULL DEFAULT now(),
+        "updatedAt" timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS "vehicles" (
         "id" serial PRIMARY KEY,
         "fleetId" integer NOT NULL,
@@ -670,6 +768,14 @@ async function ensureAuthSchema(pool: Pool) {
         "configuration" jsonb,
         "complianceStatus" compliance_status NOT NULL DEFAULT 'green',
         "status" vehicle_status DEFAULT 'active',
+        "operationalState" varchar(32) NOT NULL DEFAULT 'active',
+        "operationalDecisionInspectionId" integer,
+        "operationalDecisionDefectId" integer,
+        "operationalDecisionByUserId" integer,
+        "operationalDecisionAt" timestamp,
+        "operationalInstruction" text,
+        "lastCleanInspectionId" integer,
+        "lastCleanInspectionAt" timestamp,
         "assetRecordStatus" asset_record_status NOT NULL DEFAULT 'active',
         "createdByUserId" integer,
         "createdAt" timestamp NOT NULL DEFAULT now(),
@@ -725,6 +831,46 @@ async function ensureAuthSchema(pool: Pool) {
     await pool.query(`
       ALTER TABLE "vehicles"
       ADD COLUMN IF NOT EXISTS "status" vehicle_status DEFAULT 'active';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "vehicles"
+      ADD COLUMN IF NOT EXISTS "operationalState" varchar(32) NOT NULL DEFAULT 'active';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "vehicles"
+      ADD COLUMN IF NOT EXISTS "operationalDecisionInspectionId" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "vehicles"
+      ADD COLUMN IF NOT EXISTS "operationalDecisionDefectId" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "vehicles"
+      ADD COLUMN IF NOT EXISTS "operationalDecisionByUserId" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "vehicles"
+      ADD COLUMN IF NOT EXISTS "operationalDecisionAt" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "vehicles"
+      ADD COLUMN IF NOT EXISTS "operationalInstruction" text;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "vehicles"
+      ADD COLUMN IF NOT EXISTS "lastCleanInspectionId" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "vehicles"
+      ADD COLUMN IF NOT EXISTS "lastCleanInspectionAt" timestamp;
     `);
 
     await pool.query(`
@@ -891,6 +1037,54 @@ async function ensureAuthSchema(pool: Pool) {
         IF vehicle_id_data_type IN ('character varying', 'text') THEN
           EXECUTE 'ALTER TABLE "vehicles" ALTER COLUMN "id" SET DEFAULT gen_random_uuid()::text';
         END IF;
+      END
+      $$;
+    `);
+
+    // Widen vehicles.id to varchar(64). Older deployments created this column as
+    // varchar(36) (sized for a bare UUID), but the app generates ids as
+    // `veh_<uuid>` (40 chars), which overflows varchar(36) on INSERT.
+    await pool.query(`
+      DO $$
+      DECLARE
+        vehicle_id_max_length integer;
+      BEGIN
+        SELECT character_maximum_length
+        INTO vehicle_id_max_length
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'vehicles'
+          AND column_name = 'id';
+
+        IF vehicle_id_max_length IS NOT NULL AND vehicle_id_max_length < 64 THEN
+          EXECUTE 'ALTER TABLE "vehicles" ALTER COLUMN "id" TYPE varchar(64)';
+        END IF;
+      END
+      $$;
+    `);
+
+    // Widen vehicleId / linkedPoweredVehicleId FK columns that store `veh_<uuid>` ids
+    // so they can hold the same 40-char values without overflowing.
+    await pool.query(`
+      DO $$
+      DECLARE
+        target record;
+      BEGIN
+        FOR target IN
+          SELECT table_name, column_name, character_maximum_length
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND column_name IN ('vehicleId', 'linkedPoweredVehicleId')
+            AND data_type = 'character varying'
+            AND character_maximum_length IS NOT NULL
+            AND character_maximum_length < 64
+        LOOP
+          EXECUTE format(
+            'ALTER TABLE %I ALTER COLUMN %I TYPE varchar(64)',
+            target.table_name,
+            target.column_name
+          );
+        END LOOP;
       END
       $$;
     `);
@@ -1192,6 +1386,36 @@ async function ensureAuthSchema(pool: Pool) {
     `);
 
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS "quickStartGuideProgress" (
+        "id" serial PRIMARY KEY,
+        "userId" integer NOT NULL,
+        "fleetId" integer,
+        "role" varchar(64) NOT NULL,
+        "manualSlug" varchar(80) NOT NULL,
+        "manualViewedAt" timestamp,
+        "manualCompletedAt" timestamp,
+        "completionSource" varchar(64),
+        "createdAt" timestamp NOT NULL DEFAULT now(),
+        "updatedAt" timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS "quickStartGuideProgress_user_manual_idx"
+      ON "quickStartGuideProgress" ("userId", "manualSlug", "updatedAt" DESC);
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS "quickStartGuideProgress_fleet_role_idx"
+      ON "quickStartGuideProgress" ("fleetId", "role", "manualSlug");
+    `);
+
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "quickStartGuideProgress_user_fleet_manual_unique"
+      ON "quickStartGuideProgress" ("userId", COALESCE("fleetId", 0), "manualSlug");
+    `);
+
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS "lead_submissions" (
         "id" serial PRIMARY KEY,
         "full_name" varchar(255) NOT NULL,
@@ -1418,8 +1642,21 @@ async function ensureAuthSchema(pool: Pool) {
         "fleetId" integer NOT NULL,
         "vehicleId" integer NOT NULL,
         "driverId" integer NOT NULL,
+        "inspectionSessionId" varchar(128),
+        "linkedVehicleId" varchar(64),
+        "combinedStage" varchar(16),
         "templateId" integer,
         "status" inspection_status DEFAULT 'in_progress',
+        "reportOutcome" varchar(32) NOT NULL DEFAULT 'clean',
+        "highestDefectSeverity" varchar(16) NOT NULL DEFAULT 'none',
+        "managerReviewRequired" boolean NOT NULL DEFAULT false,
+        "provisionalDriverGuidance" text,
+        "latestManagerDecision" varchar(32),
+        "latestManagerInstruction" text,
+        "latestManagerReviewedByUserId" integer,
+        "latestManagerReviewedAt" timestamp,
+        "supersededByInspectionId" integer,
+        "supersededAt" timestamp,
         "complianceStatus" compliance_status NOT NULL DEFAULT 'green',
         "results" jsonb,
         "createdAt" timestamp NOT NULL DEFAULT now(),
@@ -1445,12 +1682,77 @@ async function ensureAuthSchema(pool: Pool) {
 
     await pool.query(`
       ALTER TABLE "inspections"
+      ADD COLUMN IF NOT EXISTS "inspectionSessionId" varchar(128);
+    `);
+
+    await pool.query(`
+      ALTER TABLE "inspections"
+      ADD COLUMN IF NOT EXISTS "linkedVehicleId" varchar(64);
+    `);
+
+    await pool.query(`
+      ALTER TABLE "inspections"
+      ADD COLUMN IF NOT EXISTS "combinedStage" varchar(16);
+    `);
+
+    await pool.query(`
+      ALTER TABLE "inspections"
       ADD COLUMN IF NOT EXISTS "templateId" integer;
     `);
 
     await pool.query(`
       ALTER TABLE "inspections"
       ADD COLUMN IF NOT EXISTS "status" inspection_status DEFAULT 'in_progress';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "inspections"
+      ADD COLUMN IF NOT EXISTS "reportOutcome" varchar(32) NOT NULL DEFAULT 'clean';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "inspections"
+      ADD COLUMN IF NOT EXISTS "highestDefectSeverity" varchar(16) NOT NULL DEFAULT 'none';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "inspections"
+      ADD COLUMN IF NOT EXISTS "managerReviewRequired" boolean NOT NULL DEFAULT false;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "inspections"
+      ADD COLUMN IF NOT EXISTS "provisionalDriverGuidance" text;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "inspections"
+      ADD COLUMN IF NOT EXISTS "latestManagerDecision" varchar(32);
+    `);
+
+    await pool.query(`
+      ALTER TABLE "inspections"
+      ADD COLUMN IF NOT EXISTS "latestManagerInstruction" text;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "inspections"
+      ADD COLUMN IF NOT EXISTS "latestManagerReviewedByUserId" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "inspections"
+      ADD COLUMN IF NOT EXISTS "latestManagerReviewedAt" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "inspections"
+      ADD COLUMN IF NOT EXISTS "supersededByInspectionId" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "inspections"
+      ADD COLUMN IF NOT EXISTS "supersededAt" timestamp;
     `);
 
     await pool.query(`
@@ -1476,6 +1778,12 @@ async function ensureAuthSchema(pool: Pool) {
     await pool.query(`
       ALTER TABLE "inspections"
       ADD COLUMN IF NOT EXISTS "updatedAt" timestamp NOT NULL DEFAULT now();
+    `);
+
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "inspections_driver_session_vehicle_unique"
+      ON "inspections" ("fleetId", "driverId", "vehicleId", "inspectionSessionId")
+      WHERE "inspectionSessionId" IS NOT NULL;
     `);
 
     await pool.query(`
@@ -1679,12 +1987,21 @@ async function ensureAuthSchema(pool: Pool) {
         "vehicleId" integer NOT NULL,
         "inspectionId" integer,
         "driverId" integer NOT NULL,
+        "clientDraftId" varchar(128),
         "title" varchar(255) NOT NULL,
         "description" text,
         "category" varchar(100),
         "severity" defect_severity DEFAULT 'medium',
         "complianceStatus" compliance_status NOT NULL DEFAULT 'green',
         "status" defect_status DEFAULT 'open',
+        "managerReviewStatus" varchar(32) NOT NULL DEFAULT 'submitted',
+        "managerReviewStatusUpdatedAt" timestamp,
+        "isBlockingOperationally" boolean NOT NULL DEFAULT false,
+        "escalatedFromMinor" boolean NOT NULL DEFAULT false,
+        "latestManagerDecision" varchar(32),
+        "latestDriverInstruction" text,
+        "latestManagerActionByUserId" integer,
+        "latestManagerActionAt" timestamp,
         "photoUrls" jsonb,
         "createdAt" timestamp NOT NULL DEFAULT now(),
         "updatedAt" timestamp NOT NULL DEFAULT now()
@@ -1694,6 +2011,151 @@ async function ensureAuthSchema(pool: Pool) {
     await pool.query(`
       ALTER TABLE "defects"
       ADD COLUMN IF NOT EXISTS "complianceStatus" compliance_status NOT NULL DEFAULT 'green';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "defects"
+      ADD COLUMN IF NOT EXISTS "managerReviewStatus" varchar(32) NOT NULL DEFAULT 'submitted';
+    `);
+
+    await pool.query(`
+      ALTER TABLE "defects"
+      ADD COLUMN IF NOT EXISTS "managerReviewStatusUpdatedAt" timestamp;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "defects"
+      ADD COLUMN IF NOT EXISTS "clientDraftId" varchar(128);
+    `);
+
+    await pool.query(`
+      ALTER TABLE "defects"
+      ADD COLUMN IF NOT EXISTS "isBlockingOperationally" boolean NOT NULL DEFAULT false;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "defects"
+      ADD COLUMN IF NOT EXISTS "escalatedFromMinor" boolean NOT NULL DEFAULT false;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "defects"
+      ADD COLUMN IF NOT EXISTS "latestManagerDecision" varchar(32);
+    `);
+
+    await pool.query(`
+      ALTER TABLE "defects"
+      ADD COLUMN IF NOT EXISTS "latestDriverInstruction" text;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "defects"
+      ADD COLUMN IF NOT EXISTS "latestManagerActionByUserId" integer;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "defects"
+      ADD COLUMN IF NOT EXISTS "latestManagerActionAt" timestamp;
+    `);
+
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "defects_client_draft_unique"
+      ON "defects" ("fleetId", "driverId", "vehicleId", "clientDraftId")
+      WHERE "clientDraftId" IS NOT NULL;
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "inspectionReviewQueueItems" (
+        "id" serial PRIMARY KEY,
+        "fleetId" integer NOT NULL,
+        "inspectionId" integer,
+        "defectId" integer,
+        "vehicleId" varchar(64),
+        "inspectionSessionId" varchar(128),
+        "parentQueueItemId" integer,
+        "queueType" varchar(32) NOT NULL,
+        "status" varchar(32) NOT NULL DEFAULT 'new',
+        "headlineStatus" varchar(32) NOT NULL DEFAULT 'review_needed',
+        "priority" varchar(16) NOT NULL DEFAULT 'normal',
+        "highestSeverity" varchar(16) NOT NULL DEFAULT 'none',
+        "managerDecisionRequired" boolean NOT NULL DEFAULT false,
+        "requiresDriverInstruction" boolean NOT NULL DEFAULT false,
+        "provisionalGuidanceSnapshot" text,
+        "latestManagerDecision" varchar(32),
+        "latestDriverInstruction" text,
+        "latestInternalNote" text,
+        "agingState" varchar(32) NOT NULL DEFAULT 'new',
+        "openedDetailsAt" timestamp,
+        "firstSeenAt" timestamp,
+        "reviewStartedAt" timestamp,
+        "decisionMadeAt" timestamp,
+        "reviewedAt" timestamp,
+        "reviewedByUserId" integer,
+        "createdAt" timestamp NOT NULL DEFAULT now(),
+        "updatedAt" timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "inspectionReviewActions" (
+        "id" serial PRIMARY KEY,
+        "queueItemId" integer NOT NULL,
+        "inspectionId" integer NOT NULL,
+        "defectId" integer,
+        "vehicleId" varchar(64) NOT NULL,
+        "managerUserId" integer NOT NULL,
+        "actionType" varchar(32) NOT NULL,
+        "driverInstructionNote" text,
+        "internalNote" text,
+        "createdAt" timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "combinedInspectionSessions" (
+        "id" serial PRIMARY KEY,
+        "fleetId" integer NOT NULL,
+        "inspectionSessionId" varchar(128) NOT NULL UNIQUE,
+        "truckVehicleId" varchar(64),
+        "trailerVehicleId" varchar(64),
+        "truckInspectionId" integer,
+        "trailerInspectionId" integer,
+        "groupedQueueItemId" integer,
+        "headlineStatus" varchar(32) NOT NULL DEFAULT 'review_needed',
+        "completionState" varchar(64) NOT NULL DEFAULT 'truck_pending_trailer_pending',
+        "createdAt" timestamp NOT NULL DEFAULT now(),
+        "updatedAt" timestamp NOT NULL DEFAULT now()
+      );
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS "inspections_fleet_vehicle_submitted_idx"
+      ON "inspections" ("fleetId", "vehicleId", "submittedAt" DESC);
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS "inspections_session_idx"
+      ON "inspections" ("inspectionSessionId");
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS "review_queue_fleet_status_idx"
+      ON "inspectionReviewQueueItems" ("fleetId", "status", "priority", "agingState", "createdAt" DESC);
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS "review_queue_vehicle_status_idx"
+      ON "inspectionReviewQueueItems" ("vehicleId", "status");
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS "review_actions_queue_created_idx"
+      ON "inspectionReviewActions" ("queueItemId", "createdAt" DESC);
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS "vehicles_operational_state_idx"
+      ON "vehicles" ("operationalState");
     `);
 
     await pool.query(`
@@ -1941,6 +2403,21 @@ export async function getDb() {
   return _db;
 }
 
+export async function resetDb() {
+  const pool = _pool;
+  _pool = null;
+  _db = null;
+  _authSchemaReady = null;
+
+  if (pool) {
+    try {
+      await pool.end();
+    } catch (error) {
+      console.warn("[Database] Failed to end pool:", error);
+    }
+  }
+}
+
 export async function upsertUser(user: InsertUser): Promise<void> {
   if (!user.openId) {
     throw new Error("User openId is required for upsert");
@@ -1963,7 +2440,7 @@ export async function upsertUser(user: InsertUser): Promise<void> {
     };
     const updateSet: Record<string, unknown> = {};
 
-    const textFields = ["name", "email", "loginMethod", "managerEmail"] as const;
+    const textFields = ["name", "email", "passwordHash", "loginMethod", "managerEmail", "internalAdminRole"] as const;
     type TextField = (typeof textFields)[number];
 
     const assignNullable = (field: TextField) => {
@@ -1980,12 +2457,21 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       values.lastSignedIn = user.lastSignedIn;
       updateSet.lastSignedIn = user.lastSignedIn;
     }
+    if (user.lastAuthAt !== undefined) {
+      values.lastAuthAt = user.lastAuthAt;
+      updateSet.lastAuthAt = user.lastAuthAt;
+    }
     if (user.role !== undefined) {
       values.role = user.role;
       updateSet.role = user.role;
     } else if (user.openId === ENV.ownerOpenId) {
       values.role = 'owner';
       updateSet.role = 'owner';
+    }
+
+    if (user.ownerOperatorMode !== undefined) {
+      values.ownerOperatorMode = user.ownerOperatorMode;
+      updateSet.ownerOperatorMode = user.ownerOperatorMode;
     }
 
     if (user.managerUserId !== undefined) {

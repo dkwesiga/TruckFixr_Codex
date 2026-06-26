@@ -11,8 +11,13 @@ import { subscriptionsRouter } from "./routers/subscriptions";
 import { vehicleAccessRouter } from "./routers/vehicleAccess";
 import { companyRouter } from "./routers/company";
 import { leadsRouter } from "./routers/leads";
+import { downtimeCalculatorRouter } from "./routers/downtimeCalculator";
 import { accessRouter } from "./routers/access";
 import { faultCodeReferencesRouter } from "./routers/faultCodeReferences";
+import { supportRecoveryRouter } from "./routers/supportRecovery";
+import { adminRouter } from "./routers/admin";
+import { quickStartRouter } from "./routers/quickStart";
+import { notificationsRouter } from "./routers/notifications";
 
 export const appRouter = router({
   system: systemRouter,
@@ -27,8 +32,13 @@ export const appRouter = router({
   vehicleAccess: vehicleAccessRouter,
   company: companyRouter,
   leads: leadsRouter,
+  downtimeCalculator: downtimeCalculatorRouter,
   access: accessRouter,
   faultCodeReferences: faultCodeReferencesRouter,
+  supportRecovery: supportRecoveryRouter,
+  admin: adminRouter,
+  quickStart: quickStartRouter,
+  notifications: notificationsRouter,
 });
 
 export type AppRouter = typeof appRouter;

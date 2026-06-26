@@ -1,8 +1,15 @@
 import {join, resolve} from "node:path";
 import {pathToFileURL} from "node:url";
-import {fileExists, outputRoot} from "./utils";
+import {assetsRoot, fileExists, outputRoot} from "./utils";
 
-const expectedFiles = [
+const expectedAssetFiles = [
+  "voiceover/truckfixr-explainer-30.mp3",
+  "voiceover/truckfixr-explainer-60.mp3",
+  "voiceover/truckfixr-explainer-90.mp3",
+  "music/background.mp3",
+];
+
+const expectedOutputFiles = [
   "renders/landscape/truckfixr-explainer-30-landscape.mp4",
   "renders/landscape/truckfixr-explainer-60-landscape.mp4",
   "renders/landscape/truckfixr-explainer-90-landscape.mp4",
@@ -34,11 +41,20 @@ const expectedFiles = [
   "web/vertical/truckfixr-explainer-90-vertical.webm",
   "web/vertical/truckfixr-explainer-90-vertical-poster.png",
   "embed/truckfixr-video-embed.html",
+  "reports/audio-report.json",
 ];
 
 async function main() {
   const missing: string[] = [];
-  for (const relativePath of expectedFiles) {
+
+  for (const relativePath of expectedAssetFiles) {
+    const exists = await fileExists(join(assetsRoot, relativePath));
+    if (!exists) {
+      missing.push(`assets/${relativePath}`);
+    }
+  }
+
+  for (const relativePath of expectedOutputFiles) {
     const exists = await fileExists(join(outputRoot, relativePath));
     if (!exists) {
       missing.push(relativePath);
@@ -53,7 +69,7 @@ async function main() {
     JSON.stringify(
       {
         ok: true,
-        checked: expectedFiles.length,
+        checked: expectedAssetFiles.length + expectedOutputFiles.length,
       },
       null,
       2

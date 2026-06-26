@@ -39,6 +39,7 @@ export type ScenePlan = {
   durationInFrames: number;
   headline: string;
   body: string;
+  narration: string;
 };
 
 export type CaptionCue = {

@@ -282,8 +282,8 @@ function buildDemoVehicleRows(fleetId: number, ownerId: number, managerId: numbe
   const poweredVehicleTypes = [
     { assetType: "tractor", vehicleType: "tractor", make: "Volvo", model: "VNL", engineMake: "Volvo" },
     { assetType: "straight_truck", vehicleType: "straight_truck", make: "Isuzu", model: "NRR", engineMake: "Isuzu" },
-    { assetType: "bus", vehicleType: "bus", make: "New Flyer", model: "Xcelsior", engineMake: "Cummins" },
-    { assetType: "van", vehicleType: "van", make: "Ford", model: "Transit", engineMake: "Ford" },
+    { assetType: "straight_truck", vehicleType: "bus", make: "New Flyer", model: "Xcelsior", engineMake: "Cummins" },
+    { assetType: "straight_truck", vehicleType: "van", make: "Ford", model: "Transit", engineMake: "Ford" },
   ] as const;
   const trailerTypes = [
     { assetType: "trailer", vehicleType: "dry_van", make: "Great Dane", model: "Dry Van" },
@@ -766,7 +766,13 @@ export async function seedDemoData() {
     managerUserId: manager.id,
   });
 
-  const fleet = await upsertFleetRow(db, owner.id, DEMO_FLEET_SEED);
+  const fleet = await upsertFleetRow(db, owner.id, {
+    name: DEMO_FLEET_SEED.fleetName,
+    companyEmail: DEMO_FLEET_SEED.companyEmail,
+    companyPhone: DEMO_FLEET_SEED.companyPhone,
+    address: DEMO_FLEET_SEED.address,
+    inviteCode: DEMO_FLEET_SEED.inviteCode,
+  });
 
   await clearDemoFleetRows(db, fleet.id);
 
@@ -1016,9 +1022,9 @@ export async function seedDemoData() {
       driverAssignment: "/manager",
       dailyInspection: `/inspection?vehicle=${encodeURIComponent(poweredVehicleIds[0])}&fleet=${encodeURIComponent(String(fleet.id))}&mode=daily`,
       defectFlagged: `/defect/${airLeakCase.defectId}`,
-      diagnosisIntake: `/diagnosis?vehicle=${encodeURIComponent(poweredVehicleIds[0])}&fleet=${encodeURIComponent(String(fleet.id))}&label=${encodeURIComponent("Unit BRM-001")}&vin=${encodeURIComponent(vehicleRows[0].vin)}&demoCase=abs_warning`,
-      diagnosisResult: `/diagnosis?vehicle=${encodeURIComponent(poweredVehicleIds[1])}&fleet=${encodeURIComponent(String(fleet.id))}&label=${encodeURIComponent("Unit BRM-002")}&vin=${encodeURIComponent(vehicleRows[1].vin)}&demoCase=def_derate`,
-      triage: `/diagnosis?vehicle=${encodeURIComponent(poweredVehicleIds[2])}&fleet=${encodeURIComponent(String(fleet.id))}&label=${encodeURIComponent("Unit BRM-003")}&vin=${encodeURIComponent(vehicleRows[2].vin)}&demoCase=air_leak`,
+      diagnosisIntake: `/diagnosis?vehicle=${encodeURIComponent(poweredVehicleIds[0])}&fleet=${encodeURIComponent(String(fleet.id))}&label=${encodeURIComponent("Unit BRM-001")}&vin=${encodeURIComponent(vehicleRows[0].vin)}&demoCase=abs_warning&demoMode=intake`,
+      diagnosisResult: `/diagnosis?vehicle=${encodeURIComponent(poweredVehicleIds[1])}&fleet=${encodeURIComponent(String(fleet.id))}&label=${encodeURIComponent("Unit BRM-002")}&vin=${encodeURIComponent(vehicleRows[1].vin)}&demoCase=def_derate&demoMode=result`,
+      triage: `/diagnosis?vehicle=${encodeURIComponent(poweredVehicleIds[2])}&fleet=${encodeURIComponent(String(fleet.id))}&label=${encodeURIComponent("Unit BRM-003")}&vin=${encodeURIComponent(vehicleRows[2].vin)}&demoCase=air_leak&demoMode=result`,
       maintenanceHistory: `/truck/${poweredVehicleIds[20]}`,
       complianceTracking: "/manager",
       settingsSubscription: "/profile",
@@ -1026,9 +1032,9 @@ export async function seedDemoData() {
       assignedVehicle: "/driver",
       mobileInspection: `/inspection?vehicle=${encodeURIComponent(poweredVehicleIds[0])}&fleet=${encodeURIComponent(String(fleet.id))}&mode=daily`,
       mobileDefect: `/defect/${defCase.defectId}`,
-      mobileDiagnosisIntake: `/diagnosis?vehicle=${encodeURIComponent(poweredVehicleIds[2])}&fleet=${encodeURIComponent(String(fleet.id))}&label=${encodeURIComponent("Unit BRM-003")}&vin=${encodeURIComponent(vehicleRows[2].vin)}&demoCase=air_leak`,
-      mobileSafetyWarning: `/diagnosis?vehicle=${encodeURIComponent(poweredVehicleIds[2])}&fleet=${encodeURIComponent(String(fleet.id))}&label=${encodeURIComponent("Unit BRM-003")}&vin=${encodeURIComponent(vehicleRows[2].vin)}&demoCase=air_leak`,
-      mobileDiagnosticResult: `/diagnosis?vehicle=${encodeURIComponent(poweredVehicleIds[1])}&fleet=${encodeURIComponent(String(fleet.id))}&label=${encodeURIComponent("Unit BRM-002")}&vin=${encodeURIComponent(vehicleRows[1].vin)}&demoCase=def_derate`,
+      mobileDiagnosisIntake: `/diagnosis?vehicle=${encodeURIComponent(poweredVehicleIds[2])}&fleet=${encodeURIComponent(String(fleet.id))}&label=${encodeURIComponent("Unit BRM-003")}&vin=${encodeURIComponent(vehicleRows[2].vin)}&demoCase=air_leak&demoMode=intake`,
+      mobileSafetyWarning: `/diagnosis?vehicle=${encodeURIComponent(poweredVehicleIds[2])}&fleet=${encodeURIComponent(String(fleet.id))}&label=${encodeURIComponent("Unit BRM-003")}&vin=${encodeURIComponent(vehicleRows[2].vin)}&demoCase=air_leak&demoMode=result`,
+      mobileDiagnosticResult: `/diagnosis?vehicle=${encodeURIComponent(poweredVehicleIds[1])}&fleet=${encodeURIComponent(String(fleet.id))}&label=${encodeURIComponent("Unit BRM-002")}&vin=${encodeURIComponent(vehicleRows[1].vin)}&demoCase=def_derate&demoMode=result`,
     },
   };
 

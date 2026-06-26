@@ -53,6 +53,7 @@ export type InspectionSheetType = z.infer<typeof inspectionSheetTypeSchema>;
 
 export const defectClassificationSchema = z.enum(["minor", "major", "not_sure"]);
 export const signatureModeSchema = z.enum(["typed", "drawn"]);
+export const combinedInspectionStageSchema = z.enum(["truck", "trailer"]);
 
 export const vehicleInspectionConfigSchema = z.object({
   airBrakes: z.boolean().default(true),
@@ -343,6 +344,9 @@ const inspectionVehicleIdSchema = z
 export const dailyInspectionSubmissionSchema = z.object({
   vehicleId: inspectionVehicleIdSchema,
   fleetId: z.number().int().positive(),
+  inspectionSessionId: z.string().trim().min(8).max(128).optional(),
+  linkedVehicleId: inspectionVehicleIdSchema.optional(),
+  combinedStage: combinedInspectionStageSchema.optional(),
   inspectionSheetType: inspectionSheetTypeSchema.optional(),
   odometer: z.number().int().nonnegative().optional(),
   location: z.string().trim().min(1, "Inspection location is required"),
@@ -351,6 +355,12 @@ export const dailyInspectionSubmissionSchema = z.object({
   driverSignature: z.string().trim().min(1, "Driver signature is required"),
   driverSignatureMode: signatureModeSchema,
   driverSignatureImageUrl: z.string().trim().min(1).optional(),
+  proofPhotos: z.array(z.object({
+    proofItem: z.string().min(1),
+    proofLabel: z.string().trim().optional(),
+    photoUrl: z.string().trim().optional(),
+    skipped: z.boolean().default(false),
+  })).default([]),
   results: z.array(inspectionItemResultSchema).min(1),
 }).superRefine((value, context) => {
   if (value.driverSignatureMode === "drawn" && !value.driverSignatureImageUrl?.trim()) {
@@ -439,6 +449,7 @@ export const knownDefectFollowUpSchema = z.object({
 
 export const proofPhotoSubmissionSchema = z.object({
   proofItem: z.string().min(1),
+  proofLabel: z.string().trim().optional(),
   photoUrl: z.string().trim().optional(),
   skipped: z.boolean().default(false),
 });

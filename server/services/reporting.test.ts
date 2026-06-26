@@ -28,12 +28,13 @@ describe("compliance helpers", () => {
 });
 
 describe("buildInspectionReport", () => {
-  it("builds a pdf payload and summary for storage/email", () => {
-    const report = buildInspectionReport({
+  it("builds a pdf payload and summary for storage/email", async () => {
+    const report = await buildInspectionReport({
       inspectionId: 101,
       submittedAt: new Date("2026-04-11T12:00:00.000Z"),
       validUntil: new Date("2026-04-12T12:00:00.000Z"),
       complianceStatus: "yellow",
+      carrier: { name: "Brampton Transit Inc.", address: "1 Fleet Way, Brampton ON" },
       vehicle: {
         id: 42,
         vin: "1XPWD49X91D487964",

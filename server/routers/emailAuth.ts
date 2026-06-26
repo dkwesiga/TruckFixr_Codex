@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { publicProcedure, router } from "../_core/trpc";
-import { getDb } from "../db";
+import { getDb, upsertUser } from "../db";
 import { users, passwordResetTokens } from "../../drizzle/schema";
 import { eq, and, isNull } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
@@ -28,6 +28,25 @@ import {
   LOGIN_COOLDOWN_ERROR,
   recordFailedLogin,
 } from "../_core/authSecurity";
+
+async function authenticateDevelopmentLocalUser(email: string, password: string) {
+  const user = await verifyLocalCredentials(email, password);
+  if (!user) return null;
+
+  await upsertUser({
+    openId: user.openId,
+    email: user.email,
+    name: user.name,
+    passwordHash: user.passwordHash,
+    loginMethod: user.loginMethod ?? "email",
+    role: user.role,
+    emailVerified: user.emailVerified ?? true,
+    lastSignedIn: new Date(),
+    lastAuthAt: new Date(),
+  });
+
+  return user;
+}
 
 export const emailAuthRouter = router({
   signup: publicProcedure
@@ -114,6 +133,7 @@ export const emailAuthRouter = router({
             name: user.name,
             role: user.role,
             openId: user.openId,
+            internalAdminRole: user.internalAdminRole,
           },
         };
       }
@@ -214,6 +234,25 @@ export const emailAuthRouter = router({
         });
       }
 
+      const devLocalUser = !ENV.isProduction
+        ? await authenticateDevelopmentLocalUser(normalizedEmail, input.password)
+        : null;
+
+      if (devLocalUser) {
+        clearFailedLogin(normalizedEmail);
+        return {
+          success: true,
+          user: {
+            id: devLocalUser.id,
+            email: devLocalUser.email,
+            name: devLocalUser.name,
+            role: devLocalUser.role,
+            openId: devLocalUser.openId,
+            internalAdminRole: devLocalUser.internalAdminRole,
+          },
+        };
+      }
+
       const userRecord = await db
         .select()
         .from(users)
@@ -237,6 +276,7 @@ export const emailAuthRouter = router({
             name: user.name,
             role: user.role,
             openId: user.openId,
+            internalAdminRole: user.internalAdminRole,
           },
         };
       }
@@ -305,6 +345,7 @@ export const emailAuthRouter = router({
             name: user.name,
             role: user.role,
             openId: user.openId,
+            internalAdminRole: user.internalAdminRole,
           },
         };
       }
@@ -314,6 +355,25 @@ export const emailAuthRouter = router({
           code: "INTERNAL_SERVER_ERROR",
           message: "Database not available",
         });
+      }
+
+      const devLocalUser = !ENV.isProduction
+        ? await authenticateDevelopmentLocalUser(normalizedEmail, input.password)
+        : null;
+
+      if (devLocalUser) {
+        clearFailedLogin(normalizedEmail);
+        return {
+          success: true,
+          user: {
+            id: devLocalUser.id,
+            email: devLocalUser.email,
+            name: devLocalUser.name,
+            role: devLocalUser.role,
+            openId: devLocalUser.openId,
+            internalAdminRole: devLocalUser.internalAdminRole,
+          },
+        };
       }
 
       const userRecord = await db
@@ -339,6 +399,7 @@ export const emailAuthRouter = router({
             name: user.name,
             role: user.role,
             openId: user.openId,
+            internalAdminRole: user.internalAdminRole,
           },
         };
       }

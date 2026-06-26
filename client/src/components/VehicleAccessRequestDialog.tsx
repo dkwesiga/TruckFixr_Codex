@@ -55,6 +55,14 @@ export default function VehicleAccessRequestDialog({
   const [note, setNote] = useState("");
   const [manualIdentifier, setManualIdentifier] = useState("");
   const [requestedFromUserId, setRequestedFromUserId] = useState<number | null>(null);
+  const resetDialogState = (nextVehicleId: string | null = defaultVehicleId == null ? null : String(defaultVehicleId)) => {
+    setSearch("");
+    setSelectedVehicleId(nextVehicleId);
+    setReason("need_to_complete_inspection");
+    setNote("");
+    setManualIdentifier("");
+    setRequestedFromUserId(null);
+  };
 
   const utils = trpc.useUtils();
   const grantContactsQuery = trpc.vehicleAccess.getGrantContacts.useQuery(
@@ -99,13 +107,8 @@ export default function VehicleAccessRequestDialog({
         note: note.trim() || undefined,
       });
       toast.success("Vehicle access request submitted");
+      resetDialogState();
       setOpen(false);
-      setSearch("");
-      setSelectedVehicleId(null);
-      setReason("need_to_complete_inspection");
-      setNote("");
-      setManualIdentifier("");
-      setRequestedFromUserId(null);
       onSubmitted?.();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to submit access request");
@@ -130,7 +133,18 @@ export default function VehicleAccessRequestDialog({
   }, [grantContactsQuery.data?.primaryGrantor?.id, open, requestedFromUserId]);
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) {
+          resetDialogState();
+          return;
+        }
+
+        resetDialogState(defaultVehicleId == null ? null : String(defaultVehicleId));
+      }}
+    >
       <DialogTrigger asChild>
         <Button variant={triggerVariant} className="rounded-2xl">
           <Truck className="mr-2 h-4 w-4" />
@@ -152,7 +166,7 @@ export default function VehicleAccessRequestDialog({
           <div>
             <Label htmlFor="vehicle-access-select">Select a company vehicle or trailer</Label>
             <Select
-              value={selectedVehicleId ?? ""}
+              value={selectedVehicleId ?? undefined}
               onValueChange={(value) => {
                 const nextVehicleId = value ? String(value) : null;
                 setSelectedVehicleId(nextVehicleId);
