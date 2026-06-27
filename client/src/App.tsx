@@ -70,7 +70,24 @@ const QuickStartGuides = lazyWithChunkRecovery(
 const FleetDowntimeCostCalculator = lazyWithChunkRecovery(
   () => import("./pages/FleetDowntimeCostCalculator")
 );
+const Resources = lazyWithChunkRecovery(() => import("./pages/Resources"));
+const ResourceOntarioDailyInspection = lazyWithChunkRecovery(
+  () => import("./pages/ResourceOntarioDailyInspection")
+);
+const ResourceAnnualInspectionChecklist = lazyWithChunkRecovery(
+  () => import("./pages/ResourceAnnualInspectionChecklist")
+);
+const MaintenancePlanning = lazyWithChunkRecovery(
+  () => import("./pages/MaintenancePlanning")
+);
 const Offline = lazyWithChunkRecovery(() => import("./pages/Offline"));
+
+// Internal, gated Maintenance Planning area. The route is only registered when
+// this Vite build flag is set, so normal pilot users never reach it. The page
+// itself is additionally wrapped in RoleBasedRoute (owner/manager). This app is
+// Vite + tRPC (not Next.js), so the flag uses the VITE_ prefix.
+const MAINTENANCE_PLANNING_ENABLED =
+  import.meta.env.VITE_ENABLE_MAINTENANCE_PLANNING === "true";
 
 function RouteFallback() {
   return (
@@ -169,6 +186,21 @@ function Router() {
           path={"/fleet-downtime-cost-calculator"}
           component={FleetDowntimeCostCalculator}
         />
+        <Route path={"/resources"} component={Resources} />
+        <Route
+          path={"/resources/ontario-daily-inspection-guide"}
+          component={ResourceOntarioDailyInspection}
+        />
+        <Route
+          path={"/resources/annual-inspection-planning-checklist"}
+          component={ResourceAnnualInspectionChecklist}
+        />
+        {MAINTENANCE_PLANNING_ENABLED ? (
+          <Route
+            path={"/app/maintenance-planning"}
+            component={MaintenancePlanning}
+          />
+        ) : null}
         <Route path={"/admin"} component={AdminMetricsDashboard} />
         <Route path={"/admin/metrics"} component={AdminMetricsDashboard} />
         <Route path={"/admin/fleets"} component={AdminMetricsDashboard} />

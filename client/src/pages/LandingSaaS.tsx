@@ -7,16 +7,19 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { trackEvent } from "@/lib/analytics";
+import { useSeoMeta } from "@/lib/useSeoMeta";
 import {
   ArrowRight,
   BrainCircuit,
   Calculator,
+  CalendarClock,
   Check,
   ChevronDown,
   ClipboardCheck,
   Gauge,
   History,
   KeyRound,
+  Layers,
   Play,
   Siren,
   Smartphone,
@@ -117,6 +120,47 @@ const featureItems: { icon: LucideIcon; label: string }[] = [
   { icon: Truck, label: "Fleet dashboard" },
   { icon: Smartphone, label: "Mobile-friendly reporting" },
   { icon: ClipboardCheck, label: "Photos, notes, fault codes" },
+];
+
+// Two focused product concepts highlighted alongside the core feature chips.
+// Intentionally scoped to maintenance decisions — not general fleet management.
+const focusedCapabilities: ContentCard[] = [
+  {
+    icon: Layers,
+    title: "Smart Repair Bundling",
+    description:
+      "Group pending defects, warning lights, inspection issues, repeat problems, and upcoming compliance dates into one planned repair visit where possible.",
+  },
+  {
+    icon: CalendarClock,
+    title: "Inspection & Compliance Tracking",
+    description:
+      "Track daily inspections, open defects, annual inspection dates, and applicable semi-annual inspection deadlines so maintenance does not become urgent at the last minute.",
+  },
+];
+
+const resourceLinks: { icon: LucideIcon; title: string; description: string; href: string }[] = [
+  {
+    icon: Calculator,
+    title: "Fleet Downtime Cost Calculator",
+    description:
+      "Estimate what downtime could be costing your fleet across vehicles, repair delays, and repeat issues.",
+    href: "/fleet-downtime-cost-calculator",
+  },
+  {
+    icon: ClipboardCheck,
+    title: "Ontario Daily Inspection Guide",
+    description:
+      "A practical overview of daily commercial vehicle inspections and how to keep defects from piling up.",
+    href: "/resources/ontario-daily-inspection-guide",
+  },
+  {
+    icon: CalendarClock,
+    title: "Annual Inspection Planning Checklist",
+    description:
+      "Plan annual and semi-annual inspection dates ahead of time so maintenance stays scheduled.",
+    href: "/resources/annual-inspection-planning-checklist",
+  },
 ];
 
 const steps = [
@@ -845,6 +889,13 @@ export default function LandingSaaS() {
   const [showVideo, setShowVideo] = useState(false);
   const [showDowntime, setShowDowntime] = useState(false);
 
+  useSeoMeta({
+    title:
+      "TruckFixr Fleet AI — Reduce commercial fleet downtime with faster maintenance decisions",
+    description:
+      "TruckFixr helps small and mid-sized commercial fleets reduce downtime by turning driver-reported issues, digital DVIR inspections, fault codes, compliance dates, and repair history into faster maintenance decisions.",
+  });
+
   const handleCta = (event: string, location: string) => {
     trackEvent(event, { cta_location: location });
   };
@@ -885,6 +936,7 @@ export default function LandingSaaS() {
             {[
               ["How it works", "#how-it-works"],
               ["Features", "#features"],
+              ["Resources", "/resources"],
               ["Pricing", ROUTES.pricing],
               ["FAQ", "#faq"],
             ].map(([label, href]) => (
@@ -929,8 +981,9 @@ export default function LandingSaaS() {
                 Turn scattered vehicle issues into clear maintenance decisions.
               </h1>
               <p className="mt-6 max-w-xl text-lg leading-8 text-[#42474E]">
-                TruckFixr Fleet AI helps commercial fleets connect inspections, driver reports, fault codes, early
-                warnings, AI triage, repair decisions, and vehicle history in one workflow.
+                Reduce downtime before small truck problems become expensive breakdowns. TruckFixr Fleet AI turns
+                driver reports, inspections, fault codes, compliance dates, and repair history into faster maintenance
+                decisions for small and mid-sized fleets.
               </p>
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">
                 <Button
@@ -1190,6 +1243,12 @@ export default function LandingSaaS() {
                 </motion.div>
               ))}
             </div>
+
+            <div className="mt-6 grid gap-4 md:grid-cols-2">
+              {focusedCapabilities.map((card) => (
+                <FeatureCard key={card.title} card={card} />
+              ))}
+            </div>
           </div>
         </section>
 
@@ -1231,6 +1290,59 @@ export default function LandingSaaS() {
                   </p>
                 </div>
               </div>
+            </div>
+          </div>
+        </section>
+
+        {/* 8b. Resources */}
+        <section id="resources" className="border-y border-[var(--fleet-outline)] bg-white px-4 py-16 sm:px-6 lg:py-24">
+          <div className="mx-auto max-w-[1200px]">
+            <SectionHeading
+              eyebrow="Resources"
+              title="Tools to plan maintenance before it becomes urgent."
+              description="Built for fleets that need better maintenance decisions, not another bloated fleet system. TruckFixr focuses on driver-reported issues, inspections, fault codes, repair history, compliance dates, and repair planning."
+            />
+            <div className="mt-10 grid gap-6 md:grid-cols-3">
+              {resourceLinks.map((resource) => (
+                <a
+                  key={resource.href}
+                  href={resource.href}
+                  onClick={() => handleCta("resource_card_clicked", resource.href)}
+                  className="group flex h-full flex-col rounded-3xl border border-[var(--fleet-outline)] bg-[var(--fleet-surface)] p-6 shadow-[var(--fleet-shadow)] transition hover:-translate-y-0.5 hover:border-[#E32636]/40"
+                >
+                  <resource.icon className="h-7 w-7 text-[#E32636]" />
+                  <h3 className="mt-4 font-['Manrope'] text-lg font-black text-[#00263F]">{resource.title}</h3>
+                  <p className="mt-2 flex-1 text-sm leading-7 text-[#42474E]">{resource.description}</p>
+                  <span className="mt-4 inline-flex items-center gap-2 font-['Manrope'] text-sm font-bold text-[#A04100]">
+                    View resource
+                    <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+                  </span>
+                </a>
+              ))}
+            </div>
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <Button
+                asChild
+                className="rounded-full bg-[#00263F] px-6 font-['Manrope'] font-bold text-white hover:bg-[#0B3C5D]"
+              >
+                <a href="/resources" onClick={() => handleCta("view_resources_clicked", "resources_section")}>View Resources</a>
+              </Button>
+              <Button
+                asChild
+                variant="outline"
+                className="rounded-full border-2 border-[#00263F] bg-white px-6 font-['Manrope'] font-bold text-[#00263F] hover:bg-[#00263F] hover:text-white"
+              >
+                <a
+                  href={ROUTES.requestPilot}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    scrollToId("request-pilot");
+                    handleCta("request_pilot_cta_clicked", "resources_section");
+                  }}
+                >
+                  Request Pilot Access
+                </a>
+              </Button>
             </div>
           </div>
         </section>
@@ -1362,6 +1474,7 @@ export default function LandingSaaS() {
               <ul className="mt-4 space-y-2 text-sm">
                 <li><a href="#how-it-works" className="hover:text-white">How It Works</a></li>
                 <li><a href="#features" className="hover:text-white">Features</a></li>
+                <li><a href="/resources" className="hover:text-white">Resources</a></li>
                 <li><a href={ROUTES.pricing} className="hover:text-white">Pricing</a></li>
                 <li><a href="#faq" className="hover:text-white">FAQ</a></li>
               </ul>
