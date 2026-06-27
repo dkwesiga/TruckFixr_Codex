@@ -3,6 +3,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
+import InstallAppPrompt from "./components/InstallAppPrompt";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { lazyWithChunkRecovery } from "./lib/chunkRecovery";
 import { useAuthContext } from "./hooks/useAuthContext";
@@ -233,6 +234,7 @@ function App() {
         <TooltipProvider>
           <Toaster />
           <Router />
+          <InstallAppPrompt />
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>
