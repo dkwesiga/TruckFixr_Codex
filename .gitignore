@@ -118,3 +118,12 @@ truckfixr-codex-source*.zip
 
 # Manus version file (auto-generated, not part of source)
 client/public/__manus__/version.json
+
+# Separate sub-projects (maintained in their own repos; contain build
+# artifacts and/or lead PII that must not land in this repo)
+truckfixr-driver-rn/
+truckfixr-leads/
+
+# Local tooling / preview helpers (machine-specific)
+.gstack/
+.claude/launch.json
