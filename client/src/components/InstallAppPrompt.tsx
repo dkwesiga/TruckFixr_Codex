@@ -3,7 +3,7 @@ import { Download, X } from "lucide-react";
 
 // Chrome/Android fires `beforeinstallprompt` when the PWA meets installability
 // criteria (valid manifest + registered service worker + HTTPS). We capture it
-// and surface a clear, dismissible "Install" button so drivers can add
+// and surface a clear, dismissible "Install" button so users can add
 // TruckFixr to their home screen without digging through the browser menu.
 //
 // This renders nothing on platforms that don't support install (desktop unless
@@ -86,7 +86,7 @@ export default function InstallAppPrompt() {
             Install TruckFixr
           </p>
           <p className="truncate text-xs text-slate-500">
-            Add it to your home screen for quick driver access.
+            Add TruckFixr Fleet AI to your home screen.
           </p>
         </div>
         <button
