@@ -454,4 +454,36 @@ describe("subscription billing flow", () => {
     expect(getPlanRestrictionMessage("diagnostics", "free")).toContain("monthly diagnostic limit");
     expect(getPlanRestrictionMessage("vehicles", "free")).toContain("active vehicles");
   });
+  it("derives pilot milestone ownership server-side and ignores a supplied fleet id", async () => {
+    const caller = appRouter.createCaller(createContext());
+
+    await caller.subscriptions.trackPilotEvent({
+      eventType: "upgrade_prompt_shown",
+      fleetId: 999,
+      metadata: { source: "driver_dashboard" },
+    } as any);
+
+    expect(recordPilotMilestone).toHaveBeenCalledWith({
+      userId: 7,
+      eventType: "upgrade_prompt_shown",
+      eventMetadata: { source: "driver_dashboard" },
+    });
+    expect(recordPilotMilestone.mock.calls[0]?.[0]).not.toHaveProperty("fleetId");
+  });
+
+  it("rejects oversized pilot milestone metadata", async () => {
+    const caller = appRouter.createCaller(createContext());
+    const metadata = Object.fromEntries(
+      Array.from({ length: 11 }, (_, index) => [`field_${index}`, index])
+    );
+
+    await expect(
+      caller.subscriptions.trackPilotEvent({
+        eventType: "upgrade_prompt_shown",
+        metadata,
+      })
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(recordPilotMilestone).not.toHaveBeenCalled();
+  });
+
 });

@@ -650,7 +650,6 @@ export async function getDefaultFleetIdForUser(userId: number) {
 
 export async function recordPilotMilestone(input: {
   userId: number;
-  fleetId: number;
   eventType:
     | "first_vehicle_added"
     | "first_diagnostic_run"
@@ -680,7 +679,7 @@ export async function recordPilotMilestone(input: {
 
   await recordPilotAccessEvent({
     userId: input.userId,
-    fleetId: input.fleetId,
+    fleetId: overview.fleetId,
     codeId: overview.codeId,
     eventType: input.eventType,
     eventMetadata: input.eventMetadata ?? null,

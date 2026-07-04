@@ -1979,7 +1979,6 @@ export const inspectionsRouter = router({
 
         await recordPilotMilestone({
           userId: ctx.user.id,
-          fleetId: input.fleetId,
           eventType: "first_inspection_completed",
           eventMetadata: {
             inspectionId: inspectionResult.id,

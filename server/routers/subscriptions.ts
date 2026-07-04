@@ -46,6 +46,15 @@ function getAbsoluteUrl(path: string) {
   return `${base}${normalizedPath}`;
 }
 
+const pilotEventMetadataSchema = z
+  .record(
+    z.string().trim().min(1).max(64),
+    z.union([z.string().trim().max(200), z.number().finite(), z.boolean(), z.null()])
+  )
+  .refine((metadata) => Object.keys(metadata).length <= 10, {
+    message: "Pilot event metadata is limited to 10 fields",
+  });
+
 export const subscriptionsRouter = router({
   getCurrent: protectedProcedure.query(async ({ ctx }) => {
     const state = await getSubscriptionState(ctx.user.id);
@@ -402,15 +411,12 @@ export const subscriptionsRouter = router({
     .input(
       z.object({
         eventType: z.literal("upgrade_prompt_shown"),
-        fleetId: z.number().optional(),
-        metadata: z.record(z.string(), z.any()).optional(),
+        metadata: pilotEventMetadataSchema.optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const state = await getSubscriptionState(ctx.user.id);
       await recordPilotMilestone({
         userId: ctx.user.id,
-        fleetId: input.fleetId ?? state.activeFleetId,
         eventType: input.eventType,
         eventMetadata: input.metadata,
       });

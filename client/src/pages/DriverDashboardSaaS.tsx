@@ -382,7 +382,6 @@ function DriverDashboardContent() {
     });
     void trackPilotEventMutation.mutateAsync({
       eventType: "upgrade_prompt_shown",
-      fleetId: activeFleetId,
       metadata: {
         source: "driver_dashboard",
       },

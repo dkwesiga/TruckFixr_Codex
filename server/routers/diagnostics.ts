@@ -1432,7 +1432,6 @@ export const diagnosticsRouter = router({
 
       await recordPilotMilestone({
         userId: ctx.user.id,
-        fleetId: input.fleetId,
         eventType: "first_diagnostic_run",
         eventMetadata: {
           vehicleId: input.vehicleId,
