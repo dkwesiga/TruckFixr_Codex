@@ -552,7 +552,7 @@ export const vehiclesRouter = router({
       }
       
       // Track vehicle creation event
-      console.log('[Analytics] Vehicle added:', { vehicleId: vehicle.id, fleetId: vehicle.fleetId, vin: vehicle.vin, licensePlate: vehicle.licensePlate, userId: ctx.user.id });
+      console.log('[Analytics] Vehicle added:', { vehicleId: vehicle.id, fleetId: vehicle.fleetId, userId: ctx.user.id });
       await recordPilotMilestone({
         userId: ctx.user.id,
         eventType: "first_vehicle_added",

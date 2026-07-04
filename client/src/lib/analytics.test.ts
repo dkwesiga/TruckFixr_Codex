@@ -38,4 +38,21 @@ describe('Analytics Module', () => {
       identifyUser('user-123', { email: 'test@example.com', name: 'Test User' });
     }).not.toThrow();
   });
+
+  it('redacts email before logging signup/login events', () => {
+    const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+
+    trackSignup('email', { email: 'test@example.com', name: 'Test User' });
+    trackLogin('oauth', { email: 'test@example.com' });
+
+    for (const call of debugSpy.mock.calls) {
+      const properties = call[1] as Record<string, unknown> | undefined;
+      if (properties && 'email' in properties) {
+        expect(properties.email).toBe('[redacted]');
+      }
+    }
+    expect(debugSpy).toHaveBeenCalled();
+
+    debugSpy.mockRestore();
+  });
 });

@@ -1,8 +1,22 @@
 type AnalyticsProperties = Record<string, unknown> | undefined;
 
+// Matches the server-side redaction key list (server/services/observability.ts)
+// so call sites can pass natural property names without leaking PII into the
+// dev console.
+const SENSITIVE_PROPERTY_KEY_RE = /(email|phone|vin|license[-_ ]?plate|password|token|secret)/i;
+
+function redactAnalyticsProperties(properties?: AnalyticsProperties) {
+  if (!properties) return {};
+  return Object.fromEntries(
+    Object.entries(properties).map(([key, value]) =>
+      SENSITIVE_PROPERTY_KEY_RE.test(key) ? [key, "[redacted]"] : [key, value]
+    )
+  );
+}
+
 function logAnalyticsEvent(eventName: string, properties?: AnalyticsProperties) {
   if (import.meta.env.DEV) {
-    console.debug(`[Analytics] ${eventName}`, properties ?? {});
+    console.debug(`[Analytics] ${eventName}`, redactAnalyticsProperties(properties));
   }
 }
 
