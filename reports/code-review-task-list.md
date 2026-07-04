@@ -1,6 +1,6 @@
 # TruckFixr Fleet AI Code Review Task List
 
-Last updated: 2026-06-24
+Last updated: 2026-07-03
 
 ## Open Tasks
 
@@ -116,6 +116,8 @@ Last updated: 2026-06-24
   - Recommended fix: Batch I - keep the CI/non-restricted verification path and replace the placeholder browser smoke probe with real route checks when practical.
   - Verification command or check required: In a CI-capable environment, full Vitest, real browser smoke, demo validation, audit, and release builds pass end-to-end. Latest evidence: 2026-06-12 approved Batch I restored the spawn-safe path: `node scripts/run-tests-lite.mjs` passed 9/9 checks, `node scripts/run-vitest.mjs` exited `0`, and `pnpm run test` now exits `0` after the spawn-blocked fallback; `pnpm run build:client`, `pnpm run validate:demo-seed`, and `pnpm run verify:browser-smoke` still return spawn-blocked skip results in this shell.
 
+  - 2026-07-02 review evidence: the Codex runtime supplied pnpm 11.7.0 for this pnpm 10.27.0 project, ignored the `package.json` `pnpm.overrides`/`patchedDependencies`, attempted an install, and aborted on the non-interactive modules purge. Direct pinned binaries still proved `tsc --noEmit` exit 0, server build exit 0, and Vitest 47 files / 339 tests exit 0. Client Vite build and browser smoke remained spawn-blocked (`EPERM`). Keep the CI-pinned pnpm 10 path authoritative and add a launcher/version preflight so daily automation cannot confuse dependency-tool failure with product failure.
+
 - Task ID: TFX-CR-0024
   - Task: Review and harden the internal admin metrics/dashboard feature.
   - Category: Security / internal tooling & operations
@@ -134,19 +136,20 @@ Last updated: 2026-06-24
   - Category: Security & access control / Supabase RLS (defense-in-depth)
   - Severity: High (practical exploitability Low — no browser Supabase client; access is server-only with app-layer fleet scoping)
   - First discovered date: 2026-06-24
-  - Last seen date: 2026-06-24
+  - Last seen date: 2026-07-02
   - Affected files/tables: `inspectionReviewActions` and `inspectionReviewQueueItems` (received policies in `0026` that are INERT without RLS enabled), `adminFleetNotes`, `combinedInspectionSessions`, `lead_submissions`; fix lands in a new `drizzle/0031_*.sql`
-  - Status: Open (repo-only static evidence; live DB RLS state NOT verified this review)
+  - Status: Implemented in repo (`drizzle/0031_enable_post_0012_table_rls.sql`) with static tests passing; live DB RLS state NOT verified in the 2026-07-02 Repo-only review
   - Recommended fix: mirror the `0030`/`0012` pattern — `ALTER TABLE … ENABLE ROW LEVEL SECURITY` + `service_role_full_access` policy, plus authenticated fleet-scoped SELECT where the table is fleet-owned.
   - Verification command or check required: apply on staging; `SELECT relname, relrowsecurity FROM pg_class WHERE relname IN (...)`; extend `scripts/verify/rls.ts` to assert cross-company denial on these tables.
   - Related batch: Batch K (cross-ref Batch B)
+  - 2026-07-02 evidence: `server/rlsPolicies.test.ts` and the full suite passed, and `scripts/verify/rls.ts` correctly refused the unclassified remote Supabase target. Apply/behavior proof remains required on a classified disposable staging database.
 
 - Task ID: TFX-CR-0031
   - Task: Verify or implement Supabase Storage privacy for inspection/defect photos and uploaded evidence.
   - Category: Supabase database, RLS, storage & data safety
   - Severity: High
   - First discovered date: 2026-05-27
-  - Last seen date: 2026-06-12
+  - Last seen date: 2026-07-02
   - Affected files/tables/policies/buckets/functions: `client/src/pages/DriverInspectionNSC.tsx`, `client/src/pages/VerifiedInspection.tsx`, `drizzle/0007_verified_inspections.sql`, `inspectionPhotos`, `defects.photoUrls`, `server/storage.ts`, `docs/supabase-storage-privacy-plan.md`, `server/storagePolicies.test.ts`, `supabase/migrations/20260527113000_storage_privacy_policies.sql`
   - Status: In Progress (repo-level migration + static policy proof present; online evidence upload path added; source classification and malformed photo-URL rejection landed; live/local/staging storage behavior proof pending)
   - 2026-06-14 architecture finding: the live photo flow uploads via the Forge storage proxy (`server/storage.ts`, `BUILT_IN_FORGE_API_*`) and the client renders `imageUrl`/`photoUrls` directly, so the Supabase Storage RLS policies in `supabase/migrations/20260527113000_storage_privacy_policies.sql` are INERT for the live flow. Upload authz is enforced in app code (`inspections.uploadEvidencePhoto`), but there is NO access-controlled read endpoint — photo-read privacy currently relies on Forge URL unguessability or `inspectionPhotos`/`defects` table RLS (inline data URLs). Proof harness added at `reports/batch-photo-privacy-proof.md`. Decision needed: add an MVP access-controlled signed-read endpoint (no Supabase Storage re-platform) vs. full migration to Supabase Storage + signed URLs.
@@ -154,6 +157,7 @@ Last updated: 2026-06-24
   - Verification command or check required: In local/staging, upload files as Company A driver/manager and prove Company B users cannot read/list/signed-url them; verify file metadata links company, vehicle, inspection, defect, user, and repair records. Latest evidence: 2026-06-12 approved Batch K added server-side evidence source classification plus malformed photo-URL rejection in inspection submission paths, and the spawn-safe lite harness now asserts the scoped key + source normalization rules; fresh local/staging storage-behavior proof is still missing.
   - Related batch: Batch K
   - Cross-reference batch if applicable: Batch B, Batch F
+  - 2026-07-02 evidence: static Storage policy tests passed, but the live application still uses the Forge storage proxy rather than Supabase Storage. The draft backup runbook incorrectly describes Supabase Storage as the current object store, so privacy, backup inclusion, signed-read behavior, and orphan cleanup remain unverified for the actual provider.
 
 - Task ID: TFX-CR-0035
   - Task: Prove inspection/defect photo workflow privacy and consent end-to-end (including “proof photos”) with staging/local evidence.
@@ -388,19 +392,57 @@ Last updated: 2026-06-24
   - Affected files: `server/_core/cookies.ts`, `render.yaml`, frontend `VITE_API_BASE_URL`, API `APP_BASE_URL`
   - Recommended next action: Batch B — merge to main; add `api.truckfixr.com` custom domain + DNS; set `VITE_API_BASE_URL=https://api.truckfixr.com` and `APP_BASE_URL=https://truckfixr.com`; redeploy; verify login on default-settings Brave/Chrome.
 
+  - 2026-07-02 status for TFX-CR-0039: Improved - commit `a33f01c0` is now in `main`. First-party API domain/DNS/environment deployment and real-browser login verification remain outstanding.
+
+## New Tasks From Today (2026-07-02)
+
+- Task ID: TFX-CR-0041
+  - Task: Prevent `subscriptions.trackPilotEvent` from accepting an unverified client-supplied `fleetId` when recording pilot KPI milestones.
+  - Category: Security / data integrity / tenant ownership / pilot KPI tracking
+  - Severity: High
+  - First discovered date: 2026-07-02
+  - Last seen date: 2026-07-03
+  - Affected files/tables: `server/routers/subscriptions.ts`, `server/services/pilotAccess.ts`, `pilotAccessEvents`
+  - Status: **Resolved** (commit `07814ff1`, 2026-07-03)
+  - Evidence: `recordPilotMilestone` no longer accepts a `fleetId` argument at all — it derives it from `overview.fleetId` (authoritative pilot/subscription state). The route no longer forwards `input.fleetId`/`state.activeFleetId`; a bounded `pilotEventMetadataSchema` (max 10 fields) was added. `server/subscriptions.billing.test.ts` proves a supplied `fleetId: 999` is ignored and oversized metadata is rejected with `BAD_REQUEST`. Verified live in this review: `pnpm run check` clean, full suite 47 files / 339 tests passed.
+  - Recommended fix: Batch B + H - remove the client fleet override and derive the fleet from the authenticated user's active pilot/subscription state, or enforce authoritative active membership before the write. Bound/sanitize metadata and add negative cross-fleet route tests.
+  - Verification command or check required: route test proving a fleet-A user cannot persist a milestone for fleet B; same-fleet event remains idempotent; full `pnpm test`/direct Vitest and typecheck. **Done.**
+
+- Task ID: TFX-CR-0043
+  - Task: Stop logging raw VIN/license plate/email via ad hoc `console.log`/`console.debug` analytics calls, bypassing the redacted observability module.
+  - Category: Security / Privacy / SOC 2 readiness
+  - Severity: High
+  - First discovered date: 2026-07-03
+  - Last seen date: 2026-07-03
+  - Affected files: `server/routers/vehicles.ts`, `client/src/lib/analytics.ts`, `client/src/lib/analytics.test.ts`
+  - Status: **Resolved** (commit `d4e48ed5`, 2026-07-03)
+  - Evidence: `server/routers/vehicles.ts:555` logged `vin`/`licensePlate` in the clear to stdout on every vehicle add; those fields are now dropped from the log line. `client/src/lib/analytics.ts` logged a raw email to the dev console on signup/login (`import.meta.env.DEV` only, confirmed via `analytics.test.ts` output); added key-based redaction (`SENSITIVE_PROPERTY_KEY_RE`, mirroring the server-side pattern in `server/services/observability.ts`) plus a regression test asserting `email` is replaced with `[redacted]`. Sibling `[Analytics] ...` logs in `defects.ts`/`fleet.ts`/`inspections.ts` were checked and carry only IDs/enums, no PII — left as-is.
+  - Recommended fix: Done — see evidence.
+  - Verification command or check required: `pnpm run check` and full `pnpm run test` both green (47 files / 339 tests) after the fix.
+
+- Task ID: TFX-CR-0042
+  - Task: Complete and test the production database/object-storage backup, restore, and rollback process using the actual live providers.
+  - Category: Backup, recovery & rollback / Supabase database safety
+  - Severity: High
+  - First discovered date: 2026-07-02
+  - Last seen date: 2026-07-02
+  - Affected files/areas: `docs/security/backups-and-monitoring.md`, Supabase project backup settings, actual Forge object storage, migration/rollback workflow
+  - Status: Open (draft runbook contains TODO cadence/RPO/RTO/restore evidence and misidentifies the live object store as Supabase Storage)
+  - Recommended fix: Batch I + K - confirm the Supabase plan/backup retention, document the actual Forge storage backup/lifecycle behavior, perform a scratch restore, record measured RPO/RTO, and document a migration rollback decision path.
+  - Verification command or check required: dated restore-test evidence from a non-production snapshot plus file-recovery proof for the actual object store; no production mutation during review.
+
 ## Rolling Implementation Roadmap
 
-| Order | Workstream / Batch | Current Priority | Why It Matters | Status | Dependencies | Last Updated |
+| Order | Workstream / Batch | Priority | Why | Status | Dependencies | Updated |
 |---:|---|---|---|---|---|---|
-| 1 | Supabase Storage privacy and file-access proof (`TFX-CR-0031`, Batch K/B) | High | Protects inspection/defect/customer file privacy | Repo-level migration and static policy proof implemented; source classification/disclosure improved on 2026-06-12, but no fresh local/staging proof exists yet | Verified local/staging Supabase target and storage direction decision | 2026-06-12 |
-| 2 | Verification reliability across environments (`TFX-CR-0023`, Batch I) | Critical | Full tests, real browser smoke, demo validation, and audit evidence are needed before reliable pilot expansion | Restricted-shell `pnpm run test` now succeeds via the lite fallback; browser smoke and other spawn-dependent checks still need a capable environment | CI/spawn-capable and network-capable verification path | 2026-06-12 |
-| 3 | Current linked-vehicle/dialog WIP deploy decision (`TFX-CR-0027`, Batch A) | High | Prevents local/demo/deploy mismatch on active manager/driver vehicle flows | Resolved by commit `6813d08`; deploy decision remains separate | None | 2026-05-27 |
-| 4 | Real Android/mobile timing proof (`TFX-CR-0022`, Batch E) | High | Confirms bundle split improves field loading behavior | Bundle split implemented; 2026-06-12 review still only had stale bundle snapshot evidence | Browser/mobile run | 2026-06-12 |
-| 5 | Admin metrics authz hardening (`TFX-CR-0024`, Batch B) | High | Protects internal/customer operational data | Improved on 2026-06-12 with viewer PII masking and staff-verified menu visibility; staging authz/perf proof still open | None | 2026-06-12 |
-| 6 | Support/admin recovery verification (`TFX-CR-0020`, Batch J) | High | Controlled pilots need safe recovery and auditable remediation | Improved; staff-only audit-list query and non-staff denial proof green, live audit-write proof pending | Verified staging DB | 2026-05-27 |
-| 7 | Revenue/billing readiness (`TFX-CR-0021`, Batch I) | Medium/High | Enables pilot-to-paid conversion without account-state drift | Improved; pilot-to-paid conversion marker covered, full Stripe replay pending | Stripe staging access | 2026-05-27 |
-| 8 | Knowledge base/history and TADIS learning data (`TFX-CR-0003`, Batch G) | Medium/High | Builds long-term product advantage from confirmed outcomes | Improved; local retrieval guardrail proof green | Stable verification path | 2026-05-27 |
-| 9 | Daily inspection workflow deeper proof (`TFX-CR-0006`, Batch D) | High | Core daily fleet workflow still needs full submit/review proof | Static/code proof; browser blocked | `TFX-CR-0023` | 2026-05-27 |
-| 10 | Demo/test/production separation (`TFX-CR-0018`) | Medium | Prevents seeded records polluting analytics, billing, and learning | Improved; demo validation green in capable environment | Analytics/billing/learning consumer-specific filters | 2026-05-27 |
-| 11 | Performance and AI cost control (`TFX-CR-0007`, Batch E/C) | Medium | Controls operating cost and latency | Active | Timing telemetry | 2026-05-27 |
-| 12 | Backup/recovery, maintainability, `server/db.ts` cleanup (`TFX-CR-0004`, Batch I/K) | Medium/High | Reduces migration and restore risk | Open | Canonical migration proof | 2026-05-27 |
+| 1 | Pilot KPI tenant ownership (`TFX-CR-0041`, B/H) | High | Prevents cross-fleet analytics corruption | **Resolved** `07814ff1` | None | 2026-07-03 |
+| 1b | PII-in-logs cleanup (`TFX-CR-0043`) | High | Closes gap in already-claimed log-redaction control | **Resolved** `d4e48ed5` | None | 2026-07-03 |
+| 2 | Actual storage privacy and access proof (`TFX-CR-0031/0035`, B/K) | High | Protects inspection evidence | Static Supabase SQL passes; live Forge path unproved | Provider decision + staging | 2026-07-02 |
+| 3 | Backup/restore and rollback proof (`TFX-CR-0042`, I/K) | High | Prevents unrecoverable pilot data loss | Draft/TODO; no restore test | Provider console + scratch target | 2026-07-02 |
+| 4 | Verification reliability/client/browser/audit (`TFX-CR-0023/0037`, I/E) | High | Establishes trustworthy releases and performance | Full direct tests green; client/browser/audit blocked | Pinned pnpm 10 CI | 2026-07-02 |
+| 5 | First-party deployed login proof (`TFX-CR-0039`, B) | High | Login is a pilot gate | Cookie fix in main; DNS/env/browser proof pending | Domain/DNS/deploy | 2026-07-02 |
+| 6 | Application + RLS isolation matrix (`TFX-CR-0040`, B/K) | High | Proves the primary and defense-in-depth tenant boundaries | Representative/static tests green; live proof pending | Classified staging | 2026-07-02 |
+| 7 | Support/admin recovery (`TFX-CR-0020`, J) | High | Controlled pilots need safe recovery | Unit proof; live audit/reversal pending | Classified staging | 2026-07-02 |
+| 8 | Billing and pilot-to-paid (`TFX-CR-0021`, I) | Medium/High | Enables paid conversion | Automated proof; Stripe replay pending | Stripe test environment | 2026-07-02 |
+| 9 | Knowledge/history (`TFX-CR-0003`, G) | Medium/High | Grows TADIS from solved cases | Retrieval tests green; live same-fleet proof pending | Staging DB | 2026-07-02 |
+| 10 | Inspection/mobile/performance proof (`TFX-CR-0006/0022`, D/E) | Medium/High | Confirms field usability | Automated/static proof only | Browser/device | 2026-07-02 |
