@@ -18,6 +18,7 @@ import { supportRecoveryRouter } from "./routers/supportRecovery";
 import { adminRouter } from "./routers/admin";
 import { quickStartRouter } from "./routers/quickStart";
 import { notificationsRouter } from "./routers/notifications";
+import { partnerRouter } from "./routers/partner";
 
 export const appRouter = router({
   system: systemRouter,
@@ -39,6 +40,7 @@ export const appRouter = router({
   admin: adminRouter,
   quickStart: quickStartRouter,
   notifications: notificationsRouter,
+  partner: partnerRouter,
 });
 
 export type AppRouter = typeof appRouter;

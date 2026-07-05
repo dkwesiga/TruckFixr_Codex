@@ -8,6 +8,7 @@ import {
   activityLogs,
   aiQualityReviews,
   defects,
+  fleets,
   inspectionChecklistResponses,
   inspections,
   maintenanceLogs,
@@ -1990,6 +1991,16 @@ export const diagnosticsRouter = router({
           }
         }
 
+        // Partner shops (e.g. Mr Diesel Inc) tag their outcomes so they can
+        // later be promoted into the shared curated knowledge base. Ordinary
+        // fleet outcomes stay private (Loop A) and are never promotable.
+        const [outcomeFleet] = await db
+          .select({ isPartner: fleets.isPartner })
+          .from(fleets)
+          .where(eq(fleets.id, input.fleetId))
+          .limit(1);
+        const outcomeSource = outcomeFleet?.isPartner ? "partner_shop" : "diagnostic_feedback";
+
         try {
           await db.insert(repairOutcomes).values({
             fleetId: input.fleetId,
@@ -2002,7 +2013,7 @@ export const diagnosticsRouter = router({
             partsReplaced: input.partsReplaced,
             aiDiagnosisCorrect: input.aiDiagnosisCorrect,
             confirmationState,
-            source: "diagnostic_feedback",
+            source: outcomeSource,
             returnedToServiceAt: input.successful ? new Date() : null,
             repairNotes: `Captured from diagnostic feedback (${confirmationState}).`,
           });
