@@ -44,6 +44,9 @@ const AdminMetricsDashboard = lazyWithChunkRecovery(
 const AdminFleetDetail = lazyWithChunkRecovery(
   () => import("./pages/AdminFleetDetail")
 );
+const PartnerKnowledgeStudio = lazyWithChunkRecovery(
+  () => import("./pages/PartnerKnowledgeStudio")
+);
 const InspectionReportDvir = lazyWithChunkRecovery(
   () => import("./pages/InspectionReportDvir")
 );
@@ -211,6 +214,7 @@ function Router() {
           path={"/admin/fault-codes"}
           component={FaultCodeReviewDashboard}
         />
+        <Route path={"/partner/knowledge"} component={PartnerKnowledgeStudio} />
         <Route path={"/404"} component={NotFound} />
         <Route path={"/"} component={LandingSaaS} />
         <Route component={NotFound} />
