@@ -28,6 +28,9 @@ services:
       - path: /pilot
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
+      - path: /login
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
       - path: /signup
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
@@ -100,6 +103,9 @@ services:
         destination: /index.html
       - type: rewrite
         source: /pilot
+        destination: /index.html
+      - type: rewrite
+        source: /login
         destination: /index.html
       - type: rewrite
         source: /signup
