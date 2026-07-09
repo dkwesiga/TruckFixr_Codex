@@ -10,7 +10,9 @@ import { useAuthContext } from "./hooks/useAuthContext";
 import { useLocation } from "wouter";
 
 const NotFound = lazyWithChunkRecovery(() => import("./pages/NotFound"));
-const LandingSaaS = lazyWithChunkRecovery(() => import("./pages/LandingSaaS"));
+const FleetReadinessLanding = lazyWithChunkRecovery(
+  () => import("./pages/FleetReadinessLanding")
+);
 const VerifiedInspection = lazyWithChunkRecovery(
   () => import("./pages/VerifiedInspection")
 );
@@ -82,6 +84,8 @@ const MaintenancePlanning = lazyWithChunkRecovery(
   () => import("./pages/MaintenancePlanning")
 );
 const Offline = lazyWithChunkRecovery(() => import("./pages/Offline"));
+const Privacy = lazyWithChunkRecovery(() => import("./pages/Privacy"));
+const Terms = lazyWithChunkRecovery(() => import("./pages/Terms"));
 
 // Internal, gated Maintenance Planning area. The route is only registered when
 // this Vite build flag is set, so normal pilot users never reach it. The page
@@ -183,6 +187,8 @@ function Router() {
         <Route path={"/defect/:id"} component={DefectDetail} />
         <Route path={"/truck/:id"} component={TruckDetail} />
         <Route path={"/pricing"} component={Pricing} />
+        <Route path={"/privacy"} component={Privacy} />
+        <Route path={"/terms"} component={Terms} />
         <Route
           path={"/fleet-downtime-cost-calculator"}
           component={FleetDowntimeCostCalculator}
@@ -212,7 +218,7 @@ function Router() {
           component={FaultCodeReviewDashboard}
         />
         <Route path={"/404"} component={NotFound} />
-        <Route path={"/"} component={LandingSaaS} />
+        <Route path={"/"} component={FleetReadinessLanding} />
         <Route component={NotFound} />
       </Switch>
     </Suspense>

@@ -1,0 +1,67 @@
+name: RLS isolation evidence
+
+# Live cross-fleet isolation check (defense-in-depth RLS layer).
+# Runs ONLY when an RLS_DATABASE_URL secret is configured, because it needs a
+# real, disposable verification database. The main ci.yml workflow does not.
+# See docs/security/rls-isolation-evidence.md.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly, Mondays 13:00 UTC — feeds the weekly SOC 2 readiness review.
+    - cron: "0 13 * * 1"
+
+jobs:
+  verify-rls:
+    name: Verify cross-fleet isolation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Guard — require RLS_DATABASE_URL
+        id: guard
+        env:
+          RLS_DATABASE_URL: ${{ secrets.RLS_DATABASE_URL }}
+        run: |
+          if [ -z "${RLS_DATABASE_URL}" ]; then
+            echo "RLS_DATABASE_URL secret is not configured; skipping live RLS run."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.guard.outputs.run == 'true'
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        if: steps.guard.outputs.run == 'true'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+
+      - name: Setup Node
+        if: steps.guard.outputs.run == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.5
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.guard.outputs.run == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Run RLS isolation check and capture evidence
+        if: steps.guard.outputs.run == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.RLS_DATABASE_URL }}
+        run: |
+          mkdir -p reports/evidence
+          pnpm verify:rls | tee "reports/evidence/rls-isolation-$(date +%F).json"
+
+      - name: Upload evidence artifact
+        if: steps.guard.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rls-isolation-evidence
+          path: reports/evidence/rls-isolation-*.json
+          if-no-files-found: warn

@@ -28,6 +28,9 @@ services:
       - path: /pilot
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
+      - path: /login
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
       - path: /signup
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
@@ -70,6 +73,12 @@ services:
       - path: /pricing
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
+      - path: /privacy
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
+      - path: /terms
+        name: Cache-Control
+        value: no-cache, no-store, must-revalidate
       - path: /admin
         name: Cache-Control
         value: no-cache, no-store, must-revalidate
@@ -100,6 +109,9 @@ services:
         destination: /index.html
       - type: rewrite
         source: /pilot
+        destination: /index.html
+      - type: rewrite
+        source: /login
         destination: /index.html
       - type: rewrite
         source: /signup
@@ -142,6 +154,12 @@ services:
         destination: /index.html
       - type: rewrite
         source: /pricing
+        destination: /index.html
+      - type: rewrite
+        source: /privacy
+        destination: /index.html
+      - type: rewrite
+        source: /terms
         destination: /index.html
       - type: rewrite
         source: /admin

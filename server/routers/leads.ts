@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { publicProcedure, router } from "../_core/trpc";
+import { enforceIpRateLimit } from "../_core/rateLimit";
 import { submitLeadRequest } from "../services/leads";
 
 const interestTypeSchema = z.enum([
@@ -33,7 +34,15 @@ export const leadsRouter = router({
         trapField: z.string().trim().max(255).optional().nullable(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      enforceIpRateLimit({
+        req: ctx.req,
+        bucket: "lead_submit",
+        limit: 5,
+        windowMs: 10 * 60 * 1000,
+        message: "Too many requests. Please wait a few minutes before submitting again.",
+      });
+
       const lead = await submitLeadRequest(input);
 
       return {

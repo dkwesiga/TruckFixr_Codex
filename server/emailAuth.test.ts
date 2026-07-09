@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 import { ENV } from "./_core/env";
+import { resetRateLimitsForTests } from "./_core/rateLimit";
 
 function createPublicContext(): TrpcContext {
   return {
@@ -19,6 +20,8 @@ function createPublicContext(): TrpcContext {
 beforeEach(() => {
   ENV.supabaseUrl = "";
   ENV.supabaseAnonKey = "";
+  // Public auth mutations are now IP rate limited; isolate each test's budget.
+  resetRateLimitsForTests();
 });
 
 describe("emailAuth.signup", () => {

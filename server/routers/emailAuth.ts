@@ -17,6 +17,7 @@ import {
   signUpWithSupabaseEmail,
 } from "../_core/supabaseEmailAuth";
 import { sendPasswordResetEmail } from "../services/email";
+import { enforceIpRateLimit } from "../_core/rateLimit";
 import { ENV } from "../_core/env";
 import { nanoid } from "nanoid";
 import {
@@ -57,7 +58,9 @@ export const emailAuthRouter = router({
         name: z.string().min(2, "Name must be at least 2 characters"),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      enforceIpRateLimit({ req: ctx.req, bucket: "auth_signup", limit: 5, windowMs: 15 * 60 * 1000 });
+
       const db = await getDb();
       const normalizedEmail = input.email.trim().toLowerCase();
       assertTruckFixrPassword({
@@ -193,7 +196,8 @@ export const emailAuthRouter = router({
         password: z.string().min(1, "Password is required"),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      enforceIpRateLimit({ req: ctx.req, bucket: "auth_login", limit: 10, windowMs: 15 * 60 * 1000 });
 
       const db = await getDb();
       const normalizedEmail = input.email.trim().toLowerCase();
@@ -316,7 +320,9 @@ export const emailAuthRouter = router({
         password: z.string().min(1, "Password is required"),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      enforceIpRateLimit({ req: ctx.req, bucket: "auth_signin", limit: 10, windowMs: 15 * 60 * 1000 });
+
       const db = await getDb();
       const normalizedEmail = input.email.trim().toLowerCase();
       try {
@@ -434,7 +440,9 @@ export const emailAuthRouter = router({
 
   requestPasswordReset: publicProcedure
     .input(z.object({ email: z.string().email("Please enter a valid email address") }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      enforceIpRateLimit({ req: ctx.req, bucket: "auth_reset", limit: 5, windowMs: 15 * 60 * 1000 });
+
       const db = await getDb();
       const normalizedEmail = input.email.trim().toLowerCase();
 
@@ -478,7 +486,9 @@ export const emailAuthRouter = router({
         password: z.string().min(1, "Password is required"),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      enforceIpRateLimit({ req: ctx.req, bucket: "auth_reset_confirm", limit: 15, windowMs: 15 * 60 * 1000 });
+
       const db = await getDb();
       if (!db) {
         throw new TRPCError({

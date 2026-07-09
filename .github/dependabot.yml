@@ -1,0 +1,29 @@
+version: 2
+# Automated dependency vulnerability alerts + update PRs (SOC 2 vulnerability
+# management, CC7). Grouped and rate-limited so a small team is not buried in PRs.
+updates:
+  - package-ecosystem: npm # covers the pnpm workspace via the lockfile
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      production-dependencies:
+        dependency-type: production
+        update-types: [minor, patch]
+      development-dependencies:
+        dependency-type: development
+        update-types: [minor, patch]
+    labels:
+      - dependencies
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - ci
