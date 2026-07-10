@@ -10,7 +10,9 @@ import { useAuthContext } from "./hooks/useAuthContext";
 import { useLocation } from "wouter";
 
 const NotFound = lazyWithChunkRecovery(() => import("./pages/NotFound"));
-const LandingSaaS = lazyWithChunkRecovery(() => import("./pages/LandingSaaS"));
+const FleetReadinessLanding = lazyWithChunkRecovery(
+  () => import("./pages/FleetReadinessLanding")
+);
 const VerifiedInspection = lazyWithChunkRecovery(
   () => import("./pages/VerifiedInspection")
 );
@@ -212,7 +214,7 @@ function Router() {
           component={FaultCodeReviewDashboard}
         />
         <Route path={"/404"} component={NotFound} />
-        <Route path={"/"} component={LandingSaaS} />
+        <Route path={"/"} component={FleetReadinessLanding} />
         <Route component={NotFound} />
       </Switch>
     </Suspense>
