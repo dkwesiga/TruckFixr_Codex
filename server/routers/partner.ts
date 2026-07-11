@@ -48,7 +48,7 @@ async function requirePartnerFleet(
   fleetId: number
 ) {
   const [fleet] = await db
-    .select({ id: fleets.id, isPartner: fleets.isPartner })
+    .select({ id: fleets.id, name: fleets.name, isPartner: fleets.isPartner })
     .from(fleets)
     .where(eq(fleets.id, fleetId))
     .limit(1);
@@ -72,23 +72,33 @@ async function requirePartnerFleet(
   return fleet;
 }
 
-/** Find-or-create the partner's provenance source row (attribution for Loop B). */
+/**
+ * Find-or-create the partner's provenance source row (attribution for Loop B).
+ * The partial unique index `faultCodeReferenceSources_partner_fleet_unique`
+ * (migration 0033) makes the database the arbiter under concurrency: the
+ * insert uses ON CONFLICT DO NOTHING, and a conflicting insert falls back to
+ * re-selecting the row the winner created.
+ */
 async function ensurePartnerSourceId(
   db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
   fleetId: number,
   fleetName: string | null
 ) {
-  const [existing] = await db
-    .select({ id: faultCodeReferenceSources.id })
-    .from(faultCodeReferenceSources)
-    .where(
-      and(
-        eq(faultCodeReferenceSources.sourceType, "partner_shop"),
-        sql`${faultCodeReferenceSources.metadata} ->> 'partnerFleetId' = ${String(fleetId)}`
+  const findExisting = async () => {
+    const [existing] = await db
+      .select({ id: faultCodeReferenceSources.id })
+      .from(faultCodeReferenceSources)
+      .where(
+        and(
+          eq(faultCodeReferenceSources.sourceType, "partner_shop"),
+          sql`${faultCodeReferenceSources.metadata} ->> 'partnerFleetId' = ${String(fleetId)}`
+        )
       )
-    )
-    .limit(1);
+      .limit(1);
+    return existing ?? null;
+  };
 
+  const existing = await findExisting();
   if (existing) return existing.id;
 
   const [created] = await db
@@ -100,9 +110,20 @@ async function ensurePartnerSourceId(
       metadata: { partnerFleetId: String(fleetId) },
       reviewStatus: "needs_review",
     })
+    .onConflictDoNothing()
     .returning();
 
-  return created.id;
+  if (created) return created.id;
+
+  // Lost the insert race — the unique index guarantees the winner's row exists.
+  const winner = await findExisting();
+  if (!winner) {
+    throw new TRPCError({
+      code: "INTERNAL_SERVER_ERROR",
+      message: "Unable to resolve the partner provenance source.",
+    });
+  }
+  return winner.id;
 }
 
 export const partnerRouter = router({
@@ -154,25 +175,7 @@ export const partnerRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const db = assertDb(await getDb());
-      const [fleetRow] = await db
-        .select({ id: fleets.id, name: fleets.name, isPartner: fleets.isPartner })
-        .from(fleets)
-        .where(eq(fleets.id, input.fleetId))
-        .limit(1);
-
-      if (!fleetRow) {
-        throw new TRPCError({ code: "NOT_FOUND", message: "Fleet not found." });
-      }
-      if (!fleetRow.isPartner) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Only partner repair shops can contribute to the knowledge base.",
-        });
-      }
-      const manages = await canManageVehicleAccess({ fleetId: input.fleetId, user: ctx.user });
-      if (!manages) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "You do not manage this partner shop." });
-      }
+      const fleetRow = await requirePartnerFleet(db, ctx.user, input.fleetId);
 
       const [outcome] = await db
         .select()
