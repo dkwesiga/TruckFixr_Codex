@@ -204,43 +204,63 @@ export const partnerRouter = router({
 
       const sourceId = await ensurePartnerSourceId(db, input.fleetId, fleetRow.name);
 
-      const [createdReference] = await db
-        .insert(faultCodeReferences)
-        .values({
-          sourceId,
-          codeSystem: built.candidate.codeSystem,
-          code: built.candidate.code,
-          normalizedCode: built.candidate.normalizedCode,
-          category: built.candidate.category,
-          title: built.candidate.title,
-          summary: built.candidate.summary,
-          recommendedChecks: built.candidate.recommendedChecks,
-          riskLevel: built.candidate.riskLevel,
-          reviewStatus: "needs_review",
-          reviewerUserId: null,
-          approvedAt: null,
-          archivedAt: null,
-          metadata: built.candidate.metadata,
-        })
-        .returning();
+      // Atomic promotion: claim the outcome row first (promotedAt IS NULL)
+      // inside a transaction so a retry or two concurrent submissions cannot
+      // both insert a reference. The loser of the race sees zero claimed rows
+      // and the whole transaction rolls back with a CONFLICT.
+      const createdReference = await db.transaction(async (tx) => {
+        const claimed = await tx
+          .update(repairOutcomes)
+          .set({
+            promotedAt: new Date(),
+            promotedByUserId: ctx.user.id,
+            updatedAt: new Date(),
+          })
+          .where(and(eq(repairOutcomes.id, outcome.id), isNull(repairOutcomes.promotedAt)))
+          .returning({ id: repairOutcomes.id });
 
-      await db.insert(faultCodeReferenceApprovals).values({
-        referenceId: createdReference.id,
-        reviewerUserId: ctx.user.id,
-        previousStatus: null,
-        nextStatus: "needs_review",
-        notes: `Promoted from partner repair outcome #${outcome.id}.`,
+        if (claimed.length === 0) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "This outcome has already been proposed for the knowledge base.",
+          });
+        }
+
+        const [reference] = await tx
+          .insert(faultCodeReferences)
+          .values({
+            sourceId,
+            codeSystem: built.candidate.codeSystem,
+            code: built.candidate.code,
+            normalizedCode: built.candidate.normalizedCode,
+            category: built.candidate.category,
+            title: built.candidate.title,
+            summary: built.candidate.summary,
+            recommendedChecks: built.candidate.recommendedChecks,
+            riskLevel: built.candidate.riskLevel,
+            reviewStatus: "needs_review",
+            reviewerUserId: null,
+            approvedAt: null,
+            archivedAt: null,
+            metadata: built.candidate.metadata,
+          })
+          .returning();
+
+        await tx.insert(faultCodeReferenceApprovals).values({
+          referenceId: reference.id,
+          reviewerUserId: ctx.user.id,
+          previousStatus: null,
+          nextStatus: "needs_review",
+          notes: `Promoted from partner repair outcome #${outcome.id}.`,
+        });
+
+        await tx
+          .update(repairOutcomes)
+          .set({ promotedReferenceId: reference.id, updatedAt: new Date() })
+          .where(eq(repairOutcomes.id, outcome.id));
+
+        return reference;
       });
-
-      await db
-        .update(repairOutcomes)
-        .set({
-          promotedReferenceId: createdReference.id,
-          promotedAt: new Date(),
-          promotedByUserId: ctx.user.id,
-          updatedAt: new Date(),
-        })
-        .where(eq(repairOutcomes.id, outcome.id));
 
       return {
         success: true as const,

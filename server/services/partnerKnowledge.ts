@@ -180,8 +180,13 @@ export function buildReferenceCandidate(
     .map((check) => check.trim())
     .filter(Boolean);
 
-  // PII boundary: scan every free-text field that would become global.
-  const piiScanTargets = [title, summary, ...recommendedChecks].join(" \n ");
+  // PII boundary: scan every user-entered field that would become global —
+  // including code/codeSystem/category, where a pasted VIN or phone number
+  // would otherwise slip through. Legitimate fault codes (SPN/FMI, DTCs) do
+  // not match the VIN/phone/long-number patterns.
+  const piiScanTargets = [codeSystem, code, category, title, summary, ...recommendedChecks].join(
+    " \n "
+  );
   const piiKinds = detectLikelyPii(piiScanTargets);
   if (piiKinds.length > 0) {
     return { ok: false, error: "pii_detected", details: piiKinds };

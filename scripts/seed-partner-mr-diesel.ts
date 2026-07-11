@@ -13,11 +13,15 @@ import { hashPassword } from "../server/_core/localUsers";
  * the shop can run triage, record outcomes, and promote them into the shared
  * knowledge base at /partner/knowledge.
  *
- * Usage: pnpm seed:partner   (requires DATABASE_URL)
+ * Usage: PARTNER_PASSWORD='...' pnpm seed:partner   (requires DATABASE_URL)
+ *
+ * The password is intentionally NOT committed to source. When the user already
+ * exists and PARTNER_PASSWORD is unset, the existing password is left as-is;
+ * creating a new user requires PARTNER_PASSWORD.
  */
 
 const PARTNER_EMAIL = "mrdiesel.ca@gmail.com";
-const PARTNER_PASSWORD = "Di*iga29";
+const PARTNER_PASSWORD = process.env.PARTNER_PASSWORD ?? "";
 const PARTNER_NAME = "Mr Diesel";
 const PARTNER_FLEET_NAME = "Mr Diesel Inc";
 const PARTNER_OPEN_ID = "seed_partner_mrdiesel";
@@ -29,18 +33,22 @@ async function main() {
   }
 
   const email = PARTNER_EMAIL.trim().toLowerCase();
-  const passwordHash = await hashPassword(PARTNER_PASSWORD);
 
   // Upsert the partner owner user.
   const [existingUser] = await db.select().from(users).where(eq(users.email, email)).limit(1);
 
   let userId: number;
   if (existingUser) {
+    // Only reset the password when one is explicitly provided; otherwise the
+    // existing credential is preserved.
+    const passwordUpdate = PARTNER_PASSWORD
+      ? { passwordHash: await hashPassword(PARTNER_PASSWORD) }
+      : {};
     const [updated] = await db
       .update(users)
       .set({
         name: PARTNER_NAME,
-        passwordHash,
+        ...passwordUpdate,
         loginMethod: "email",
         emailVerified: true,
         role: "owner",
@@ -50,13 +58,18 @@ async function main() {
       .returning();
     userId = updated.id;
   } else {
+    if (!PARTNER_PASSWORD) {
+      throw new Error(
+        "PARTNER_PASSWORD is required to create the partner user. Run: PARTNER_PASSWORD='...' pnpm seed:partner"
+      );
+    }
     const [created] = await db
       .insert(users)
       .values({
         openId: PARTNER_OPEN_ID,
         email,
         name: PARTNER_NAME,
-        passwordHash,
+        passwordHash: await hashPassword(PARTNER_PASSWORD),
         loginMethod: "email",
         emailVerified: true,
         role: "owner",

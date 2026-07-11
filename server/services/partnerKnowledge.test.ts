@@ -97,6 +97,25 @@ describe("buildReferenceCandidate", () => {
     expect(result.error).toBe("pii_detected");
     expect(result.details).toContain("vin");
   });
+
+  it("blocks PII pasted into the code, code-system, or category fields", () => {
+    const inCode = buildReferenceCandidate(
+      input({ reference: { code: "1HGCM82633A004352" } as any })
+    );
+    expect(inCode).toMatchObject({ ok: false, error: "pii_detected" });
+
+    const inCategory = buildReferenceCandidate(
+      input({ reference: { category: "call 416-555-0199 for details" } as any })
+    );
+    expect(inCategory).toMatchObject({ ok: false, error: "pii_detected" });
+  });
+
+  it("does not flag legitimate fault codes in the code field", () => {
+    for (const code of ["SPN 4364 FMI 18", "P2463", "MID 128 PID 94 FMI 3"]) {
+      const result = buildReferenceCandidate(input({ reference: { code } as any }));
+      expect(result.ok).toBe(true);
+    }
+  });
 });
 
 describe("detectLikelyPii", () => {
