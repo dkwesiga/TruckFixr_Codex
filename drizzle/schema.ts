@@ -291,6 +291,10 @@ export const fleets = pgTable("fleets", {
   riskReason: text("riskReason"),
   nextFollowUpAt: dateTimestamp(),
   adminOwnerId: integer("adminOwnerId"),
+  // Partner repair shops (e.g. Mr Diesel Inc) are modeled as ordinary tenants
+  // flagged here. Only partner tenants may promote their confirmed repair
+  // outcomes into the shared curated fault-code knowledge base.
+  isPartner: boolean("isPartner").default(false).notNull(),
   createdAt: dateTimestamp().defaultNow().notNull(),
   updatedAt: dateTimestamp().defaultNow().notNull(),
 });
@@ -693,6 +697,12 @@ export const repairOutcomes = pgTable("repairOutcomes", {
   downtimeEnd: dateTimestamp(),
   returnedToServiceAt: dateTimestamp(),
   repairNotes: text("repairNotes"),
+  // Provenance for partner outcomes promoted into the curated knowledge base.
+  // Links this outcome to the faultCodeReferences candidate it seeded so a bad
+  // reference can be traced back to (and retracted from) its origin repair.
+  promotedReferenceId: integer("promotedReferenceId"),
+  promotedAt: dateTimestamp(),
+  promotedByUserId: integer("promotedByUserId"),
   createdAt: dateTimestamp().defaultNow().notNull(),
   updatedAt: dateTimestamp().defaultNow().notNull(),
 });
