@@ -1,6 +1,6 @@
 # TruckFixr Fleet AI Code Review Task List
 
-Last updated: 2026-07-03
+Last updated: 2026-07-12
 
 ## Open Tasks
 
@@ -136,13 +136,14 @@ Last updated: 2026-07-03
   - Category: Security & access control / Supabase RLS (defense-in-depth)
   - Severity: High (practical exploitability Low — no browser Supabase client; access is server-only with app-layer fleet scoping)
   - First discovered date: 2026-06-24
-  - Last seen date: 2026-07-02
+  - Last seen date: 2026-07-12
   - Affected files/tables: `inspectionReviewActions` and `inspectionReviewQueueItems` (received policies in `0026` that are INERT without RLS enabled), `adminFleetNotes`, `combinedInspectionSessions`, `lead_submissions`; fix lands in a new `drizzle/0031_*.sql`
-  - Status: Implemented in repo (`drizzle/0031_enable_post_0012_table_rls.sql`) with static tests passing; live DB RLS state NOT verified in the 2026-07-02 Repo-only review
+  - Status: **Live-verified, mostly passing (12/13 checks); one flagged follow-up.** First successful live run against the actual database — every prior review was blocked by the target-classification guard refusing an unclassified remote target.
   - Recommended fix: mirror the `0030`/`0012` pattern — `ALTER TABLE … ENABLE ROW LEVEL SECURITY` + `service_role_full_access` policy, plus authenticated fleet-scoped SELECT where the table is fleet-owned.
   - Verification command or check required: apply on staging; `SELECT relname, relrowsecurity FROM pg_class WHERE relname IN (...)`; extend `scripts/verify/rls.ts` to assert cross-company denial on these tables.
   - Related batch: Batch K (cross-ref Batch B)
   - 2026-07-02 evidence: `server/rlsPolicies.test.ts` and the full suite passed, and `scripts/verify/rls.ts` correctly refused the unclassified remote Supabase target. Apply/behavior proof remains required on a classified disposable staging database.
+  - 2026-07-12 evidence: with founder approval, ran `scripts/verify/rls.ts` locally against the real Supabase DB (`TFX_DATABASE_TARGET=staging ALLOW_STAGING_DB_VERIFY_WRITES=true`; no separate disposable staging project exists yet). The script wraps all writes in a single `BEGIN`/`ROLLBACK`; confirmed live afterward that zero rows matching the run's naming pattern (`rls-%truckfixr.test`, `RLS Fleet %`) persisted. 12 of 13 live assertions passed: post-0012 RLS-enabled status on all 5 tables, cross-fleet vehicle/subscription/early-warning/review-queue/review-action/combined-session/admin-note isolation, support-recovery-audit visibility rules, and `lead_submissions` correctly hidden from authenticated users. **One failure:** `service_role should read verification lead submissions` — `service_role` could not read a `lead_submissions` row it should be able to. Not yet root-caused (could be a genuine `service_role` grant/policy gap on `lead_submissions`, or a test artifact); practical exposure is likely low regardless since the main app connects via an owner-level role that bypasses RLS entirely (RLS is defense-in-depth for the Supabase Data API path only). Needs a scoped follow-up before this task is called resolved. Also noted in passing, unrelated to this run: two pre-existing orphaned `stripe-verify-*@truckfixr.test` rows (dated 2026-05-20) from an older, separately-run Stripe verification script that didn't clean up after itself — left in place pending explicit approval to delete.
 
 - Task ID: TFX-CR-0031
   - Task: Verify or implement Supabase Storage privacy for inspection/defect photos and uploaded evidence.
@@ -441,7 +442,7 @@ Last updated: 2026-07-03
 | 3 | Backup/restore and rollback proof (`TFX-CR-0042`, I/K) | High | Prevents unrecoverable pilot data loss | Draft/TODO; no restore test | Provider console + scratch target | 2026-07-02 |
 | 4 | Verification reliability/client/browser/audit (`TFX-CR-0023/0037`, I/E) | High | Establishes trustworthy releases and performance | Full direct tests green; client/browser/audit blocked | Pinned pnpm 10 CI | 2026-07-02 |
 | 5 | First-party deployed login proof (`TFX-CR-0039`, B) | High | Login is a pilot gate | Cookie fix in main; DNS/env/browser proof pending | Domain/DNS/deploy | 2026-07-02 |
-| 6 | Application + RLS isolation matrix (`TFX-CR-0040`, B/K) | High | Proves the primary and defense-in-depth tenant boundaries | Representative/static tests green; live proof pending | Classified staging | 2026-07-02 |
+| 6 | Application + RLS isolation matrix (`TFX-CR-0040`, B/K) | High | Proves the primary and defense-in-depth tenant boundaries | **Live-verified 12/13** against real DB; 1 flagged (`lead_submissions` service_role read) needs root-cause | Root-cause the one failure | 2026-07-12 |
 | 7 | Support/admin recovery (`TFX-CR-0020`, J) | High | Controlled pilots need safe recovery | Unit proof; live audit/reversal pending | Classified staging | 2026-07-02 |
 | 8 | Billing and pilot-to-paid (`TFX-CR-0021`, I) | Medium/High | Enables paid conversion | Automated proof; Stripe replay pending | Stripe test environment | 2026-07-02 |
 | 9 | Knowledge/history (`TFX-CR-0003`, G) | Medium/High | Grows TADIS from solved cases | Retrieval tests green; live same-fleet proof pending | Staging DB | 2026-07-02 |
