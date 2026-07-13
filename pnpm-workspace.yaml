@@ -1,0 +1,26 @@
+patchedDependencies:
+  wouter@3.7.1: patches/wouter@3.7.1.patch
+
+overrides:
+  '@smithy/config-resolver': 4.5.1
+  '@trpc/server': 11.8.0
+  dompurify: 3.4.3
+  drizzle-orm: 0.45.2
+  fast-xml-parser: 5.7.0
+  lodash: 4.18.1
+  lodash-es: 4.18.1
+  mdast-util-to-hast: 13.2.1
+  mermaid: 11.15.0
+  path-to-regexp: 0.1.13
+  picomatch: 4.0.4
+  pnpm: 10.27.0
+  rollup: 4.60.3
+  tailwindcss>nanoid: 3.3.7
+  tar: 7.5.15
+  uuid: 11.1.1
+  vitest>vite: 5.4.21
+
+allowBuilds:
+  '@tailwindcss/oxide': true
+  esbuild: true
+  ffmpeg-static: true
