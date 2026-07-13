@@ -740,6 +740,23 @@ async function ensureAuthSchema(pool: Pool) {
     `);
 
     await pool.query(`
+      ALTER TABLE "fleets"
+      ADD COLUMN IF NOT EXISTS "isPartner" boolean NOT NULL DEFAULT false;
+    `);
+
+    await pool.query(`
+      ALTER TABLE "repairOutcomes"
+      ADD COLUMN IF NOT EXISTS "promotedReferenceId" integer,
+      ADD COLUMN IF NOT EXISTS "promotedAt" timestamp,
+      ADD COLUMN IF NOT EXISTS "promotedByUserId" integer;
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS "repairOutcomes_promotedReferenceId_idx"
+      ON "repairOutcomes" ("promotedReferenceId");
+    `);
+
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS "adminFleetNotes" (
         "id" serial PRIMARY KEY,
         "fleetId" integer NOT NULL,

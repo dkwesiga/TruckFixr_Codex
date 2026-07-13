@@ -325,6 +325,7 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
       : null;
   const fleetId = subscriptionQuery.data?.activeFleetId ?? companyFleetId ?? fallbackFleetId;
   const resolvedFleetId = typeof fleetId === "number" && fleetId > 0 ? fleetId : null;
+  const isPartnerShop = Boolean((companyQuery.data?.company as any)?.isPartner);
   const isFleetContextLoading =
     isAuthLoading ||
     subscriptionQuery.isLoading ||
@@ -841,6 +842,18 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
               <BookOpenCheck className="mr-2 h-4 w-4" />
               Quick Start Guides
             </DropdownMenuItem>
+            {isPartnerShop ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="cursor-pointer rounded-xl"
+                  onClick={() => navigate("/partner/knowledge")}
+                >
+                  <Wrench className="mr-2 h-4 w-4" />
+                  Knowledge Base Studio
+                </DropdownMenuItem>
+              </>
+            ) : null}
             {internalAdminRole ? (
               <>
                 <DropdownMenuSeparator />
