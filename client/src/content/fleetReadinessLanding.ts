@@ -2,7 +2,7 @@ export type FitQuestion = {
   id: "fleetSize" | "challenge" | "reporting" | "maintenance" | "pilotInterest";
   question: string;
   options: string[];
-  defaultAnswer: string;
+  defaultAnswer: string | string[];
 };
 
 export type ReadinessColumn = {
@@ -108,7 +108,7 @@ export const fitQuestions: FitQuestion[] = [
       "Repair delays",
       "Poor maintenance records",
     ],
-    defaultAnswer: "Warning lights without clear next steps",
+    defaultAnswer: ["Warning lights without clear next steps"],
   },
   {
     id: "reporting",
@@ -121,7 +121,7 @@ export const fitQuestions: FitQuestion[] = [
       "Maintenance software",
       "Informal / inconsistent",
     ],
-    defaultAnswer: "Phone call / text",
+    defaultAnswer: ["Phone call / text"],
   },
   {
     id: "maintenance",

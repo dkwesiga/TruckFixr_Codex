@@ -37,7 +37,12 @@ import {
   type FitQuestion,
 } from "@/content/fleetReadinessLanding";
 
-export type FitAnswerMap = Record<FitQuestion["id"], string>;
+export type FitAnswerValue = string | string[];
+export type FitAnswerMap = Record<FitQuestion["id"], FitAnswerValue>;
+
+function answerText(value: FitAnswerValue): string {
+  return Array.isArray(value) ? value.join(", ") : value;
+}
 
 const sectionShell = "mx-auto w-full max-w-[1180px] px-4 sm:px-6 lg:px-8";
 const cardClass = "rounded-lg border border-[#d4deec] bg-white shadow-[0_18px_45px_-34px_rgba(0,38,63,0.5)]";
@@ -247,7 +252,7 @@ export function HowItWorks() {
           <h2 className="font-['Manrope'] text-3xl font-extrabold tracking-normal text-white sm:text-4xl">How TruckFixr Works</h2>
         </div>
         <div className="mx-auto mt-5 max-w-3xl rounded-lg border border-white/15 bg-white/[0.08] p-4 text-center font-['Manrope'] text-lg font-extrabold tracking-normal">
-          Report -> Clarify -> Decide -> Closeout -> Learn
+          Report → Clarify → Decide → Closeout → Learn
         </div>
         <div className="mt-10 grid gap-4 md:grid-cols-5">
           {workflowSteps.map((step, index) => {
@@ -287,8 +292,19 @@ export function FitCheck({
   const progress = Math.round(((step + 1) / fitQuestions.length) * 100);
   const progressLabel = isLast ? "Question 5 of 5 - Almost done" : `Question ${step + 1} of 5 - ${progress}% complete`;
 
+  const isMultiSelect = current.id === "challenge" || current.id === "reporting";
+  const selectedValues = Array.isArray(answers[current.id]) ? answers[current.id] : [answers[current.id]];
+
   const chooseAnswer = (value: string) => {
-    setAnswers((currentAnswers) => ({ ...currentAnswers, [current.id]: value }));
+    setAnswers((currentAnswers) => {
+      if (!isMultiSelect) return { ...currentAnswers, [current.id]: value };
+      const rawValue = currentAnswers[current.id];
+      const currentValues = Array.isArray(rawValue) ? rawValue : [rawValue];
+      const nextValues = currentValues.includes(value)
+        ? currentValues.filter((item) => item !== value)
+        : [...currentValues, value];
+      return { ...currentAnswers, [current.id]: nextValues.length > 0 ? nextValues : [value] };
+    });
   };
 
   const goNext = () => {
@@ -306,7 +322,7 @@ export function FitCheck({
           <div>
             <SectionHeader
               title="Check Your Fleet Readiness Fit"
-              description="Answer five quick questions to see whether TruckFixr fits your fleet's current maintenance workflow."
+              description="Five quick questions to surface your biggest readiness gaps and shape a focused pilot."
             />
             <div className="mt-6 rounded-lg border border-[#dbe3ee] bg-white p-5">
               <p className="text-sm font-extrabold text-[#00263F]">Smart defaults already selected</p>
@@ -330,7 +346,7 @@ export function FitCheck({
             </h3>
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               {current.options.map((option) => {
-                const selected = answers[current.id] === option;
+                const selected = selectedValues.includes(option);
                 return (
                   <button
                     key={option}
@@ -390,8 +406,8 @@ export function ReadinessSnapshot({ answers, onBuildPilot }: { answers: FitAnswe
           </p>
           <div className="mt-5 rounded-lg bg-[#f6f9fd] p-4 text-sm text-[#42474E]">
             <p><strong className="text-[#00263F]">Fleet:</strong> {answers.fleetSize}</p>
-            <p className="mt-2"><strong className="text-[#00263F]">Current challenge:</strong> {answers.challenge}</p>
-            <p className="mt-2"><strong className="text-[#00263F]">Reporting today:</strong> {answers.reporting}</p>
+            <p className="mt-2"><strong className="text-[#00263F]">Current challenge:</strong> {answerText(answers.challenge)}</p>
+            <p className="mt-2"><strong className="text-[#00263F]">Reporting today:</strong> {answerText(answers.reporting)}</p>
           </div>
         </div>
         <div>
@@ -405,7 +421,7 @@ export function ReadinessSnapshot({ answers, onBuildPilot }: { answers: FitAnswe
           </div>
           <div className="mt-5 rounded-lg border border-[#f2c2c8] bg-[#fff5f6] p-4">
             <p className="text-sm font-extrabold text-[#00263F]">
-              Recommended next step: test TruckFixr with 5-10 vehicles through a 30-Day Fleet Readiness Pilot.
+              Recommended next step: a focused 30-day pilot with 5-10 vehicles.
             </p>
             <Button
               type="button"
@@ -443,7 +459,7 @@ export function BuildPilot({
         <div className="grid gap-8 lg:grid-cols-[0.86fr_1.14fr]">
           <SectionHeader
             title="Build your 30-day pilot."
-            description="Start with TruckFixr's recommended Fleet Readiness Pilot, then adjust the setup based on your vehicles, drivers, maintenance workflow, and repair partners."
+            description="Start focused: 5-10 vehicles, 30 days, and the workflow your team already uses."
           />
           <div className={cn(cardClass, "p-5 sm:p-6")}>
             <p className="font-['Manrope'] text-lg font-extrabold tracking-normal text-[#00263F]">Recommended setup</p>
@@ -509,17 +525,15 @@ export function PilotOffer({
         <div className="grid gap-8 lg:grid-cols-[0.92fr_1.08fr]">
           <div>
             <SectionHeader
-              title="Start with 5-10 vehicles. See readiness value in 30 days."
-              description="TruckFixr's 30-Day Fleet Readiness Pilot helps your team test a practical maintenance triage workflow before rolling it out across the full operation."
+              title="Prove readiness value in 30 days."
+              description="Pilot TruckFixr with 5-10 vehicles before expanding across the operation."
             />
             <div className="mt-6 rounded-lg border border-[#dbe3ee] bg-white p-5">
               <p className="text-sm leading-7 text-[#42474E]">
-                The cost of one unresolved truck issue can exceed the time and effort required to test a better
-                readiness workflow. TruckFixr's 30-day pilot helps your team evaluate dispatch risk, maintenance
-                triage, and repair outcome tracking before committing to a full rollout.
+                In 30 days, your team can see which issues affect dispatch, how quickly they are triaged, and what outcomes are being closed out — before committing to a full rollout.
               </p>
               <p className="mt-4 text-sm font-bold leading-7 text-[#00263F]">
-                Monthly plans are recommended after pilot validation based on fleet size, workflow, and readiness goals.
+                After the pilot, scale the workflow that proved useful for your fleet.
               </p>
             </div>
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -555,17 +569,17 @@ function PilotLeadForm({
     companyName: "",
     email: "",
     phone: "",
-    fleetSize: fitAnswers.fleetSize,
+    fleetSize: answerText(fitAnswers.fleetSize),
     location: "",
-    biggestMaintenanceChallenge: fitAnswers.challenge,
+    biggestMaintenanceChallenge: answerText(fitAnswers.challenge),
     website: "",
   });
 
   useEffect(() => {
     setForm((current) => ({
       ...current,
-      fleetSize: fitAnswers.fleetSize,
-      biggestMaintenanceChallenge: fitAnswers.challenge,
+      fleetSize: answerText(fitAnswers.fleetSize),
+      biggestMaintenanceChallenge: answerText(fitAnswers.challenge),
     }));
   }, [fitAnswers.challenge, fitAnswers.fleetSize]);
 
@@ -656,9 +670,9 @@ function PilotLeadForm({
         companyName: "",
         email: "",
         phone: "",
-        fleetSize: fitAnswers.fleetSize,
+        fleetSize: answerText(fitAnswers.fleetSize),
         location: "",
-        biggestMaintenanceChallenge: fitAnswers.challenge,
+        biggestMaintenanceChallenge: answerText(fitAnswers.challenge),
         website: "",
       });
     } catch (error) {
