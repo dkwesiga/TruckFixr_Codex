@@ -7,6 +7,8 @@
 
 No application code, schema, migrations, RLS policies, storage, prompts, pricing, or copy were changed during this review — findings only, per this week's prompt.
 
+> **Correction added 2026-07-12, same day, after founder approval and follow-up work:** Recommendation 3 below (and its mentions in §D/§L) mischaracterized `.deploy-pwa` as "unrelated scaffold content, not TruckFixr code" from a "separate, unrelated nested git repository." That was wrong. `.deploy-pwa/.git`'s `origin` remote points at this exact repo (`github.com/dkwesiga/TruckFixr_Codex.git`), checked out on `main` at the same commit `origin/main` was at (`884eb2a6`) — it's a second local clone of this project, not foreign content. The underlying technical problem is unchanged and still real: it was committed as a **gitlink with no `.gitmodules`**, so a fresh clone still gets an empty, unresolvable `.deploy-pwa` directory, and the 19MB `.deploy-pwa.bundle` is still unnecessary bloat. But the "unvetted foreign content" / "worth checking `.env.example` for real secrets" framing does not apply — it's this project's own files. Fixed in commit `fe323f4` (untrack + `.gitignore`, no history rewrite).
+
 ---
 
 ## A. Executive Summary

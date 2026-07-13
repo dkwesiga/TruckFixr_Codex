@@ -432,6 +432,41 @@ Last updated: 2026-07-12
   - Recommended fix: Batch I + K - confirm the Supabase plan/backup retention, document the actual Forge storage backup/lifecycle behavior, perform a scratch restore, record measured RPO/RTO, and document a migration rollback decision path.
   - Verification command or check required: dated restore-test evidence from a non-production snapshot plus file-recovery proof for the actual object store; no production mutation during review.
 
+## New Tasks From Today (2026-07-12)
+
+- Task ID: TFX-CR-0044
+  - Task: Fix `pnpm run check` typecheck failure on `FleetReadinessLandingSections.tsx`, the component behind the live homepage route.
+  - Category: Bug / CI reliability
+  - Severity: High
+  - First discovered date: 2026-07-12
+  - Last seen date: 2026-07-12
+  - Affected files: `client/src/components/marketing/FleetReadinessLandingSections.tsx`, `client/src/content/fleetReadinessLanding.ts`
+  - Status: **Resolved** (commit `3ec47925`)
+  - Evidence: a literal `->` in JSX text (`TS1382`) plus an unfinished multi-select answer type (`FitAnswerValue = string | string[]`) that several call sites still treated as a plain `string`. `pnpm run build:client` succeeded throughout (esbuild tolerates the JSX issue), so this was a `tsc`/CI-only break, not a live-site bug. Fixed and verified: `pnpm run check`, full suite (47 files / 339 tests), and `pnpm run build:client` all pass.
+  - Recommended fix: Done — see evidence.
+
+- Task ID: TFX-CR-0045
+  - Task: Untrack the accidentally-committed `.deploy-pwa` gitlink and `.deploy-pwa.bundle` blob.
+  - Category: Repo hygiene / DevOps
+  - Severity: High
+  - First discovered date: 2026-07-12
+  - Last seen date: 2026-07-12
+  - Affected files: `.deploy-pwa`, `.deploy-pwa.bundle`, `.gitignore`
+  - Status: **Resolved (untracked; history rewrite is a separate, deferred decision)** (commit `fe323f4`)
+  - Evidence: commit `0012bd57` (2026-07-09) added `.deploy-pwa` as a git submodule reference (gitlink, mode `160000`) with no corresponding `.gitmodules` entry, so a fresh clone gets an empty, unresolvable directory. **Correction from this same session's initial finding:** `.deploy-pwa` is not foreign/unrelated content — its `origin` remote points at this exact repo, checked out on `main` at the same commit `origin/main` is at (`884eb2a6`); it's a second local clone of this project (apparently kept for deploy tooling), not a leaked/unknown codebase. The 19MB `.deploy-pwa.bundle` git-bundle export was also committed directly as a binary blob. Both are now untracked and gitignored. History still contains the ~19MB (older commits); a full rewrite (`git filter-repo` + coordinated force-push) was intentionally not done as part of this fix — it's a separate, more disruptive decision.
+  - Recommended fix: Founder decision still open on whether to rewrite history to reclaim the ~19MB, and on where `demo-video/` (~50MB, still tracked) should be hosted long-term.
+
+- Task ID: TFX-CR-0046
+  - Task: Move `pnpm` `overrides`/`patchedDependencies` config from `package.json` to `pnpm-workspace.yaml` (pnpm 9+ canonical location).
+  - Category: DevEx / verification reliability
+  - Severity: Medium
+  - First discovered date: 2026-07-12
+  - Last seen date: 2026-07-12
+  - Affected files: `package.json`, `pnpm-workspace.yaml`
+  - Status: **Resolved** (commit `bbd7e42`)
+  - Evidence: `pnpm-workspace.yaml` existed locally but untracked, with equivalent `overrides`/`patchedDependencies` content plus an `allowBuilds` allow-list (`@tailwindcss/oxide`, `esbuild`, `ffmpeg-static`) that `package.json` never had. Removed the now-redundant `package.json` block and committed the workspace file. Verified: `pnpm install --frozen-lockfile`, `pnpm run check`, and `pnpm run build:client` all pass against the workspace-file-only config. Directly relevant to the recurring pnpm-version-mismatch pain tracked under `TFX-CR-0023`.
+  - Recommended fix: Done — see evidence.
+
 ## Rolling Implementation Roadmap
 
 | Order | Workstream / Batch | Priority | Why | Status | Dependencies | Updated |
