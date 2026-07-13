@@ -127,3 +127,11 @@ truckfixr-leads/
 # Local tooling / preview helpers (machine-specific)
 .gstack/
 .claude/launch.json
+
+# Accidentally committed nested checkout of this same repo (a separate
+# local clone of origin, apparently used for deploy tooling), plus a
+# 19MB git-bundle export of it — landed via a broad `git add` in
+# 0012bd57. Committed as a gitlink with no .gitmodules, so a fresh
+# clone gets an empty, unresolvable .deploy-pwa directory.
+.deploy-pwa
+.deploy-pwa.bundle
