@@ -8,6 +8,7 @@ import {
   FitCheck,
   HeroSection,
   HowItWorks,
+  LandingHeader,
   PilotOffer,
   ProblemSection,
   ProofSection,
@@ -61,7 +62,8 @@ export default function FleetReadinessLanding() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f6f9fd] text-[#0B1C30]">
+    <div className="min-h-screen bg-[#F6F8FB] text-[#0A1A2E] [font-family:'IBM_Plex_Sans',sans-serif]">
+      <LandingHeader onFitCheck={() => handleFitCheck("nav")} />
       <HeroSection onFitCheck={() => handleFitCheck("hero")} onPilot={() => handlePilot("hero")} />
       <main>
         <ProblemSection />
@@ -81,20 +83,20 @@ export default function FleetReadinessLanding() {
         <PilotOffer fitAnswers={fitAnswers} selectedAddOns={selectedAddOns} />
         <ProofSection />
         <RepairWorkflowSection />
-        <FinalCTA onFitCheck={() => handleFitCheck("final_cta")} />
+        <FinalCTA onFitCheck={() => handleFitCheck("final_cta")} onPilot={() => handlePilot("final_cta")} />
       </main>
 
-      <footer className="border-t border-white/10 bg-[#001d31] text-blue-100">
-        <div className="mx-auto grid max-w-[1180px] gap-8 px-4 py-10 sm:px-6 md:grid-cols-[1.3fr_0.8fr_0.8fr_1fr] lg:px-8">
+      <footer className="bg-[#00101E] text-[#B6C0D0]">
+        <div className="mx-auto grid max-w-[1240px] gap-8 px-4 py-12 sm:px-6 md:grid-cols-[1.3fr_0.8fr_0.8fr_1fr] lg:px-8">
           <div>
             <AppLogo href="/" imageClassName="h-9" frameClassName="rounded bg-white p-1.5" />
-            <p className="mt-4 max-w-sm text-sm leading-7 text-blue-100/80">
+            <p className="mt-4 max-w-sm text-[13px] leading-6 text-[#8A98AE]">
               TruckFixr Fleet AI helps fleets make calmer pre-dispatch maintenance decisions.
             </p>
           </div>
           <div>
-            <h4 className="font-['Manrope'] font-extrabold tracking-normal text-white">Product</h4>
-            <ul className="mt-4 space-y-2 text-sm">
+            <h4 className="text-[13px] font-bold text-white">Product</h4>
+            <ul className="mt-4 space-y-2 text-[13px]">
               <li><a className="hover:text-white" href="#how-it-works">How it works</a></li>
               <li><a className="hover:text-white" href="#fit-check">Fit check</a></li>
               <li><a className="hover:text-white" href="#pilot">Pilot</a></li>
@@ -102,23 +104,23 @@ export default function FleetReadinessLanding() {
             </ul>
           </div>
           <div>
-            <h4 className="font-['Manrope'] font-extrabold tracking-normal text-white">Access</h4>
-            <ul className="mt-4 space-y-2 text-sm">
+            <h4 className="text-[13px] font-bold text-white">Access</h4>
+            <ul className="mt-4 space-y-2 text-[13px]">
               <li><a className="hover:text-white" href="/access">Sign in</a></li>
               <li><a className="hover:text-white" href="/access/pilot-code">Enter pilot code</a></li>
               <li><a className="hover:text-white" href="/pricing">Pricing</a></li>
             </ul>
           </div>
           <div>
-            <h4 className="font-['Manrope'] font-extrabold tracking-normal text-white">Company</h4>
-            <ul className="mt-4 space-y-2 text-sm">
+            <h4 className="text-[13px] font-bold text-white">Company</h4>
+            <ul className="mt-4 space-y-2 text-[13px]">
               <li><a className="hover:text-white" href="mailto:info@truckfixr.com">info@truckfixr.com</a></li>
               <li><a className="hover:text-white" href="/terms">Terms</a></li>
               <li><a className="hover:text-white" href="/privacy">Privacy</a></li>
             </ul>
           </div>
         </div>
-        <div className="mx-auto flex max-w-[1180px] flex-col gap-2 border-t border-white/10 px-4 py-5 text-sm text-blue-100/70 sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8">
+        <div className="mx-auto flex max-w-[1240px] flex-col gap-2 border-t border-[#182336] px-4 py-5 text-xs text-[#5A6981] sm:px-6 md:flex-row md:items-center md:justify-between lg:px-8">
           <p>2026 TruckFixr. Maintenance decision support for commercial fleets.</p>
           <p>Built for readiness decisions before dispatch.</p>
         </div>
