@@ -250,13 +250,6 @@ export default defineConfig({
       "@": path.resolve(import.meta.dirname, "client", "src"),
       "@shared": path.resolve(import.meta.dirname, "shared"),
       "@assets": path.resolve(import.meta.dirname, "attached_assets"),
-      "use-sync-external-store/shim": path.resolve(
-        import.meta.dirname,
-        "client",
-        "src",
-        "vendor",
-        "useSyncExternalStoreShim.ts"
-      ),
       "use-sync-external-store/shim/index.js": path.resolve(
         import.meta.dirname,
         "client",
