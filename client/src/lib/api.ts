@@ -11,7 +11,7 @@ function inferHostedApiBaseUrl(hostname: string) {
   const normalizedHost = hostname.trim().toLowerCase();
 
   if (normalizedHost === "truckfixr.com" || normalizedHost === "www.truckfixr.com") {
-    return "https://truckfixr-api.onrender.com";
+    return "https://api.truckfixr.com";
   }
 
   return "";
