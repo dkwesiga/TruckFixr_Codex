@@ -702,7 +702,7 @@ function DriverDashboardContent() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl space-y-8 px-4 py-8 pt-16 sm:px-6 sm:pt-20 lg:px-8">
+      <main className="mx-auto max-w-7xl space-y-8 px-4 py-8 pb-28 pt-16 sm:px-6 sm:pt-20 lg:px-8 lg:pb-8">
         <QuickStartBanner role={user?.role} />
 
         {!hasVehicles ? (
@@ -1080,6 +1080,42 @@ function DriverDashboardContent() {
           </DialogContent>
         </Dialog>
       </main>
+
+      {/* Mobile-only quick actions: keeps Inspect / Report / Reports within
+          thumb reach on a long page. Desktop keeps the in-card buttons. */}
+      {hasVehicles && activeVehicle ? (
+        <nav
+          aria-label="Driver quick actions"
+          className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--fleet-outline)] bg-white/95 backdrop-blur lg:hidden"
+        >
+          <div className="mx-auto grid max-w-md grid-cols-3 gap-1 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5">
+            <button
+              type="button"
+              onClick={() => startInspection(activeVehicle)}
+              className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-xs font-semibold text-[var(--fleet-ink)] hover:bg-[var(--fleet-surface)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fleet-ink)]"
+            >
+              <SearchCode className="h-5 w-5" />
+              {pendingDraftForActiveVehicle ? "Resume" : "Inspect"}
+            </button>
+            <button
+              type="button"
+              onClick={() => openIssueReport(activeVehicle)}
+              className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl bg-[#E32636] text-xs font-bold text-white shadow-sm hover:bg-[#BC1E2C] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#E32636] focus-visible:ring-offset-2"
+            >
+              <Wrench className="h-5 w-5" />
+              Report Issue
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate("/driver#recent-reports")}
+              className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-xs font-semibold text-[var(--fleet-ink)] hover:bg-[var(--fleet-surface)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fleet-ink)]"
+            >
+              <FileText className="h-5 w-5" />
+              My Reports
+            </button>
+          </div>
+        </nav>
+      ) : null}
     </div>
   );
 }
