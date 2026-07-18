@@ -971,7 +971,7 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
+      <main className="mx-auto max-w-7xl space-y-6 px-4 py-8 pb-28 sm:px-6 lg:px-8 lg:pb-8">
         <QuickStartBanner role={user?.role} />
 
         <div className="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-r-xl shadow-sm">
@@ -1604,7 +1604,7 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
           {resolvedFleetId != null ? <MorningFleetSummary fleetId={resolvedFleetId} /> : null}
         </section>
 
-        <section className="grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
+        <section id="manager-fleet-operations" className="grid scroll-mt-4 gap-6 xl:grid-cols-[1.35fr_0.65fr]">
           <div className="saas-card p-0">
             <div className="flex flex-col gap-2 border-b border-slate-200 px-7 py-6 sm:flex-row sm:items-end sm:justify-between">
               <div>
@@ -2406,6 +2406,48 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
           </DialogContent>
         </Dialog>
       </main>
+
+      {/* Mobile-only quick actions: exception-based entry points kept within
+          thumb reach on a long dashboard. Desktop keeps the header controls. */}
+      <nav
+        aria-label="Manager quick actions"
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--fleet-outline)] bg-white/95 backdrop-blur lg:hidden"
+      >
+        <div className="mx-auto grid max-w-md grid-cols-3 gap-1 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5">
+          <button
+            type="button"
+            onClick={() => scrollToSection("manager-open-defects-panel")}
+            className="relative flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-xs font-semibold text-[var(--fleet-ink)] hover:bg-[var(--fleet-surface)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fleet-ink)]"
+          >
+            <AlertTriangle className="h-5 w-5" />
+            Urgent
+            {(verifiedHealth?.openDefects.length ?? 0) > 0 ? (
+              <span
+                aria-label={`${verifiedHealth?.openDefects.length} open defects`}
+                className="absolute right-[calc(50%-2rem)] top-1 rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
+              >
+                {verifiedHealth?.openDefects.length}
+              </span>
+            ) : null}
+          </button>
+          <button
+            type="button"
+            onClick={() => scrollToSection("manager-fleet-operations")}
+            className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-xs font-semibold text-[var(--fleet-ink)] hover:bg-[var(--fleet-surface)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fleet-ink)]"
+          >
+            <Truck className="h-5 w-5" />
+            Vehicles
+          </button>
+          <button
+            type="button"
+            onClick={openAddVehicleDialog}
+            className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-xs font-semibold text-[var(--fleet-ink)] hover:bg-[var(--fleet-surface)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fleet-ink)]"
+          >
+            <Plus className="h-5 w-5" />
+            Add Vehicle
+          </button>
+        </div>
+      </nav>
     </div>
   );
 }
