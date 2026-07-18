@@ -223,15 +223,32 @@ export const supporters = [
     href: "https://www.blackfounders.network/",
     logoSrc: "/partner-bfn.svg",
     logoAlt: "Black Founders Network logo",
-    logoClassName: "h-8 w-auto",
-    logoWrapperClassName: "rounded-lg bg-slate-950 px-3 py-2",
+    logoClassName: "h-6 w-auto max-w-[140px] object-contain",
+    logoWrapperClassName: "inline-flex h-10 items-center overflow-hidden rounded-md bg-[#0A1A2E] px-3",
   },
   {
     name: "DMZ",
     href: "https://www.dmzlaunchpad.ca/",
     logoSrc: "/partner-dmz.png",
     logoAlt: "DMZ logo",
-    logoClassName: "h-7 w-auto",
-    logoWrapperClassName: "rounded-lg bg-slate-100 px-3 py-2",
+    logoClassName: "h-6 w-auto max-w-[120px] object-contain",
+    logoWrapperClassName: "inline-flex h-10 items-center overflow-hidden rounded-md bg-slate-100 px-3",
   },
+];
+
+// Verifiable pilot traction only — no invented customers, savings, or stats.
+export const tractionStats = [
+  { value: "5", label: "Pilot fleets" },
+  { value: "13", label: "Vehicles" },
+  { value: "120+", label: "Diagnostic sessions" },
+  { value: "35", label: "Documented repair outcomes" },
+];
+
+export const leadRoleOptions = [
+  "Fleet owner",
+  "Fleet manager",
+  "Maintenance manager",
+  "Operations manager",
+  "Owner-operator",
+  "Other",
 ];

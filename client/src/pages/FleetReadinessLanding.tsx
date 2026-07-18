@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSeoMeta } from "@/lib/useSeoMeta";
 import { trackEvent } from "@/lib/analytics";
 import AppLogo from "@/components/AppLogo";
+import { Button } from "@/components/ui/button";
 import {
   BuildPilot,
   FinalCTA,
@@ -13,6 +14,7 @@ import {
   ProblemSection,
   ProofSection,
   RepairWorkflowSection,
+  TractionStrip,
   getDefaultFitAnswers,
   type FitAnswerMap,
 } from "@/components/marketing/FleetReadinessLandingSections";
@@ -20,6 +22,48 @@ import {
 function scrollToSection(id: string) {
   if (typeof document === "undefined") return;
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// Mobile-only sticky CTA: appears after the hero scrolls away and hides while
+// the lead-form section is on screen so it never covers the form it links to.
+function StickyMobileCta({ onBookReview }: { onBookReview: () => void }) {
+  const [pastHero, setPastHero] = useState(false);
+  const [pilotVisible, setPilotVisible] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setPastHero(window.scrollY > 700);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+
+    const pilotSection = document.getElementById("pilot");
+    let observer: IntersectionObserver | undefined;
+    if (pilotSection && "IntersectionObserver" in window) {
+      observer = new IntersectionObserver(
+        (entries) => setPilotVisible(entries.some((entry) => entry.isIntersecting)),
+        { rootMargin: "0px 0px -20% 0px" },
+      );
+      observer.observe(pilotSection);
+    }
+
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      observer?.disconnect();
+    };
+  }, []);
+
+  if (!pastHero || pilotVisible) return null;
+
+  return (
+    <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[#C3C7CE] bg-white/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur sm:hidden">
+      <Button
+        type="button"
+        onClick={onBookReview}
+        className="h-12 w-full rounded-md bg-[#D81F2A] text-[15px] font-bold text-white hover:bg-[#A6121B]"
+      >
+        Book a fleet review
+      </Button>
+    </div>
+  );
 }
 
 export default function FleetReadinessLanding() {
@@ -32,9 +76,9 @@ export default function FleetReadinessLanding() {
   ]);
 
   useSeoMeta({
-    title: "TruckFixr Fleet AI | Dispatch Readiness and Maintenance Triage",
+    title: "TruckFixr Fleet AI | Fleet Maintenance Triage and Vehicle Health Intelligence",
     description:
-      "TruckFixr Fleet AI helps small and mid-sized fleets turn driver reports, warning lights, inspections, and repair history into Ready, Monitor, Service Soon, or Stop readiness actions.",
+      "TruckFixr helps small and mid-sized fleets consolidate driver reports, inspections, fault information and repair history to assess maintenance urgency and decide what to do next.",
   });
 
   const handleFitCheck = (location: string) => {
@@ -65,6 +109,8 @@ export default function FleetReadinessLanding() {
     <div className="min-h-screen bg-[#F6F8FB] text-[#0A1A2E] [font-family:'IBM_Plex_Sans',sans-serif]">
       <LandingHeader onFitCheck={() => handleFitCheck("nav")} />
       <HeroSection onFitCheck={() => handleFitCheck("hero")} onPilot={() => handlePilot("hero")} />
+      <TractionStrip />
+      <StickyMobileCta onBookReview={() => handlePilot("sticky_mobile_bar")} />
       <main>
         <ProblemSection />
         <HowItWorks />

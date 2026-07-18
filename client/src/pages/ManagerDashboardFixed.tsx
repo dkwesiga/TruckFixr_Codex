@@ -895,7 +895,7 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
                 Fleet operations center
               </h1>
               <p className="mt-2 text-sm text-[var(--fleet-muted)]">
-                Manager actions now open real routes and the dashboard can add vehicles.
+                Review new reports, prioritize urgent vehicles, and assign the next action.
               </p>
             </div>
           </div>
