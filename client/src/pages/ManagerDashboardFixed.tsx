@@ -653,6 +653,44 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
     );
   }, [search, vehiclesQuery.data, drivers]);
 
+  // Decision-oriented fleet-health rollup for the owner view. Computed from
+  // data already loaded on the manager dashboard so owners and managers share
+  // one page and one design system (no separate owner app).
+  const ownerSummary = useMemo(() => {
+    const allRows = (vehiclesQuery.data ?? []).map(vehicle =>
+      mapVehicleRow(vehicle, vehiclesQuery.data ?? [], drivers, user?.id ?? null)
+    );
+    const unavailable = allRows.filter(
+      row => row.status === "In Shop" || row.status === "Dispatch Hold"
+    );
+    const highPriority = allRows.filter(
+      row => row.priority === "Critical" || row.priority === "High"
+    );
+    const needsAttention = allRows.filter(
+      row =>
+        row.status === "Operational" &&
+        (row.inspection === "Overdue" ||
+          row.priority === "Critical" ||
+          row.priority === "High")
+    );
+    const operatingNormally = allRows.filter(
+      row =>
+        row.status === "Operational" &&
+        row.priority === "Low" &&
+        row.inspection !== "Overdue"
+    );
+    return {
+      total: allRows.length,
+      operatingNormally: operatingNormally.length,
+      needsAttention: needsAttention.length,
+      unavailable: unavailable.length,
+      highPriority: highPriority.length,
+      pendingDecisions: managerActionItems.length,
+    };
+  }, [vehiclesQuery.data, drivers, user?.id, managerActionItems.length]);
+
+  const isOwnerView = user?.role === "owner" && !isOwnerOperator;
+
   const openAddVehicleDialog = () => {
     if (resolvedFleetId == null) {
       toast.error(
@@ -973,6 +1011,71 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
 
       <main className="mx-auto max-w-7xl space-y-6 px-4 py-8 pb-28 sm:px-6 lg:px-8 lg:pb-8">
         <QuickStartBanner role={user?.role} />
+
+        {isOwnerView ? (
+          <section aria-label="Fleet health summary" className="space-y-4">
+            <div className="flex items-end justify-between gap-4">
+              <div>
+                <p className="section-label">Fleet health</p>
+                <h2 className="mt-1 font-['Manrope'] text-2xl font-semibold tracking-tight text-slate-950">
+                  {ownerSummary.total === 0
+                    ? "No vehicles yet"
+                    : ownerSummary.needsAttention + ownerSummary.unavailable === 0
+                      ? "All vehicles operating normally"
+                      : `${ownerSummary.needsAttention + ownerSummary.unavailable} vehicle${
+                          ownerSummary.needsAttention + ownerSummary.unavailable === 1 ? "" : "s"
+                        } need attention`}
+                </h2>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+              <button
+                type="button"
+                onClick={() => scrollToSection("manager-fleet-operations")}
+                className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-left transition hover:border-emerald-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+              >
+                <p className="text-3xl font-semibold text-emerald-900">{ownerSummary.operatingNormally}</p>
+                <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-emerald-700">Operating normally</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollToSection("manager-open-defects-panel")}
+                className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-left transition hover:border-amber-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+              >
+                <p className="text-3xl font-semibold text-amber-900">{ownerSummary.needsAttention}</p>
+                <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-amber-700">Need attention</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollToSection("manager-fleet-operations")}
+                className="rounded-2xl border border-red-200 bg-red-50 p-4 text-left transition hover:border-red-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+              >
+                <p className="text-3xl font-semibold text-red-900">{ownerSummary.unavailable}</p>
+                <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-red-700">Unavailable</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollToSection("manager-open-defects-panel")}
+                className="rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500"
+              >
+                <p className="text-3xl font-semibold text-slate-950">{ownerSummary.highPriority}</p>
+                <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">High-priority issues</p>
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  managerActionItems[0]?.defectId
+                    ? navigate(`/defect/${managerActionItems[0].defectId}`)
+                    : scrollToSection("manager-open-defects-panel")
+                }
+                className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-left transition hover:border-blue-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              >
+                <p className="text-3xl font-semibold text-blue-950">{ownerSummary.pendingDecisions}</p>
+                <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-blue-700">Pending decisions</p>
+              </button>
+            </div>
+          </section>
+        ) : null}
 
         <div className="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-r-xl shadow-sm">
           <div className="flex items-center gap-3">
