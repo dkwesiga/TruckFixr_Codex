@@ -284,10 +284,19 @@ export function ProblemSection() {
     <section id="problem" className="border-y border-[#C3C7CE] bg-white py-16 sm:py-20">
       <div className={sectionShell}>
         <div className="grid gap-10 lg:grid-cols-[0.92fr_1.08fr]">
-          <SectionHeader
-            title="Small issues become expensive when they're missed before dispatch."
-            description="Fleet teams deal with warning lights, driver calls, paper inspections, missed service items, and scattered repair history — under pressure to decide before trucks leave. TruckFixr turns those signals into one clear readiness decision."
-          />
+          <div>
+            <SectionHeader
+              title="Small issues become expensive when they're missed before dispatch."
+              description="Fleet teams deal with warning lights, driver calls, paper inspections, missed service items, and scattered repair history — under pressure to decide before trucks leave. TruckFixr turns those signals into one clear readiness decision."
+            />
+            <img
+              src="/landing-dashboard-warning-lights.webp"
+              alt="Backlit heavy-duty truck instrument cluster with illuminated warning and gauge lights at dusk"
+              loading="lazy"
+              decoding="async"
+              className="mt-8 aspect-[16/9] w-full rounded-[10px] border border-[#C3C7CE] object-cover sm:aspect-[16/10]"
+            />
+          </div>
           <div className="grid content-start gap-3 sm:grid-cols-2">
             {painPoints.map((point) => (
               <div key={point} className="rounded-[10px] border border-[#C3C7CE] bg-white p-4 text-sm font-semibold leading-6 text-[#0A1A2E]">
@@ -968,9 +977,18 @@ export function RepairWorkflowSection() {
 
 export function FinalCTA({ onFitCheck, onPilot }: { onFitCheck: () => void; onPilot: () => void }) {
   return (
-    <section className="bg-[#0A1A2E] py-16 sm:py-20">
-      <div className={cn(sectionShell, "text-center")}>
-        <p className={cn(monoClass, "text-[13px] text-[#8A98AE]")}>30-DAY FLEET READINESS PILOT</p>
+    <section className="relative overflow-hidden bg-[#0A1A2E] py-16 sm:py-20">
+      <img
+        src="/landing-truck-on-road.webp"
+        alt=""
+        aria-hidden="true"
+        loading="lazy"
+        decoding="async"
+        className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+      />
+      <div className="pointer-events-none absolute inset-0 bg-[#0A1A2E]/85" />
+      <div className={cn(sectionShell, "relative z-10 text-center")}>
+        <p className={cn(monoClass, "text-[13px] text-[#abcaea]")}>30-DAY FLEET READINESS PILOT</p>
         <h2 className={cn(displayClass, "mx-auto mt-4 max-w-3xl text-3xl text-white sm:text-4xl")}>
           Prove readiness value before you commit to a full rollout.
         </h2>
