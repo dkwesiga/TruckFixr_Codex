@@ -3,7 +3,6 @@ import AppLogo from "@/components/AppLogo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/analytics";
 import { trpc } from "@/lib/trpc";
@@ -22,7 +21,8 @@ import {
   recommendedPilotSetup,
   snapshotInsights,
   supporters,
-  tractionStats,
+  tractionHeadline,
+  tractionSubline,
   workflowSteps,
   type FitQuestion,
 } from "@/content/fleetReadinessLanding";
@@ -36,8 +36,9 @@ function answerText(value: FitAnswerValue): string {
 
 const sectionShell = "mx-auto w-full max-w-[1240px] px-4 sm:px-6 lg:px-8";
 const cardClass = "rounded-[10px] border border-[#C3C7CE] bg-white shadow-[0_18px_40px_-30px_rgba(10,26,46,0.4)]";
-// Barlow Condensed italic display style shared by all landing headings.
-const displayClass = "font-['Barlow_Condensed'] italic font-black uppercase leading-[1.05] tracking-[-0.01em] text-[#0A1A2E]";
+// Barlow Condensed display style shared by all landing headings. Upright (not
+// italic) for readability on multi-line headings; short labels still read bold.
+const displayClass = "font-['Barlow_Condensed'] font-black uppercase leading-[1.08] tracking-[-0.01em] text-[#0A1A2E]";
 const monoClass = "font-['JetBrains_Mono']";
 
 export function getDefaultFitAnswers(): FitAnswerMap {
@@ -61,7 +62,7 @@ function SectionHeader({
   return (
     <div className={cn("max-w-3xl", center && "mx-auto text-center")}>
       {eyebrow ? (
-        <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-[#D81F2A]">{eyebrow}</p>
+        <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-[#C41722]">{eyebrow}</p>
       ) : null}
       <h2 className={cn(displayClass, "text-3xl sm:text-4xl")}>{title}</h2>
       {description ? <p className="mt-4 text-base leading-7 text-[#38465F]">{description}</p> : null}
@@ -110,14 +111,14 @@ export function LandingHeader({ onFitCheck }: { onFitCheck: () => void }) {
           <Button
             asChild
             variant="outline"
-            className="hidden h-10 rounded-md border-[#C3C7CE] bg-white text-[13px] font-bold text-[#0A1A2E] hover:bg-[#F6F8FB] sm:inline-flex"
+            className="hidden h-11 rounded-md border-[#C3C7CE] bg-white text-[13px] font-bold text-[#0A1A2E] hover:bg-[#F6F8FB] sm:inline-flex"
           >
             <a href="/access/pilot-code">Pilot code</a>
           </Button>
           <Button
             type="button"
             onClick={onFitCheck}
-            className="h-10 rounded-md bg-[#D81F2A] px-4 text-[13px] font-bold tracking-[0.04em] text-white hover:bg-[#A6121B]"
+            className="h-11 rounded-md bg-[#D81F2A] px-4 text-[13px] font-bold tracking-[0.04em] text-white hover:bg-[#A6121B]"
           >
             Check your fit
           </Button>
@@ -218,10 +219,10 @@ export function HeroSection({ onFitCheck, onPilot }: { onFitCheck: () => void; o
     <section className="bg-[#F6F8FB]">
       <div className={cn(sectionShell, "grid items-center gap-10 py-12 lg:grid-cols-[0.95fr_1.05fr] lg:py-20")}>
         <div>
-          <p className="mb-3.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[#D81F2A]">
-            AI-assisted dispatch readiness
+          <p className="mb-3.5 text-[11px] font-bold uppercase tracking-[0.14em] text-[#C41722]">
+            For small &amp; mid-sized fleets
           </p>
-          <h1 className={cn(displayClass, "max-w-3xl text-4xl leading-[1] sm:text-5xl lg:text-6xl")}>
+          <h1 className={cn(displayClass, "max-w-3xl text-4xl leading-[1.02] sm:text-5xl lg:text-6xl")}>
             Know what's ready to roll — before dispatch.
           </h1>
           <p className="mt-5 max-w-xl text-base leading-7 text-[#38465F] sm:text-[17px]">
@@ -229,15 +230,16 @@ export function HeroSection({ onFitCheck, onPilot }: { onFitCheck: () => void; o
             readiness call: Ready, Monitor, Service Soon, or Stop.
           </p>
           <div className="mt-7 flex flex-col gap-3 sm:flex-row">
-            <CtaButton onClick={onPilot}>Book a fleet review</CtaButton>
-            <CtaButton onClick={onFitCheck} variant="secondary">
-              Check your fit
+            <CtaButton onClick={onFitCheck}>
+              Check your fit — 2 min
               <ArrowRight className="h-4 w-4" />
             </CtaButton>
+            <CtaButton onClick={onPilot} variant="secondary">Book a fleet review</CtaButton>
           </div>
-          <div className="mt-5 flex max-w-[400px] justify-between text-[11px] font-bold uppercase tracking-[0.08em] text-[#73777E]">
+          <div className="mt-5 flex max-w-[420px] justify-between text-[11px] font-bold uppercase tracking-[0.08em] text-[#73777E]">
             <span>No credit card</span>
-            <span>Live in a day</span>
+            <span>30-day pilot</span>
+            <span>No contract</span>
           </div>
           <div className="mt-5">
             <p className="mb-1.5 text-[11px] font-bold uppercase tracking-[0.1em] text-[#8A98AE]">
@@ -258,14 +260,10 @@ export function TractionStrip() {
   return (
     <section aria-label="Pilot traction" className="border-t border-[#C3C7CE] bg-white">
       <div className={cn(sectionShell, "py-6 sm:py-7")}>
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-5 sm:grid-cols-4">
-          {tractionStats.map((stat) => (
-            <div key={stat.label} className="flex flex-col-reverse text-center sm:text-left">
-              <dt className="mt-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-[#73777E]">{stat.label}</dt>
-              <dd className="font-['Barlow_Condensed'] text-3xl font-extrabold text-[#0A1A2E]">{stat.value}</dd>
-            </div>
-          ))}
-        </dl>
+        <div className="text-center sm:text-left">
+          <p className="font-['Barlow_Condensed'] text-3xl font-extrabold text-[#0A1A2E]">{tractionHeadline}</p>
+          <p className="mt-1 text-sm leading-6 text-[#38465F]">{tractionSubline}</p>
+        </div>
         <div className="mt-5 flex flex-wrap items-center justify-center gap-x-5 gap-y-3 border-t border-[#ECEFF4] pt-5 sm:justify-start">
           <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#8A98AE]">Supported by</span>
           {supporters.map((supporter) => (
@@ -481,7 +479,7 @@ export function ReadinessSnapshot({ answers, onBuildPilot }: { answers: FitAnswe
           </div>
           <div className="mt-5 rounded-md border border-[#D81F2A]/25 bg-[#D81F2A]/[0.04] p-4">
             <p className="text-sm font-bold text-[#0A1A2E]">
-              Recommended next step: a focused 30-day pilot with 5-10 vehicles.
+              Recommended next step: a focused 30-day pilot on a small group of your vehicles.
             </p>
             <Button
               type="button"
@@ -520,7 +518,7 @@ export function BuildPilot({
           <SectionHeader
             eyebrow="Pilot builder"
             title="Build your 30-day pilot."
-            description="Start focused: 5-10 vehicles, 30 days, and the workflow your team already uses."
+            description="Start focused: a small group of vehicles, 30 days, and the workflow your team already uses."
           />
           <div className={cn(cardClass, "p-5 sm:p-6")}>
             <p className={cn(displayClass, "text-xl")}>Recommended setup</p>
@@ -586,9 +584,9 @@ export function PilotOffer({
         <div className="grid gap-8 lg:grid-cols-[0.92fr_1.08fr]">
           <div>
             <SectionHeader
-              eyebrow="30-day pilot · 5-10 vehicles"
+              eyebrow="30-day fleet readiness pilot"
               title="Prove readiness value in 30 days."
-              description="Pilot TruckFixr with 5-10 vehicles before expanding across the operation."
+              description="Pilot TruckFixr with a small group of vehicles before expanding across the operation."
             />
             <div className="mt-6 rounded-[10px] border border-[#C3C7CE] bg-white p-5">
               <p className="text-sm leading-6 text-[#38465F]">
@@ -625,6 +623,7 @@ function PilotLeadForm({
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [hasStarted, setHasStarted] = useState(false);
+  const [showOptional, setShowOptional] = useState(false);
   const startTrackedRef = useRef(false);
   const [form, setForm] = useState({
     fullName: "",
@@ -633,10 +632,14 @@ function PilotLeadForm({
     phone: "",
     role: "",
     fleetSize: answerText(fitAnswers.fleetSize),
-    location: "",
     biggestMaintenanceChallenge: answerText(fitAnswers.challenge),
     website: "",
   });
+
+  // Reuse the fit-check option sets so the form's selects stay in sync with the
+  // quiz and never drift into a second hardcoded list.
+  const fleetSizeOptions = fitQuestions.find((question) => question.id === "fleetSize")?.options ?? [];
+  const challengeOptions = fitQuestions.find((question) => question.id === "challenge")?.options ?? [];
 
   useEffect(() => {
     setForm((current) => ({
@@ -689,12 +692,6 @@ function PilotLeadForm({
     event.preventDefault();
     markStarted();
 
-    if (form.biggestMaintenanceChallenge.trim().length < 10) {
-      setSuccessMessage(null);
-      setErrorMessage("Please describe your maintenance challenge in at least 10 characters.");
-      return;
-    }
-
     // Role rides along in the free-text field so the existing lead schema
     // stays unchanged (same pattern as the fit-check context below).
     const challengeWithContext = [
@@ -716,7 +713,7 @@ function PilotLeadForm({
         phone: form.phone || null,
         fleetSize: form.fleetSize,
         vehicleTypes: null,
-        location: form.location || null,
+        location: null,
         biggestMaintenanceChallenge: challengeWithContext,
         interestType: "pilot_inquiry",
         preferredDemoTime: null,
@@ -740,7 +737,6 @@ function PilotLeadForm({
         phone: "",
         role: "",
         fleetSize: answerText(fitAnswers.fleetSize),
-        location: "",
         biggestMaintenanceChallenge: answerText(fitAnswers.challenge),
         website: "",
       });
@@ -767,10 +763,10 @@ function PilotLeadForm({
         value={form.website}
       />
 
-      <h3 className={cn(displayClass, "text-2xl")}>Book a fleet review</h3>
+      <h3 className={cn(displayClass, "text-2xl")}>Request your pilot slot</h3>
       <p className="mt-2 text-sm leading-6 text-[#38465F]">
-        We'll contact you to understand your fleet workflow and determine whether TruckFixr is
-        suitable for a pilot or product demonstration.
+        Tell us about your fleet and we'll set up a short fleet review to confirm whether
+        TruckFixr is a fit for the 30-day pilot. We reply within 24 hours.
       </p>
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -790,47 +786,72 @@ function PilotLeadForm({
           <Input id="pilot-email" type="email" value={form.email} onChange={(event) => handleChange("email", event.target.value)} required autoComplete="email" inputMode="email" className="border-[#C3C7CE] bg-[#F6F8FB]" />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="pilot-phone" className="font-bold text-[#0A1A2E]">Phone (optional)</Label>
-          <Input id="pilot-phone" type="tel" value={form.phone} onChange={(event) => handleChange("phone", event.target.value)} autoComplete="tel" inputMode="tel" className="border-[#C3C7CE] bg-[#F6F8FB]" />
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="pilot-role" className="font-bold text-[#0A1A2E]">Your role</Label>
+          <Label htmlFor="pilot-fleet-size" className="font-bold text-[#0A1A2E]">Fleet size *</Label>
           <select
-            id="pilot-role"
-            value={form.role}
-            onChange={(event) => handleChange("role", event.target.value)}
+            id="pilot-fleet-size"
+            value={form.fleetSize}
+            onChange={(event) => handleChange("fleetSize", event.target.value)}
+            required
             className="h-11 w-full rounded-lg border border-[#C3C7CE] bg-[#F6F8FB] px-3 text-sm text-[#0A1A2E]"
           >
-            <option value="">Select your role</option>
-            {leadRoleOptions.map((option) => (
+            {!fleetSizeOptions.includes(form.fleetSize) && form.fleetSize ? (
+              <option value={form.fleetSize}>{form.fleetSize}</option>
+            ) : null}
+            {fleetSizeOptions.map((option) => (
               <option key={option} value={option}>{option}</option>
             ))}
           </select>
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="pilot-fleet-size" className="font-bold text-[#0A1A2E]">Fleet size *</Label>
-          <Input id="pilot-fleet-size" value={form.fleetSize} onChange={(event) => handleChange("fleetSize", event.target.value)} required className="border-[#C3C7CE] bg-[#F6F8FB]" />
-        </div>
       </div>
 
       <div className="mt-4 space-y-2">
-        <Label htmlFor="pilot-location" className="font-bold text-[#0A1A2E]">Location</Label>
-        <Input id="pilot-location" value={form.location} onChange={(event) => handleChange("location", event.target.value)} autoComplete="address-level2" className="border-[#C3C7CE] bg-[#F6F8FB]" />
-      </div>
-
-      <div className="mt-4 space-y-2">
-        <Label htmlFor="pilot-challenge" className="font-bold text-[#0A1A2E]">Current maintenance challenge *</Label>
-        <Textarea
+        <Label htmlFor="pilot-challenge" className="font-bold text-[#0A1A2E]">Primary maintenance challenge</Label>
+        <select
           id="pilot-challenge"
           value={form.biggestMaintenanceChallenge}
           onChange={(event) => handleChange("biggestMaintenanceChallenge", event.target.value)}
-          required
-          minLength={10}
-          className="min-h-24 border-[#C3C7CE] bg-[#F6F8FB]"
-        />
+          className="h-11 w-full rounded-lg border border-[#C3C7CE] bg-[#F6F8FB] px-3 text-sm text-[#0A1A2E]"
+        >
+          {!challengeOptions.includes(form.biggestMaintenanceChallenge) && form.biggestMaintenanceChallenge ? (
+            <option value={form.biggestMaintenanceChallenge}>{form.biggestMaintenanceChallenge}</option>
+          ) : null}
+          {challengeOptions.map((option) => (
+            <option key={option} value={option}>{option}</option>
+          ))}
+        </select>
+      </div>
+
+      <div className="mt-4">
+        {showOptional ? (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="pilot-role" className="font-bold text-[#0A1A2E]">Your role (optional)</Label>
+              <select
+                id="pilot-role"
+                value={form.role}
+                onChange={(event) => handleChange("role", event.target.value)}
+                className="h-11 w-full rounded-lg border border-[#C3C7CE] bg-[#F6F8FB] px-3 text-sm text-[#0A1A2E]"
+              >
+                <option value="">Select your role</option>
+                {leadRoleOptions.map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="pilot-phone" className="font-bold text-[#0A1A2E]">Phone (optional)</Label>
+              <Input id="pilot-phone" type="tel" value={form.phone} onChange={(event) => handleChange("phone", event.target.value)} autoComplete="tel" inputMode="tel" className="border-[#C3C7CE] bg-[#F6F8FB]" />
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setShowOptional(true)}
+            className="text-sm font-bold text-[#0A1A2E] underline underline-offset-4 hover:text-[#D81F2A]"
+          >
+            + Add role and phone (optional)
+          </button>
+        )}
       </div>
 
       <div className="mt-5 rounded-md border border-[#ECEFF4] bg-[#F6F8FB] p-4 text-sm leading-6 text-[#38465F]">
@@ -844,10 +865,10 @@ function PilotLeadForm({
 
       <Button
         type="submit"
-        disabled={leadMutation.isPending || !form.fullName || !form.companyName || !form.email || form.biggestMaintenanceChallenge.trim().length < 10}
+        disabled={leadMutation.isPending || !form.fullName || !form.companyName || !form.email || !form.fleetSize}
         className="mt-5 h-12 w-full rounded-md bg-[#D81F2A] font-bold text-white shadow-[0_8px_20px_rgba(216,31,42,0.2)] hover:bg-[#A6121B]"
       >
-        {leadMutation.isPending ? "Sending..." : "Book a fleet review"}
+        {leadMutation.isPending ? "Sending..." : "Request my pilot slot"}
         <ArrowRight className="h-4 w-4" />
       </Button>
     </form>
@@ -949,7 +970,7 @@ export function FinalCTA({ onFitCheck, onPilot }: { onFitCheck: () => void; onPi
   return (
     <section className="bg-[#0A1A2E] py-16 sm:py-20">
       <div className={cn(sectionShell, "text-center")}>
-        <p className={cn(monoClass, "text-[13px] text-[#8A98AE]")}>30-DAY PILOT · 5-10 VEHICLES</p>
+        <p className={cn(monoClass, "text-[13px] text-[#8A98AE]")}>30-DAY FLEET READINESS PILOT</p>
         <h2 className={cn(displayClass, "mx-auto mt-4 max-w-3xl text-3xl text-white sm:text-4xl")}>
           Prove readiness value before you commit to a full rollout.
         </h2>
@@ -959,19 +980,19 @@ export function FinalCTA({ onFitCheck, onPilot }: { onFitCheck: () => void; onPi
         <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <Button
             type="button"
-            onClick={onPilot}
+            onClick={onFitCheck}
             className="h-12 rounded-md bg-[#D81F2A] px-7 text-[15px] font-bold text-white hover:bg-[#A6121B]"
           >
-            Book a fleet review
+            Check your fit — 2 min
+            <ArrowRight className="h-4 w-4" />
           </Button>
           <Button
             type="button"
-            onClick={onFitCheck}
+            onClick={onPilot}
             variant="outline"
             className="h-12 rounded-md border-white/25 bg-transparent px-6 text-[15px] font-bold text-white hover:bg-white hover:text-[#0A1A2E]"
           >
-            Check your fleet readiness fit
-            <ArrowRight className="h-4 w-4" />
+            Book a fleet review
           </Button>
         </div>
         <p className="mt-4 text-[11px] font-bold uppercase tracking-[0.08em] text-[#5A6981]">No credit card required</p>

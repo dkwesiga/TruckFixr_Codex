@@ -25,24 +25,35 @@ function scrollToSection(id: string) {
 }
 
 // Mobile-only sticky CTA: appears after the hero scrolls away and hides while
-// the lead-form section is on screen so it never covers the form it links to.
-function StickyMobileCta({ onBookReview }: { onBookReview: () => void }) {
+// either interactive section (fit check or lead form) is on screen so it never
+// covers the controls it would otherwise sit on top of.
+function StickyMobileCta({ onFitCheck }: { onFitCheck: () => void }) {
   const [pastHero, setPastHero] = useState(false);
-  const [pilotVisible, setPilotVisible] = useState(false);
+  const [interactiveVisible, setInteractiveVisible] = useState(false);
 
   useEffect(() => {
     const onScroll = () => setPastHero(window.scrollY > 700);
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
 
-    const pilotSection = document.getElementById("pilot");
+    const sections = ["fit-check", "pilot"]
+      .map((id) => document.getElementById(id))
+      .filter((section): section is HTMLElement => section !== null);
+
     let observer: IntersectionObserver | undefined;
-    if (pilotSection && "IntersectionObserver" in window) {
+    if (sections.length > 0 && "IntersectionObserver" in window) {
+      const visible = new Set<Element>();
       observer = new IntersectionObserver(
-        (entries) => setPilotVisible(entries.some((entry) => entry.isIntersecting)),
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) visible.add(entry.target);
+            else visible.delete(entry.target);
+          }
+          setInteractiveVisible(visible.size > 0);
+        },
         { rootMargin: "0px 0px -20% 0px" },
       );
-      observer.observe(pilotSection);
+      sections.forEach((section) => observer?.observe(section));
     }
 
     return () => {
@@ -51,16 +62,16 @@ function StickyMobileCta({ onBookReview }: { onBookReview: () => void }) {
     };
   }, []);
 
-  if (!pastHero || pilotVisible) return null;
+  if (!pastHero || interactiveVisible) return null;
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[#C3C7CE] bg-white/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur sm:hidden">
       <Button
         type="button"
-        onClick={onBookReview}
+        onClick={onFitCheck}
         className="h-12 w-full rounded-md bg-[#D81F2A] text-[15px] font-bold text-white hover:bg-[#A6121B]"
       >
-        Book a fleet review
+        Check your fit — 2 min
       </Button>
     </div>
   );
@@ -110,7 +121,7 @@ export default function FleetReadinessLanding() {
       <LandingHeader onFitCheck={() => handleFitCheck("nav")} />
       <HeroSection onFitCheck={() => handleFitCheck("hero")} onPilot={() => handlePilot("hero")} />
       <TractionStrip />
-      <StickyMobileCta onBookReview={() => handlePilot("sticky_mobile_bar")} />
+      <StickyMobileCta onFitCheck={() => handleFitCheck("sticky_mobile_bar")} />
       <main>
         <ProblemSection />
         <HowItWorks />

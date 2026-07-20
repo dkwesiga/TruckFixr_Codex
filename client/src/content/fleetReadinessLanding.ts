@@ -131,7 +131,7 @@ export const fitQuestions: FitQuestion[] = [
   },
   {
     id: "pilotInterest",
-    question: "Would you test TruckFixr on 5-10 vehicles for 30 days?",
+    question: "Would you test TruckFixr on a small group of vehicles for 30 days?",
     options: ["Yes", "Maybe", "Not yet"],
     defaultAnswer: "Maybe",
   },
@@ -146,7 +146,7 @@ export const snapshotInsights = [
 ];
 
 export const recommendedPilotSetup = [
-  "5-10 vehicles",
+  "A focused group of vehicles",
   "30 days",
   "Driver issue reporting",
   "Fleet Readiness Board",
@@ -236,13 +236,11 @@ export const supporters = [
   },
 ];
 
-// Verifiable pilot traction only — no invented customers, savings, or stats.
-export const tractionStats = [
-  { value: "5", label: "Pilot fleets" },
-  { value: "13", label: "Vehicles" },
-  { value: "120+", label: "Diagnostic sessions" },
-  { value: "35", label: "Documented repair outcomes" },
-];
+// Verifiable pilot traction, framed qualitatively. We lead with diagnostic-session
+// volume — the one figure that signals real usage — and keep the small fleet and
+// vehicle counts out of isolated big-number tiles where they read as "too early."
+export const tractionHeadline = "120+ diagnostic sessions";
+export const tractionSubline = "Logged with active pilot fleets on real commercial vehicles.";
 
 export const leadRoleOptions = [
   "Fleet owner",
