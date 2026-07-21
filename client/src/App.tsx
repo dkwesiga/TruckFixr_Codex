@@ -87,6 +87,9 @@ const MaintenancePlanning = lazyWithChunkRecovery(
   () => import("./pages/MaintenancePlanning")
 );
 const FleetHealth = lazyWithChunkRecovery(() => import("./pages/FleetHealth"));
+const FleetIntegrations = lazyWithChunkRecovery(
+  () => import("./pages/FleetIntegrations")
+);
 const Offline = lazyWithChunkRecovery(() => import("./pages/Offline"));
 const Privacy = lazyWithChunkRecovery(() => import("./pages/Privacy"));
 const Terms = lazyWithChunkRecovery(() => import("./pages/Terms"));
@@ -222,6 +225,9 @@ function Router() {
         ) : null}
         {FLEET_HEALTH_ENABLED ? (
           <Route path={"/app/fleet-health"} component={FleetHealth} />
+        ) : null}
+        {FLEET_HEALTH_ENABLED ? (
+          <Route path={"/app/integrations"} component={FleetIntegrations} />
         ) : null}
         <Route path={"/admin"} component={AdminMetricsDashboard} />
         <Route path={"/admin/metrics"} component={AdminMetricsDashboard} />

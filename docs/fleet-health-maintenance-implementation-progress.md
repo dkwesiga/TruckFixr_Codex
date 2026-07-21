@@ -160,9 +160,20 @@ opened — a DB/startup issue unrelated to these additive changes). The client
 build is the compile-time proof; a manual browser pass against a running server
 with the pilot flags enabled remains in "manual verification".
 
-Remaining in Phase 2 (UI):
-- Vehicle Details integration; Settings → Integrations (manual events, CSV
-  import + preview, review queue).
+- **Settings → Integrations** (`client/src/pages/FleetIntegrations.tsx`), route
+  `/app/integrations`. Three tabs: **Manual entry** (vehicle + type + time +
+  optional odometer/DTC → `createManualEvent`), **CSV import** (client-side parse
+  via shared `parseCsv`, required-column check, 10-row preview + parsed count,
+  explicit confirm → `importEventsCsv`, per-row error summary; enforces 5 MB /
+  1000-row limits), and **Review queue** (lists `review_required` events,
+  accept/reject via `reviewEvent`). Each tab respects its own capability flag
+  (events vs integration ingestion). No fake Geotab/Samsara connection controls;
+  an explicit note states there is no direct telematics connection this release.
+  Build emits `FleetIntegrations-*.js` chunk; tsc clean.
+
+Remaining in Phase 2 (UI, optional polish):
+- Vehicle Details (`/truck/:id`) integration — surface score explanation,
+  events, PM, and related cases inline (cases arrive in Phase 3).
 
 ## Manual verification still required
 - Run `pnpm db:push` (or apply `0014` SQL) against a real database and confirm
