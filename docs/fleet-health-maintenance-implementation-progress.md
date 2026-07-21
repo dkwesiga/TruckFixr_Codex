@@ -123,12 +123,26 @@ Delivered so far:
   (maintenanceCaseId, repairCycleId, systemCategory, …). Backward compatible.
 - Migration `0015_fleet_maintenance_events_pm_score.sql` + journal entry.
 
-Remaining in Phase 2 (not yet built):
-- Score persistence service (snapshot-on-material-change) + acknowledge /
-  operational override write paths; PM DB service (CRUD + completion).
-- tRPC router exposing events/PM/score; internal-admin test ingestion procedure.
+- **Score persistence** (`server/services/attentionScorePersistence.ts`):
+  gathers real inputs from `defects` + `vehicleEvents` (repeat DTCs) + PM status,
+  computes score, persists a snapshot ONLY on material change / classification
+  change / acknowledge / override (never on every read). Acknowledge + display
+  override write paths (override never alters components/diagnosis/case creation).
+  Case-based rules default empty until Phase 3 (additive).
+- **PM DB service** (`server/services/pmService.ts`): template create/list,
+  assign (tenant-checked), record completion, per-vehicle status.
+- **tRPC router** (`server/routers/fleetMaintenance.ts`), registered in
+  `server/routers.ts` as `fleetMaintenance`. All procedures resolve the fleet
+  server-side, gate on the umbrella + capability flag (fail closed), and enforce
+  owner/manager for writes. `setFleetFeature` + `internalTestIngest` are
+  `staffProcedure` and reject `read_only_viewer` writes. Procedures: capabilities,
+  setFleetFeature, listEvents (no raw payloads, paginated), createManualEvent,
+  importEventsCsv, reviewEvent, internalTestIngest, PM (list/create/assign/
+  complete/status), score (compute+persist/acknowledge/override).
+
+Remaining in Phase 2 (UI — needs dev server for browser verification):
 - Fleet Health dashboard page; Vehicle Details integration; Settings →
-  Integrations (manual events, CSV import, review queue).
+  Integrations (manual events, CSV import + preview, review queue).
 
 ## Manual verification still required
 - Run `pnpm db:push` (or apply `0014` SQL) against a real database and confirm
