@@ -1681,3 +1681,64 @@ export type RepairDocument = typeof repairDocuments.$inferSelect;
 export type InsertRepairDocument = typeof repairDocuments.$inferInsert;
 export type RepairAuthorization = typeof repairAuthorizations.$inferSelect;
 export type InsertRepairAuthorization = typeof repairAuthorizations.$inferInsert;
+
+// =====================================================================
+// Phase 5: Pilot settings + external-AI consent.
+// Internal admins configure settings; owners/managers get visibility and
+// consent actions only. Consent defaults disabled.
+// =====================================================================
+export const pilotSettings = pgTable(
+  "pilotSettings",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    status: varchar("status", { length: 24 }).default("not_started").notNull(),
+    startDate: dateTimestamp(),
+    endDate: dateTimestamp(),
+    primaryManagerUserId: integer("primaryManagerUserId"),
+    backupManagerUserId: integer("backupManagerUserId"),
+    enrolledVehicleIdsJson: jsonb("enrolledVehicleIdsJson"),
+    notificationRecipientsJson: jsonb("notificationRecipientsJson"),
+    baselineJson: jsonb("baselineJson"),
+    authorizationPolicyJson: jsonb("authorizationPolicyJson"),
+    createdByUserId: integer("createdByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("pilotSettings_fleet_unique").on(table.fleetId)]
+);
+
+export const externalAiConsent = pgTable(
+  "externalAiConsent",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    status: varchar("status", { length: 16 }).default("none").notNull(), // none | granted | withdrawn
+    purpose: varchar("purpose", { length: 255 }),
+    consentAt: dateTimestamp(),
+    expiresAt: dateTimestamp(),
+    withdrawnAt: dateTimestamp(),
+    consentingUserId: integer("consentingUserId"),
+    internalRecorderUserId: integer("internalRecorderUserId"),
+    source: varchar("source", { length: 32 }),
+    evidenceJson: jsonb("evidenceJson"),
+    provider: varchar("provider", { length: 64 }),
+    model: varchar("model", { length: 150 }),
+    regionDisclosure: varchar("regionDisclosure", { length: 255 }),
+    disclosureVersion: varchar("disclosureVersion", { length: 32 }),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("externalAiConsent_fleet_unique").on(table.fleetId),
+  ]
+);
+
+export type PilotSettings = typeof pilotSettings.$inferSelect;
+export type InsertPilotSettings = typeof pilotSettings.$inferInsert;
+export type ExternalAiConsent = typeof externalAiConsent.$inferSelect;
+export type InsertExternalAiConsent = typeof externalAiConsent.$inferInsert;

@@ -85,6 +85,12 @@
       "version": "17",
       "tag": "0017_repair_documents_authorization",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "18",
+      "tag": "0018_pilot_settings_consent",
+      "breakpoints": true
     }
   ]
 }

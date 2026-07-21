@@ -50,7 +50,7 @@ test results, deviations, and remaining work. Final developer docs live in
 | 2 | Vehicle data & Fleet Health | **In progress** — Attention Score core done |
 | 3 | Maintenance decision workflow | **Complete** (backend + UI) |
 | 4 | Repair-document review | **Complete** (auto-extraction blocked) |
-| 5 | Pilot controls | Not started |
+| 5 | Pilot controls | **Backend complete** — UI pending |
 
 ## Phase 1 — Foundations & diagnostic safeguards ✅
 
@@ -269,6 +269,41 @@ URL) + manual value entry/correction, deterministic comparison rendered as
 "Items to verify" (severity-coloured), and the authorize control (amount +
 review flags → decision + reasons). Build rebuilds `MaintenanceCaseDetail-*.js`;
 tsc clean.
+
+## Phase 5 — Essential pilot controls (backend complete)
+
+Schema + migration `0018`: `pilotSettings` (status, dates, primary/backup
+manager, enrolled vehicles, notification recipients, baseline, authorization
+policy), `externalAiConsent` (status, purpose, consent/withdrawal times,
+consenting user vs internal recorder, provider/model/region disclosure,
+evidence).
+
+Pure, tested modules (shared):
+- `pilotReadiness.ts` — Ready / Needs attention / Optional + blocking/warnings +
+  TARGETED degradation flags (block approvals / AI creation / uploads / new
+  cases / metric counting / manual document mode); never disables the whole
+  pilot. 6 tests.
+- `pilotMetrics.ts` — case volume, median time-to-decision, avg approval time,
+  downtime aggregates, severity/action breakdowns, critical-override rate,
+  first-time-fix and repeat-repair (exact §43 formulas with observation
+  windows), document variance, outcome completion, agreement. 7 tests.
+- `csvExport.ts` — formula-injection-safe CSV serialization + export preamble
+  (date/timezone/period/units/currencies). 5 tests.
+
+Services + `pilot` router (registered):
+- `pilotSettings.ts`: settings upsert (internal admin), consent grant/withdraw
+  (owner) vs record-with-evidence (internal admin, never impersonating), and
+  `computePilotReadiness` gathering real inputs (settings, features, consent,
+  storage/diagnosis availability).
+- `pilotMetricsService.ts`: gathers cases/decisions/cycles/outcomes and computes
+  metrics; tenant-scoped case CSV export (excludes prompts/URLs/keys/raw
+  payloads; logged).
+- Router: getSettings (owner/manager view), upsertSettings (staff),
+  setConsent (owner only), recordConsent (staff), readiness, metrics
+  (gated `pilot_metrics`), exportCases (owner/manager). tsc clean; 120 tests pass.
+
+Remaining in Phase 5 (UI): compact Pilot Metrics tab + readiness banner + consent
+action + export button in Fleet Health; internal-admin Pilot Operations view.
 
 ## Manual verification still required
 - Run `pnpm db:push` (or apply `0014` SQL) against a real database and confirm
