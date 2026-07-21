@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import AppLogo from "@/components/AppLogo";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
+import RepairDocumentsSection from "@/components/RepairDocumentsSection";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -304,6 +305,9 @@ function MaintenanceCaseDetailContent() {
               )}
             </CardContent>
           </Card>
+
+          {/* Repair documents (Phase 4) */}
+          <RepairDocumentsSection caseId={caseId} />
 
           {/* Timeline */}
           <Card>

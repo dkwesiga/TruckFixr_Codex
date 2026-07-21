@@ -49,7 +49,7 @@ test results, deviations, and remaining work. Final developer docs live in
 | 1 | Foundations & diagnostic safeguards | **Complete** (committed) |
 | 2 | Vehicle data & Fleet Health | **In progress** — Attention Score core done |
 | 3 | Maintenance decision workflow | **Complete** (backend + UI) |
-| 4 | Repair-document review | **Backend complete** (auto-extraction blocked) |
+| 4 | Repair-document review | **Complete** (auto-extraction blocked) |
 | 5 | Pilot controls | Not started |
 
 ## Phase 1 — Foundations & diagnostic safeguards ✅
@@ -262,8 +262,13 @@ deterministic comparison, and repair authorization. Upload/view allowed for
 owners/managers AND maintenance-permitted users; financial value entry,
 comparison, and approvals stay owner/manager (§10). tsc clean; 102 tests pass.
 
-Remaining in Phase 4 (UI): document upload + list, manual value entry/correction,
-comparison "Items to verify", and the authorize control on the case page.
+Phase 4 UI (complete): `client/src/components/RepairDocumentsSection.tsx`,
+embedded in the case detail page (gated by `repair_document_review`): upload
+(PDF/image → base64 → validated server-side), document list with view (signed
+URL) + manual value entry/correction, deterministic comparison rendered as
+"Items to verify" (severity-coloured), and the authorize control (amount +
+review flags → decision + reasons). Build rebuilds `MaintenanceCaseDetail-*.js`;
+tsc clean.
 
 ## Manual verification still required
 - Run `pnpm db:push` (or apply `0014` SQL) against a real database and confirm
