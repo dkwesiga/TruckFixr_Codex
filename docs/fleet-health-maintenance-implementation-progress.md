@@ -22,10 +22,14 @@ test results, deviations, and remaining work. Final developer docs live in
   `vehicles.id` varchar(64); `activityLogs` (fleetId, userId, action, entityType,
   entityId, details jsonb). Existing `features` is a GLOBAL catalog — NOT a
   per-fleet flag table, so a new `fleetFeatures` table is required (added).
-- **Migrations:** hand-written numbered SQL in `drizzle/*.sql` (0005–0013),
-  applied via `pnpm db:push`. The drizzle `meta/` snapshots are stale (only
-  `0004_snapshot.json`), so `drizzle-kit generate` is NOT used — it would emit a
-  destructive full diff. Convention: hand-write idempotent additive SQL.
+- **Migrations:** hand-written numbered SQL in `drizzle/*.sql`, applied in
+  filename order (the drizzle journal + `meta/` snapshots are abandoned at
+  `0012`; the real files run through `0032`, none of which are in the journal, so
+  `drizzle-kit generate/migrate` is NOT the mechanism). Convention: hand-write
+  idempotent additive SQL with the next number. **This feature adds `0033`–`0037`
+  and does NOT touch the journal** (matching how `0013`–`0032` are handled).
+  NOTE: an early draft mis-numbered these `0014`–`0018` (collided with existing
+  files) and edited the journal — both corrected before completion.
 - **Reuse targets:** `confirmedOutcomes.ts` (repair outcomes), `ocr.ts`,
   `downtimeCalculator.ts`, `diagnosisWorkflow.ts` / `tadisCore.ts` /
   `diagnosticReviewQueue.ts` (diagnosis — PROTECTED, do not modify),
@@ -47,7 +51,7 @@ test results, deviations, and remaining work. Final developer docs live in
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 1 | Foundations & diagnostic safeguards | **Complete** (committed) |
-| 2 | Vehicle data & Fleet Health | **In progress** — Attention Score core done |
+| 2 | Vehicle data & Fleet Health | **Complete** (backend + dashboard + integrations) |
 | 3 | Maintenance decision workflow | **Complete** (backend + UI) |
 | 4 | Repair-document review | **Complete** (auto-extraction blocked) |
 | 5 | Pilot controls | **Complete** (backend + UI) |
@@ -55,7 +59,7 @@ test results, deviations, and remaining work. Final developer docs live in
 ## Phase 1 — Foundations & diagnostic safeguards ✅
 
 Delivered:
-- `fleetFeatures` table + `maintenancePermissions` table (schema + migration 0014).
+- `fleetFeatures` table + `maintenancePermissions` table (schema + migration 0033).
 - Feature-flag service (`server/services/fleetFeatures.ts`) — fail-closed;
   umbrella gate; `isFleetFeatureEnabled`, `getFleetFeatureConfig`,
   `isFleetCapabilityEnabled`, `getFleetMaintenanceCapabilities`,
@@ -76,8 +80,8 @@ Delivered:
 
 ### Database changes (Phase 1)
 - New tables: `fleetFeatures`, `maintenancePermissions`.
-- Migration: `drizzle/0014_fleet_maintenance_foundations.sql` (idempotent).
-- Journal entry added (also backfilled the missing 0013 entry).
+- Migration: `drizzle/0033_fleet_maintenance_foundations.sql` (idempotent). The
+  drizzle journal is intentionally NOT modified (abandoned at 0012 repo-wide).
 
 ### Commands run (Phase 1)
 - `npx tsc --noEmit` → passed (no errors).
@@ -121,7 +125,7 @@ Delivered so far:
   `attentionScoreOverrides`.
 - **Repair outcome v2**: additive optional columns on `repairOutcomes`
   (maintenanceCaseId, repairCycleId, systemCategory, …). Backward compatible.
-- Migration `0015_fleet_maintenance_events_pm_score.sql` + journal entry.
+- Migration `0034_fleet_maintenance_events_pm_score.sql`.
 
 - **Score persistence** (`server/services/attentionScorePersistence.ts`):
   gathers real inputs from `defects` + `vehicleEvents` (repeat DTCs) + PM status,
@@ -177,7 +181,7 @@ Remaining in Phase 2 (UI, optional polish):
 
 ## Phase 3 — Maintenance decision workflow (backend complete)
 
-Schema + migration `0016_maintenance_cases_decisions_cycles.sql`:
+Schema + migration `0035_maintenance_cases_decisions_cycles.sql`:
 - `maintenanceCases` (reference, status, origin, source links, assignment,
   currentDecisionId, expectedCompletionAt), `maintenanceDecisions` (append-only
   versions, one current), `repairCycles` (multiple per case, one active).
@@ -235,7 +239,7 @@ default) so a real extractor can be dropped in later; documents land in
 `manual_review_only` and the deterministic comparison runs on manually-entered /
 corrected values. Everything else in Phase 4 is fully implemented.
 
-Schema + migration `0017`: `repairDocuments` (checksum, processing state,
+Schema + migration `0036`: `repairDocuments` (checksum, processing state,
 normalized fields, corrections, supersession, duplicate links, region/consent),
 `repairAuthorizations`.
 
@@ -272,7 +276,7 @@ tsc clean.
 
 ## Phase 5 — Essential pilot controls (backend complete)
 
-Schema + migration `0018`: `pilotSettings` (status, dates, primary/backup
+Schema + migration `0037`: `pilotSettings` (status, dates, primary/backup
 manager, enrolled vehicles, notification recipients, baseline, authorization
 policy), `externalAiConsent` (status, purpose, consent/withdrawal times,
 consenting user vs internal recorder, provider/model/region disclosure,
@@ -314,7 +318,7 @@ page (settings/consent are fully manageable via the `pilot` staff router;
 `upsertSettings`/`recordConsent` are callable by internal admins today).
 
 ## Manual verification still required
-- Run `pnpm db:push` (or apply `0014` SQL) against a real database and confirm
+- Run `pnpm db:push` (or apply `0033` SQL) against a real database and confirm
   the two tables + indexes exist.
 
 ## Next action
