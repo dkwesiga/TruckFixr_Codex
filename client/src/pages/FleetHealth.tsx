@@ -218,8 +218,20 @@ function FleetHealthContent() {
   const dashboardEnabled =
     capabilities?.pilotEligible === true && capabilities?.fleetHealthDashboard === true;
 
+  const casesEnabled =
+    capabilities?.pilotEligible === true && capabilities?.maintenanceCases === true;
+
   const summaryQuery = trpc.fleetMaintenance.fleetHealthSummary.useQuery(undefined, {
     enabled: dashboardEnabled,
+    retry: false,
+  });
+
+  const casesQuery = trpc.maintenanceCases.list.useQuery(
+    { limit: 50 },
+    { enabled: dashboardEnabled && casesEnabled, retry: false }
+  );
+  const boardQuery = trpc.maintenanceCases.downtimeBoard.useQuery(undefined, {
+    enabled: dashboardEnabled && casesEnabled,
     retry: false,
   });
 
@@ -323,6 +335,8 @@ function FleetHealthContent() {
             <Tabs defaultValue="priorities" className="mt-6">
               <TabsList>
                 <TabsTrigger value="priorities">Vehicle priorities</TabsTrigger>
+                {casesEnabled ? <TabsTrigger value="cases">Active cases</TabsTrigger> : null}
+                {casesEnabled ? <TabsTrigger value="downtime">Downtime board</TabsTrigger> : null}
                 <TabsTrigger value="review">Events to review</TabsTrigger>
               </TabsList>
 
@@ -361,6 +375,93 @@ function FleetHealthContent() {
                   </div>
                 )}
               </TabsContent>
+
+              {casesEnabled ? (
+                <TabsContent value="cases" className="mt-4">
+                  {casesQuery.isLoading ? (
+                    <Skeleton className="h-40 w-full" />
+                  ) : (casesQuery.data?.cases.length ?? 0) === 0 ? (
+                    <Card>
+                      <CardContent className="py-10 text-center text-sm text-slate-500">
+                        No maintenance cases yet.
+                      </CardContent>
+                    </Card>
+                  ) : (
+                    <div className="space-y-2">
+                      {casesQuery.data!.cases.map((mc) => (
+                        <a
+                          key={mc.id}
+                          href={`/app/case/${mc.id}`}
+                          className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-4 hover:bg-slate-50"
+                        >
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-semibold text-slate-900">{mc.reference}</span>
+                              <Badge variant="outline" className="capitalize">
+                                {String(mc.status).replace(/_/g, " ")}
+                              </Badge>
+                              {mc.severity ? (
+                                <Badge variant="outline" className={CLASS_STYLES[mc.severity as Classification]?.badge ?? ""}>
+                                  {mc.severity}
+                                </Badge>
+                              ) : null}
+                            </div>
+                            <p className="mt-1 truncate text-sm text-slate-600">Vehicle {mc.vehicleId}</p>
+                          </div>
+                          <ChevronDown className="h-4 w-4 -rotate-90 text-slate-400" />
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </TabsContent>
+              ) : null}
+
+              {casesEnabled ? (
+                <TabsContent value="downtime" className="mt-4">
+                  {boardQuery.isLoading ? (
+                    <Skeleton className="h-40 w-full" />
+                  ) : (boardQuery.data?.length ?? 0) === 0 ? (
+                    <Card>
+                      <CardContent className="py-10 text-center text-sm text-slate-500">
+                        No vehicles are currently down.
+                      </CardContent>
+                    </Card>
+                  ) : (
+                    <div className="space-y-2">
+                      {boardQuery.data!.map((row) => (
+                        <a
+                          key={row.caseId}
+                          href={`/app/case/${row.caseId}`}
+                          className={`block rounded-xl border border-l-4 bg-white p-4 hover:bg-slate-50 ${
+                            row.overdue ? "border-l-red-500" : "border-l-slate-300"
+                          }`}
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-semibold text-slate-900">{row.reference}</span>
+                            <Badge variant="outline" className="capitalize">
+                              {String(row.status).replace(/_/g, " ")}
+                            </Badge>
+                            {row.overdue ? (
+                              <Badge variant="outline" className="border-red-200 bg-red-100 text-red-700">
+                                Overdue
+                              </Badge>
+                            ) : null}
+                            {row.activeCycleNumber != null ? (
+                              <span className="text-xs text-slate-400">cycle {row.activeCycleNumber}</span>
+                            ) : null}
+                          </div>
+                          <p className="mt-1 text-sm text-slate-600">
+                            Vehicle {row.vehicleId}
+                            {row.expectedCompletionAt
+                              ? ` · expected ${new Date(row.expectedCompletionAt).toLocaleDateString()}`
+                              : ""}
+                          </p>
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </TabsContent>
+              ) : null}
 
               <TabsContent value="review" className="mt-4">
                 <Card>

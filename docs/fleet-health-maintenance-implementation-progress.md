@@ -48,7 +48,7 @@ test results, deviations, and remaining work. Final developer docs live in
 |-------|-------|--------|
 | 1 | Foundations & diagnostic safeguards | **Complete** (committed) |
 | 2 | Vehicle data & Fleet Health | **In progress** — Attention Score core done |
-| 3 | Maintenance decision workflow | **Backend complete** — UI pending |
+| 3 | Maintenance decision workflow | **Complete** (backend + UI) |
 | 4 | Repair-document review | Not started |
 | 5 | Pilot controls | Not started |
 
@@ -211,8 +211,18 @@ criticalOverride; startCycle/markStage/returnToService/completeCycle;
 downtimeBoard. All gated by `maintenance_cases` + owner/manager (adminProcedure)
 + tenant scope. Critical override is owner/manager only. tsc clean; 84 tests pass.
 
-Remaining in Phase 3 (UI): case detail view, decision/approval/override controls,
-Downtime Board page, and Case Activity timeline in the client (Fleet Health tabs).
+Phase 3 UI (complete):
+- `client/src/pages/MaintenanceCaseDetail.tsx`, route `/app/case/:id`: case header
+  (reference, status, severity), current decision with approve control (attention)
+  and a critical-override form (mandatory reason + action, with the critical
+  safety disclaimer), record-a-decision form, repair-cycle controls (start, stage
+  marks, return-to-service with downtime, complete + closure result), assignment,
+  reopen (when closed/completed), consolidated Case Activity timeline, and the
+  full safety disclaimer. Owner/manager only.
+- Fleet Health gains **Active cases** and **Downtime board** tabs (gated by the
+  `maintenance_cases` capability): case list links to detail; the board shows
+  read-time overdue with a red rail. Build emits `MaintenanceCaseDetail-*.js`;
+  `pnpm build:client` PASSED; tsc clean.
 
 ## Manual verification still required
 - Run `pnpm db:push` (or apply `0014` SQL) against a real database and confirm
