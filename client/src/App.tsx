@@ -86,6 +86,13 @@ const ResourceAnnualInspectionChecklist = lazyWithChunkRecovery(
 const MaintenancePlanning = lazyWithChunkRecovery(
   () => import("./pages/MaintenancePlanning")
 );
+const FleetHealth = lazyWithChunkRecovery(() => import("./pages/FleetHealth"));
+const FleetIntegrations = lazyWithChunkRecovery(
+  () => import("./pages/FleetIntegrations")
+);
+const MaintenanceCaseDetail = lazyWithChunkRecovery(
+  () => import("./pages/MaintenanceCaseDetail")
+);
 const Offline = lazyWithChunkRecovery(() => import("./pages/Offline"));
 const Privacy = lazyWithChunkRecovery(() => import("./pages/Privacy"));
 const Terms = lazyWithChunkRecovery(() => import("./pages/Terms"));
@@ -96,6 +103,14 @@ const Terms = lazyWithChunkRecovery(() => import("./pages/Terms"));
 // Vite + tRPC (not Next.js), so the flag uses the VITE_ prefix.
 const MAINTENANCE_PLANNING_ENABLED =
   import.meta.env.VITE_ENABLE_MAINTENANCE_PLANNING === "true";
+
+// Fleet Health & Maintenance pilot dashboard. Route registration is gated by a
+// Vite build flag (defence in depth); the page is additionally wrapped in
+// RoleBasedRoute (owner/manager) and every data query is gated server-side by
+// the per-fleet `fleet_maintenance_pilot` + `fleet_health_dashboard` flags,
+// which fail closed. Default on for the pilot build so enabled fleets reach it.
+const FLEET_HEALTH_ENABLED =
+  import.meta.env.VITE_ENABLE_FLEET_HEALTH !== "false";
 
 function RouteFallback() {
   return (
@@ -210,6 +225,15 @@ function Router() {
             path={"/app/maintenance-planning"}
             component={MaintenancePlanning}
           />
+        ) : null}
+        {FLEET_HEALTH_ENABLED ? (
+          <Route path={"/app/fleet-health"} component={FleetHealth} />
+        ) : null}
+        {FLEET_HEALTH_ENABLED ? (
+          <Route path={"/app/integrations"} component={FleetIntegrations} />
+        ) : null}
+        {FLEET_HEALTH_ENABLED ? (
+          <Route path={"/app/case/:id"} component={MaintenanceCaseDetail} />
         ) : null}
         <Route path={"/admin"} component={AdminMetricsDashboard} />
         <Route path={"/admin/metrics"} component={AdminMetricsDashboard} />

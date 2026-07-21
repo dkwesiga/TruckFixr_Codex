@@ -21,6 +21,8 @@
     "seed:partner": "tsx scripts/seed-partner-mr-diesel.ts",
     "seed:demo": "tsx scripts/seed-demo-data.ts",
     "seed:demo:rollback": "tsx scripts/seed-demo-data-rollback.ts",
+    "seed:maintenance-demo": "tsx scripts/seed-maintenance-demo.ts",
+    "seed:maintenance-demo:rollback": "tsx scripts/seed-maintenance-demo.ts --rollback",
     "validate:demo-seed": "node scripts/run-validate-demo-seed.mjs",
     "demo:seed": "tsx scripts/seed-demo-data.ts",
     "admin:set-internal-role": "tsx scripts/admin/set-internal-admin-role.ts",

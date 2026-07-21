@@ -1,5 +1,6 @@
 import {
   boolean,
+  index,
   integer,
   jsonb,
   numeric,
@@ -8,6 +9,7 @@ import {
   serial,
   text,
   timestamp,
+  uniqueIndex,
   varchar,
 } from "drizzle-orm/pg-core";
 
@@ -703,6 +705,24 @@ export const repairOutcomes = pgTable("repairOutcomes", {
   promotedReferenceId: integer("promotedReferenceId"),
   promotedAt: dateTimestamp(),
   promotedByUserId: integer("promotedByUserId"),
+  // ---- Repair outcome v2 (all optional; existing payloads stay valid) ----
+  maintenanceCaseId: integer("maintenanceCaseId"),
+  repairCycleId: integer("repairCycleId"),
+  systemCategory: varchar("systemCategory", { length: 64 }),
+  componentCategory: varchar("componentCategory", { length: 64 }),
+  confirmedCauseCode: varchar("confirmedCauseCode", { length: 64 }),
+  confirmedFaultCode: varchar("confirmedFaultCode", { length: 64 }),
+  repairType: varchar("repairType", { length: 48 }),
+  couldContinueAtAssessment: varchar("couldContinueAtAssessment", { length: 32 }),
+  diagnosisCorrectness: varchar("diagnosisCorrectness", { length: 32 }),
+  agreementClassification: varchar("agreementClassification", { length: 48 }),
+  repairResult: varchar("repairResult", { length: 32 }),
+  repeatFailure: boolean("repeatFailure"),
+  actualDowntimeHours: numeric("actualDowntimeHours", { precision: 10, scale: 2 }),
+  actualRepairCostCents: integer("actualRepairCostCents"),
+  vehicleReturnedToServiceAt: dateTimestamp(),
+  technicianNotes: text("technicianNotes"),
+  submittedByUserId: integer("submittedByUserId"),
   createdAt: dateTimestamp().defaultNow().notNull(),
   updatedAt: dateTimestamp().defaultNow().notNull(),
 });
@@ -1196,3 +1216,529 @@ export const passwordResetTokens = pgTable("passwordResetTokens", {
   usedAt: dateTimestamp(),
   createdAt: dateTimestamp().defaultNow().notNull(),
 });
+
+// =====================================================================
+// Fleet Health & Maintenance Decision Workflow (feature-flagged pilot)
+// All tables below are additive. Every business record carries fleetId
+// so tenant isolation is enforced server-side. No defaults enable any
+// pilot capability; feature checks fail closed.
+// =====================================================================
+
+// General-purpose per-fleet feature flags. Distinct from the global
+// `features` catalog and `planFeatures`: this table gates pilot
+// capabilities per tenant. Default disabled; absence means disabled.
+export const fleetFeatures = pgTable(
+  "fleetFeatures",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    featureKey: varchar("featureKey", { length: 100 }).notNull(),
+    enabled: boolean("enabled").default(false).notNull(),
+    valueJson: jsonb("valueJson"),
+    createdByUserId: integer("createdByUserId"),
+    updatedByUserId: integer("updatedByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("fleetFeatures_fleet_key_unique").on(
+      table.fleetId,
+      table.featureKey
+    ),
+    index("fleetFeatures_fleet_idx").on(table.fleetId),
+    index("fleetFeatures_key_idx").on(table.featureKey),
+  ]
+);
+
+// Narrow, fleet-scoped operational grants for selected members. This is
+// NOT a membership role (owner/manager/driver are preserved). It grants
+// specific maintenance capabilities to an existing member without
+// elevating them to manager/owner or internal-admin.
+export const maintenancePermissions = pgTable(
+  "maintenancePermissions",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    userId: integer("userId").notNull(),
+    // JSON array of capability keys (see shared/maintenance/permissions.ts).
+    capabilitiesJson: jsonb("capabilitiesJson").notNull(),
+    active: boolean("active").default(true).notNull(),
+    grantedByUserId: integer("grantedByUserId"),
+    revokedByUserId: integer("revokedByUserId"),
+    revokedAt: dateTimestamp(),
+    notes: text("notes"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("maintenancePermissions_fleet_user_unique").on(
+      table.fleetId,
+      table.userId
+    ),
+    index("maintenancePermissions_fleet_idx").on(table.fleetId),
+    index("maintenancePermissions_user_idx").on(table.userId),
+  ]
+);
+
+export type FleetFeature = typeof fleetFeatures.$inferSelect;
+export type InsertFleetFeature = typeof fleetFeatures.$inferInsert;
+export type MaintenancePermission = typeof maintenancePermissions.$inferSelect;
+export type InsertMaintenancePermission =
+  typeof maintenancePermissions.$inferInsert;
+
+// Normalized, provider-neutral vehicle events. Structured accepted events may
+// affect operational scoring; free-text/unknown default to review_required and
+// never enter scoring or diagnosis before a human accepts them. Raw payloads
+// are retained minimally and never loaded in ordinary list queries.
+export const vehicleEvents = pgTable(
+  "vehicleEvents",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
+    source: varchar("source", { length: 64 }).notNull(),
+    sourceEventId: varchar("sourceEventId", { length: 128 }),
+    eventType: varchar("eventType", { length: 48 }).notNull(),
+    eventTimestamp: dateTimestamp().notNull(),
+    odometerKm: numeric("odometerKm", { precision: 12, scale: 3 }),
+    engineHours: numeric("engineHours", { precision: 12, scale: 2 }),
+    dtcCode: varchar("dtcCode", { length: 32 }),
+    dtcStatus: varchar("dtcStatus", { length: 32 }),
+    severity: varchar("severity", { length: 32 }),
+    latitude: numeric("latitude", { precision: 9, scale: 6 }),
+    longitude: numeric("longitude", { precision: 9, scale: 6 }),
+    trustStatus: varchar("trustStatus", { length: 32 })
+      .default("review_required")
+      .notNull(),
+    reviewedByUserId: integer("reviewedByUserId"),
+    reviewedAt: dateTimestamp(),
+    reviewNotes: text("reviewNotes"),
+    idempotencyKey: varchar("idempotencyKey", { length: 64 }).notNull(),
+    normalizedPayloadJson: jsonb("normalizedPayloadJson"),
+    rawPayloadJson: jsonb("rawPayloadJson"),
+    createdByUserId: integer("createdByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("vehicleEvents_fleet_idem_unique").on(
+      table.fleetId,
+      table.idempotencyKey
+    ),
+    index("vehicleEvents_fleet_vehicle_idx").on(table.fleetId, table.vehicleId),
+    index("vehicleEvents_fleet_type_idx").on(table.fleetId, table.eventType),
+    index("vehicleEvents_trust_idx").on(table.fleetId, table.trustStatus),
+  ]
+);
+
+// Fleet-level preventive-maintenance templates. Require at least one interval
+// (enforced in application code). Missing data must not create false overdue.
+export const pmTemplates = pgTable(
+  "pmTemplates",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 150 }).notNull(),
+    description: text("description"),
+    intervalKm: integer("intervalKm"),
+    intervalEngineHours: integer("intervalEngineHours"),
+    intervalDays: integer("intervalDays"),
+    warningKm: integer("warningKm"),
+    warningEngineHours: integer("warningEngineHours"),
+    warningDays: integer("warningDays"),
+    whicheverComesFirst: boolean("whicheverComesFirst").default(true).notNull(),
+    active: boolean("active").default(true).notNull(),
+    createdByUserId: integer("createdByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [index("pmTemplates_fleet_idx").on(table.fleetId)]
+);
+
+export const pmAssignments = pgTable(
+  "pmAssignments",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
+    pmTemplateId: integer("pmTemplateId")
+      .notNull()
+      .references(() => pmTemplates.id, { onDelete: "cascade" }),
+    overrideIntervalKm: integer("overrideIntervalKm"),
+    overrideIntervalEngineHours: integer("overrideIntervalEngineHours"),
+    overrideIntervalDays: integer("overrideIntervalDays"),
+    overrideWarningKm: integer("overrideWarningKm"),
+    overrideWarningEngineHours: integer("overrideWarningEngineHours"),
+    overrideWarningDays: integer("overrideWarningDays"),
+    lastCompletedDate: dateTimestamp(),
+    lastCompletedOdometerKm: numeric("lastCompletedOdometerKm", {
+      precision: 12,
+      scale: 3,
+    }),
+    lastCompletedEngineHours: numeric("lastCompletedEngineHours", {
+      precision: 12,
+      scale: 2,
+    }),
+    active: boolean("active").default(true).notNull(),
+    createdByUserId: integer("createdByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("pmAssignments_vehicle_template_unique").on(
+      table.fleetId,
+      table.vehicleId,
+      table.pmTemplateId
+    ),
+    index("pmAssignments_fleet_vehicle_idx").on(table.fleetId, table.vehicleId),
+  ]
+);
+
+// Score snapshots are persisted only on material change / classification change
+// / acknowledgement / override — never on every page load.
+export const attentionScoreSnapshots = pgTable(
+  "attentionScoreSnapshots",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
+    total: integer("total").notNull(),
+    classification: varchar("classification", { length: 16 }).notNull(),
+    componentsJson: jsonb("componentsJson"),
+    dataQualityWarningsJson: jsonb("dataQualityWarningsJson"),
+    reason: varchar("reason", { length: 48 }).notNull(),
+    calculatedAt: dateTimestamp().notNull(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("attentionScoreSnapshots_fleet_vehicle_idx").on(
+      table.fleetId,
+      table.vehicleId
+    ),
+  ]
+);
+
+// One current operational display override + acknowledgement per vehicle.
+// Overrides never alter score components, diagnosis, or case creation.
+export const attentionScoreOverrides = pgTable(
+  "attentionScoreOverrides",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
+    acknowledgedByUserId: integer("acknowledgedByUserId"),
+    acknowledgedAt: dateTimestamp(),
+    acknowledgementNote: text("acknowledgementNote"),
+    overrideClassification: varchar("overrideClassification", { length: 16 }),
+    overrideReason: text("overrideReason"),
+    overrideByUserId: integer("overrideByUserId"),
+    overrideAt: dateTimestamp(),
+    active: boolean("active").default(true).notNull(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("attentionScoreOverrides_vehicle_unique").on(
+      table.fleetId,
+      table.vehicleId
+    ),
+  ]
+);
+
+export type VehicleEvent = typeof vehicleEvents.$inferSelect;
+export type InsertVehicleEvent = typeof vehicleEvents.$inferInsert;
+export type PmTemplate = typeof pmTemplates.$inferSelect;
+export type InsertPmTemplate = typeof pmTemplates.$inferInsert;
+export type PmAssignment = typeof pmAssignments.$inferSelect;
+export type InsertPmAssignment = typeof pmAssignments.$inferInsert;
+export type AttentionScoreSnapshot = typeof attentionScoreSnapshots.$inferSelect;
+export type AttentionScoreOverride = typeof attentionScoreOverrides.$inferSelect;
+
+// =====================================================================
+// Phase 3: Maintenance Cases, append-only Decisions, and Repair Cycles.
+// The case reference sequence (maintenance_case_seq) is created in the
+// migration; references are generated server-side (never by counting rows).
+// =====================================================================
+
+// Central Maintenance Case. Exactly one fleet and one primary vehicle/asset.
+export const maintenanceCases = pgTable(
+  "maintenanceCases",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    reference: varchar("reference", { length: 32 }).notNull(),
+    vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
+    status: varchar("status", { length: 32 }).default("reported").notNull(),
+    title: varchar("title", { length: 255 }),
+    summary: text("summary"),
+    severity: varchar("severity", { length: 16 }),
+    // How the case was created + optional source links (any may be null).
+    origin: varchar("origin", { length: 32 }).notNull(),
+    diagnosticSessionId: varchar("diagnosticSessionId", { length: 128 }),
+    sourceDefectId: integer("sourceDefectId"),
+    sourceInspectionId: integer("sourceInspectionId"),
+    sourceEventId: integer("sourceEventId"),
+    // Pointer to the current decision version.
+    currentDecisionId: integer("currentDecisionId"),
+    assignedManagerUserId: integer("assignedManagerUserId"),
+    assignedMaintenanceUserId: integer("assignedMaintenanceUserId"),
+    expectedCompletionAt: dateTimestamp(),
+    openedAt: dateTimestamp().defaultNow().notNull(),
+    closedAt: dateTimestamp(),
+    createdByUserId: integer("createdByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("maintenanceCases_reference_unique").on(table.reference),
+    index("maintenanceCases_fleet_status_idx").on(table.fleetId, table.status),
+    index("maintenanceCases_fleet_vehicle_idx").on(table.fleetId, table.vehicleId),
+    index("maintenanceCases_assigned_manager_idx").on(table.assignedManagerUserId),
+  ]
+);
+
+// Append-only decision versions. Exactly one is current per case.
+export const maintenanceDecisions = pgTable(
+  "maintenanceDecisions",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    caseId: integer("caseId")
+      .notNull()
+      .references(() => maintenanceCases.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    source: varchar("source", { length: 32 }).notNull(), // ai | manual
+    originalRecommendationJson: jsonb("originalRecommendationJson"),
+    proposedAction: varchar("proposedAction", { length: 48 }),
+    finalAction: varchar("finalAction", { length: 48 }),
+    severity: varchar("severity", { length: 16 }).notNull(),
+    confidence: integer("confidence"),
+    rationale: text("rationale"),
+    likelyCausesJson: jsonb("likelyCausesJson"),
+    immediateChecksJson: jsonb("immediateChecksJson"),
+    evidenceJson: jsonb("evidenceJson"),
+    approvalRequirement: varchar("approvalRequirement", { length: 32 }).notNull(),
+    approvalState: varchar("approvalState", { length: 24 }).default("pending").notNull(),
+    approvedByUserId: integer("approvedByUserId"),
+    approvedAt: dateTimestamp(),
+    overrideState: varchar("overrideState", { length: 24 }),
+    overrideReason: text("overrideReason"),
+    supersededDecisionId: integer("supersededDecisionId"),
+    diagnosticSessionId: varchar("diagnosticSessionId", { length: 128 }),
+    model: varchar("model", { length: 150 }),
+    promptVersion: varchar("promptVersion", { length: 64 }),
+    isCurrent: boolean("isCurrent").default(true).notNull(),
+    createdByUserId: integer("createdByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("maintenanceDecisions_case_version_unique").on(table.caseId, table.version),
+    index("maintenanceDecisions_case_idx").on(table.caseId),
+    index("maintenanceDecisions_current_idx").on(table.caseId, table.isCurrent),
+  ]
+);
+
+// Repair cycles. Multiple per case; only one active at a time.
+export const repairCycles = pgTable(
+  "repairCycles",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    caseId: integer("caseId")
+      .notNull()
+      .references(() => maintenanceCases.id, { onDelete: "cascade" }),
+    cycleNumber: integer("cycleNumber").notNull(),
+    active: boolean("active").default(true).notNull(),
+    startedAt: dateTimestamp().defaultNow().notNull(),
+    outOfServiceAt: dateTimestamp(),
+    repairStartedAt: dateTimestamp(),
+    expectedCompletionAt: dateTimestamp(),
+    awaitingPartsSince: dateTimestamp(),
+    readyForReturnAt: dateTimestamp(),
+    returnedToServiceAt: dateTimestamp(),
+    completedAt: dateTimestamp(),
+    closureResult: varchar("closureResult", { length: 24 }), // resolved | partially_resolved | not_resolved
+    outcomeId: integer("outcomeId"),
+    approvedEstimateCents: integer("approvedEstimateCents"),
+    finalInvoiceCents: integer("finalInvoiceCents"),
+    downtimeHours: numeric("downtimeHours", { precision: 10, scale: 2 }),
+    createdByUserId: integer("createdByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("repairCycles_case_cycle_unique").on(table.caseId, table.cycleNumber),
+    index("repairCycles_case_idx").on(table.caseId),
+    index("repairCycles_fleet_active_idx").on(table.fleetId, table.active),
+  ]
+);
+
+export type MaintenanceCase = typeof maintenanceCases.$inferSelect;
+export type InsertMaintenanceCase = typeof maintenanceCases.$inferInsert;
+export type MaintenanceDecision = typeof maintenanceDecisions.$inferSelect;
+export type InsertMaintenanceDecision = typeof maintenanceDecisions.$inferInsert;
+export type RepairCycle = typeof repairCycles.$inferSelect;
+export type InsertRepairCycle = typeof repairCycles.$inferInsert;
+
+// =====================================================================
+// Phase 4: Repair documents + repair authorization.
+// Private storage keys are server-generated; raw text retention is minimal.
+// =====================================================================
+export const repairDocuments = pgTable(
+  "repairDocuments",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    caseId: integer("caseId")
+      .notNull()
+      .references(() => maintenanceCases.id, { onDelete: "cascade" }),
+    repairCycleId: integer("repairCycleId"),
+    documentType: varchar("documentType", { length: 24 }).default("unknown").notNull(),
+    originalFilename: varchar("originalFilename", { length: 255 }).notNull(),
+    // Server-generated private storage key (never client-supplied).
+    storageKey: varchar("storageKey", { length: 512 }).notNull(),
+    sizeBytes: integer("sizeBytes").notNull(),
+    mimeType: varchar("mimeType", { length: 64 }).notNull(),
+    checksumSha256: varchar("checksumSha256", { length: 64 }).notNull(),
+    uploadedByUserId: integer("uploadedByUserId"),
+    processingState: varchar("processingState", { length: 24 }).default("uploaded").notNull(),
+    extractionAttempts: integer("extractionAttempts").default(0).notNull(),
+    // Raw text retention minimized; normalized structured fields for comparison.
+    extractedRawText: text("extractedRawText"),
+    normalizedFieldsJson: jsonb("normalizedFieldsJson"),
+    extractionProvider: varchar("extractionProvider", { length: 64 }),
+    extractionModel: varchar("extractionModel", { length: 150 }),
+    schemaVersion: varchar("schemaVersion", { length: 32 }),
+    region: varchar("region", { length: 64 }),
+    consentAtUpload: boolean("consentAtUpload").default(false).notNull(),
+    confidence: integer("confidence"),
+    uncertaintyJson: jsonb("uncertaintyJson"),
+    correctionsJson: jsonb("correctionsJson"),
+    supersededDocumentId: integer("supersededDocumentId"),
+    duplicateOfDocumentId: integer("duplicateOfDocumentId"),
+    isApprovedEstimate: boolean("isApprovedEstimate").default(false).notNull(),
+    isFinalInvoice: boolean("isFinalInvoice").default(false).notNull(),
+    deletedAt: dateTimestamp(),
+    deletedByUserId: integer("deletedByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("repairDocuments_case_idx").on(table.caseId),
+    index("repairDocuments_fleet_checksum_idx").on(table.fleetId, table.checksumSha256),
+    index("repairDocuments_state_idx").on(table.fleetId, table.processingState),
+  ]
+);
+
+export const repairAuthorizations = pgTable(
+  "repairAuthorizations",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    caseId: integer("caseId")
+      .notNull()
+      .references(() => maintenanceCases.id, { onDelete: "cascade" }),
+    repairCycleId: integer("repairCycleId"),
+    limitCents: integer("limitCents"),
+    approvedAmountCents: integer("approvedAmountCents"),
+    currency: varchar("currency", { length: 8 }).default("CAD").notNull(),
+    state: varchar("state", { length: 24 }).default("pending").notNull(),
+    approverUserId: integer("approverUserId"),
+    approvedAt: dateTimestamp(),
+    note: text("note"),
+    createdByUserId: integer("createdByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [index("repairAuthorizations_case_idx").on(table.caseId)]
+);
+
+export type RepairDocument = typeof repairDocuments.$inferSelect;
+export type InsertRepairDocument = typeof repairDocuments.$inferInsert;
+export type RepairAuthorization = typeof repairAuthorizations.$inferSelect;
+export type InsertRepairAuthorization = typeof repairAuthorizations.$inferInsert;
+
+// =====================================================================
+// Phase 5: Pilot settings + external-AI consent.
+// Internal admins configure settings; owners/managers get visibility and
+// consent actions only. Consent defaults disabled.
+// =====================================================================
+export const pilotSettings = pgTable(
+  "pilotSettings",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    status: varchar("status", { length: 24 }).default("not_started").notNull(),
+    startDate: dateTimestamp(),
+    endDate: dateTimestamp(),
+    primaryManagerUserId: integer("primaryManagerUserId"),
+    backupManagerUserId: integer("backupManagerUserId"),
+    enrolledVehicleIdsJson: jsonb("enrolledVehicleIdsJson"),
+    notificationRecipientsJson: jsonb("notificationRecipientsJson"),
+    baselineJson: jsonb("baselineJson"),
+    authorizationPolicyJson: jsonb("authorizationPolicyJson"),
+    createdByUserId: integer("createdByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("pilotSettings_fleet_unique").on(table.fleetId)]
+);
+
+export const externalAiConsent = pgTable(
+  "externalAiConsent",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    status: varchar("status", { length: 16 }).default("none").notNull(), // none | granted | withdrawn
+    purpose: varchar("purpose", { length: 255 }),
+    consentAt: dateTimestamp(),
+    expiresAt: dateTimestamp(),
+    withdrawnAt: dateTimestamp(),
+    consentingUserId: integer("consentingUserId"),
+    internalRecorderUserId: integer("internalRecorderUserId"),
+    source: varchar("source", { length: 32 }),
+    evidenceJson: jsonb("evidenceJson"),
+    provider: varchar("provider", { length: 64 }),
+    model: varchar("model", { length: 150 }),
+    regionDisclosure: varchar("regionDisclosure", { length: 255 }),
+    disclosureVersion: varchar("disclosureVersion", { length: 32 }),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("externalAiConsent_fleet_unique").on(table.fleetId),
+  ]
+);
+
+export type PilotSettings = typeof pilotSettings.$inferSelect;
+export type InsertPilotSettings = typeof pilotSettings.$inferInsert;
+export type ExternalAiConsent = typeof externalAiConsent.$inferSelect;
+export type InsertExternalAiConsent = typeof externalAiConsent.$inferInsert;
