@@ -47,7 +47,7 @@ test results, deviations, and remaining work. Final developer docs live in
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 1 | Foundations & diagnostic safeguards | **Complete** (committed) |
-| 2 | Vehicle data & Fleet Health | Not started |
+| 2 | Vehicle data & Fleet Health | **In progress** — Attention Score core done |
 | 3 | Maintenance decision workflow | Not started |
 | 4 | Repair-document review | Not started |
 | 5 | Pilot controls | Not started |
@@ -93,6 +93,26 @@ Capabilities: `fleet_health_dashboard`, `vehicle_attention_score`,
 
 ### Blockers / deferred
 None for Phase 1.
+
+## Phase 2 — Vehicle data & Fleet Health (in progress)
+
+Delivered so far:
+- **Vehicle Attention Score** pure calculator + tests
+  (`shared/maintenance/attentionScore.ts`, `attentionScore.test.ts`). Implements
+  all §18 rules, double-count prevention (defect⟷case source dedup, open-defect
+  vs critical-defect), +35 critical-case cap, 0–100 cap, classification bands
+  (critical ≥75 / attention ≥40 / stable), per-component explanations, and
+  data-quality warnings. 9 tests pass. Pure/shared so the client renders
+  explanations without a round-trip; never sent to diagnosis.
+
+Remaining in Phase 2 (not yet built):
+- `vehicleEvents` table + provider-neutral ingestion service (manual / internal
+  test / CSV import with idempotency, batching, review states).
+- Score persistence + snapshots (persist only on material change) + acknowledge /
+  operational override.
+- PM templates + assignments + pure next-due calculation service + statuses.
+- `pm_schedules`, events, integrations settings UI; Fleet Health dashboard page;
+  Vehicle Details integration; repair-outcome v2 additive fields.
 
 ## Manual verification still required
 - Run `pnpm db:push` (or apply `0014` SQL) against a real database and confirm
