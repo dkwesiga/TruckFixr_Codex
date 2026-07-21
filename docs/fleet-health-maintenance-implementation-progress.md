@@ -140,9 +140,29 @@ Delivered so far:
   importEventsCsv, reviewEvent, internalTestIngest, PM (list/create/assign/
   complete/status), score (compute+persist/acknowledge/override).
 
-Remaining in Phase 2 (UI — needs dev server for browser verification):
-- Fleet Health dashboard page; Vehicle Details integration; Settings →
-  Integrations (manual events, CSV import + preview, review queue).
+- **Fleet Health dashboard** (`client/src/pages/FleetHealth.tsx`), route
+  `/app/fleet-health` (gated by `FLEET_HEALTH_ENABLED` build flag +
+  RoleBasedRoute owner/manager + server-side capability). Ranked vehicle
+  priorities (primary interface) with classification badges, score, expandable
+  "why" breakdown, acknowledge action, and data-quality warnings; summary
+  indicator tiles; events-to-review tab; safety disclaimer. Responsive from
+  320px. Shows a clear "not enabled" state when the capability is off.
+- **Batched fleet-health summary** service
+  (`server/services/fleetHealthSummary.ts`) + `fleetHealthSummary` router query:
+  bulk-loads defects, DTC events, PM config, and overrides ONCE and scores each
+  vehicle in memory (no N+1). Applies display overrides, ranks worst-first.
+
+Verification: `pnpm build:client` (real Vite production build) PASSED — the page
+compiled into its own code-split chunk (`FleetHealth-*.js`). tsc clean.
+NOTE: live browser verification was attempted but the dev server did not finish
+starting in this environment (stuck pre-listen ~6 min, no errors, port never
+opened — a DB/startup issue unrelated to these additive changes). The client
+build is the compile-time proof; a manual browser pass against a running server
+with the pilot flags enabled remains in "manual verification".
+
+Remaining in Phase 2 (UI):
+- Vehicle Details integration; Settings → Integrations (manual events, CSV
+  import + preview, review queue).
 
 ## Manual verification still required
 - Run `pnpm db:push` (or apply `0014` SQL) against a real database and confirm

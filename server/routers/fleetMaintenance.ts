@@ -38,6 +38,7 @@ import {
   recordPmCompletion,
 } from "../services/pmService";
 import { logMaintenanceActivity } from "../services/maintenanceActivityLog";
+import { computeFleetHealthSummary } from "../services/fleetHealthSummary";
 
 const PAGE_DEFAULT = 25;
 const PAGE_MAX = 100;
@@ -99,6 +100,20 @@ export const fleetMaintenanceRouter = router({
         actorUserId: ctx.user.id,
       });
       return record;
+    }),
+
+  // ---- Fleet Health dashboard summary -----------------------------------
+  fleetHealthSummary: protectedProcedure
+    .input(z.object({ fleetId: z.number().optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      const fleetId = await resolveActiveFleetId({
+        user: ctx.user,
+        requestedFleetId: input?.fleetId ?? null,
+      });
+      // Dashboard requires the umbrella pilot flag AND the dashboard capability.
+      await requireFleetFeature(fleetId, CAP.fleetHealthDashboard);
+      const summary = await computeFleetHealthSummary({ fleetId });
+      return { fleetId, ...summary };
     }),
 
   // ---- Vehicle events ----------------------------------------------------
