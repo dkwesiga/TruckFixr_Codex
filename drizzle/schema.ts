@@ -1467,3 +1467,135 @@ export type PmAssignment = typeof pmAssignments.$inferSelect;
 export type InsertPmAssignment = typeof pmAssignments.$inferInsert;
 export type AttentionScoreSnapshot = typeof attentionScoreSnapshots.$inferSelect;
 export type AttentionScoreOverride = typeof attentionScoreOverrides.$inferSelect;
+
+// =====================================================================
+// Phase 3: Maintenance Cases, append-only Decisions, and Repair Cycles.
+// The case reference sequence (maintenance_case_seq) is created in the
+// migration; references are generated server-side (never by counting rows).
+// =====================================================================
+
+// Central Maintenance Case. Exactly one fleet and one primary vehicle/asset.
+export const maintenanceCases = pgTable(
+  "maintenanceCases",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    reference: varchar("reference", { length: 32 }).notNull(),
+    vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
+    status: varchar("status", { length: 32 }).default("reported").notNull(),
+    title: varchar("title", { length: 255 }),
+    summary: text("summary"),
+    severity: varchar("severity", { length: 16 }),
+    // How the case was created + optional source links (any may be null).
+    origin: varchar("origin", { length: 32 }).notNull(),
+    diagnosticSessionId: varchar("diagnosticSessionId", { length: 128 }),
+    sourceDefectId: integer("sourceDefectId"),
+    sourceInspectionId: integer("sourceInspectionId"),
+    sourceEventId: integer("sourceEventId"),
+    // Pointer to the current decision version.
+    currentDecisionId: integer("currentDecisionId"),
+    assignedManagerUserId: integer("assignedManagerUserId"),
+    assignedMaintenanceUserId: integer("assignedMaintenanceUserId"),
+    expectedCompletionAt: dateTimestamp(),
+    openedAt: dateTimestamp().defaultNow().notNull(),
+    closedAt: dateTimestamp(),
+    createdByUserId: integer("createdByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("maintenanceCases_reference_unique").on(table.reference),
+    index("maintenanceCases_fleet_status_idx").on(table.fleetId, table.status),
+    index("maintenanceCases_fleet_vehicle_idx").on(table.fleetId, table.vehicleId),
+    index("maintenanceCases_assigned_manager_idx").on(table.assignedManagerUserId),
+  ]
+);
+
+// Append-only decision versions. Exactly one is current per case.
+export const maintenanceDecisions = pgTable(
+  "maintenanceDecisions",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    caseId: integer("caseId")
+      .notNull()
+      .references(() => maintenanceCases.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    source: varchar("source", { length: 32 }).notNull(), // ai | manual
+    originalRecommendationJson: jsonb("originalRecommendationJson"),
+    proposedAction: varchar("proposedAction", { length: 48 }),
+    finalAction: varchar("finalAction", { length: 48 }),
+    severity: varchar("severity", { length: 16 }).notNull(),
+    confidence: integer("confidence"),
+    rationale: text("rationale"),
+    likelyCausesJson: jsonb("likelyCausesJson"),
+    immediateChecksJson: jsonb("immediateChecksJson"),
+    evidenceJson: jsonb("evidenceJson"),
+    approvalRequirement: varchar("approvalRequirement", { length: 32 }).notNull(),
+    approvalState: varchar("approvalState", { length: 24 }).default("pending").notNull(),
+    approvedByUserId: integer("approvedByUserId"),
+    approvedAt: dateTimestamp(),
+    overrideState: varchar("overrideState", { length: 24 }),
+    overrideReason: text("overrideReason"),
+    supersededDecisionId: integer("supersededDecisionId"),
+    diagnosticSessionId: varchar("diagnosticSessionId", { length: 128 }),
+    model: varchar("model", { length: 150 }),
+    promptVersion: varchar("promptVersion", { length: 64 }),
+    isCurrent: boolean("isCurrent").default(true).notNull(),
+    createdByUserId: integer("createdByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("maintenanceDecisions_case_version_unique").on(table.caseId, table.version),
+    index("maintenanceDecisions_case_idx").on(table.caseId),
+    index("maintenanceDecisions_current_idx").on(table.caseId, table.isCurrent),
+  ]
+);
+
+// Repair cycles. Multiple per case; only one active at a time.
+export const repairCycles = pgTable(
+  "repairCycles",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    caseId: integer("caseId")
+      .notNull()
+      .references(() => maintenanceCases.id, { onDelete: "cascade" }),
+    cycleNumber: integer("cycleNumber").notNull(),
+    active: boolean("active").default(true).notNull(),
+    startedAt: dateTimestamp().defaultNow().notNull(),
+    outOfServiceAt: dateTimestamp(),
+    repairStartedAt: dateTimestamp(),
+    expectedCompletionAt: dateTimestamp(),
+    awaitingPartsSince: dateTimestamp(),
+    readyForReturnAt: dateTimestamp(),
+    returnedToServiceAt: dateTimestamp(),
+    completedAt: dateTimestamp(),
+    closureResult: varchar("closureResult", { length: 24 }), // resolved | partially_resolved | not_resolved
+    outcomeId: integer("outcomeId"),
+    approvedEstimateCents: integer("approvedEstimateCents"),
+    finalInvoiceCents: integer("finalInvoiceCents"),
+    downtimeHours: numeric("downtimeHours", { precision: 10, scale: 2 }),
+    createdByUserId: integer("createdByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("repairCycles_case_cycle_unique").on(table.caseId, table.cycleNumber),
+    index("repairCycles_case_idx").on(table.caseId),
+    index("repairCycles_fleet_active_idx").on(table.fleetId, table.active),
+  ]
+);
+
+export type MaintenanceCase = typeof maintenanceCases.$inferSelect;
+export type InsertMaintenanceCase = typeof maintenanceCases.$inferInsert;
+export type MaintenanceDecision = typeof maintenanceDecisions.$inferSelect;
+export type InsertMaintenanceDecision = typeof maintenanceDecisions.$inferInsert;
+export type RepairCycle = typeof repairCycles.$inferSelect;
+export type InsertRepairCycle = typeof repairCycles.$inferInsert;

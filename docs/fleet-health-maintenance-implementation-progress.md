@@ -48,7 +48,7 @@ test results, deviations, and remaining work. Final developer docs live in
 |-------|-------|--------|
 | 1 | Foundations & diagnostic safeguards | **Complete** (committed) |
 | 2 | Vehicle data & Fleet Health | **In progress** — Attention Score core done |
-| 3 | Maintenance decision workflow | Not started |
+| 3 | Maintenance decision workflow | **Backend complete** — UI pending |
 | 4 | Repair-document review | Not started |
 | 5 | Pilot controls | Not started |
 
@@ -174,6 +174,45 @@ with the pilot flags enabled remains in "manual verification".
 Remaining in Phase 2 (UI, optional polish):
 - Vehicle Details (`/truck/:id`) integration — surface score explanation,
   events, PM, and related cases inline (cases arrive in Phase 3).
+
+## Phase 3 — Maintenance decision workflow (backend complete)
+
+Schema + migration `0016_maintenance_cases_decisions_cycles.sql`:
+- `maintenanceCases` (reference, status, origin, source links, assignment,
+  currentDecisionId, expectedCompletionAt), `maintenanceDecisions` (append-only
+  versions, one current), `repairCycles` (multiple per case, one active).
+- `maintenance_case_seq` PostgreSQL sequence for global references (never counts
+  rows).
+
+Pure domain rules (shared, tested):
+- `caseWorkflow.ts`: 13 statuses + explicit transition map (`canTransition`),
+  active-status set, normalized severities/actions, approval policy by severity,
+  critical-action test, safety disclaimers, `formatCaseReference` (MC-YYYY-######).
+- `recommendationAdapter.ts`: maps diagnosis OUTPUT → normalized recommendation
+  (severity/action), preserves original text verbatim; read-only (never mutates
+  diagnosis). 12 tests in `caseWorkflow.test.ts`.
+
+Services:
+- `maintenanceCaseReference.ts` (sequence-based reference).
+- `maintenanceCases.ts`: manual + idempotent automatic-from-diagnosis creation,
+  validated status transitions, assignment (manager + maintenance user), reopen
+  (preserves history, deactivates lingering cycle), list/get.
+- `maintenanceDecisions.ts`: append-only versioning (one current), approval
+  (attention), critical override (mandatory reason, critical-only, preserves
+  original recommendation, owner/manager finalizes). 7 tests.
+- `repairCycles.ts`: start (one active), stage marks, return-to-service with
+  computed downtime, complete with closure result.
+- `maintenanceBoards.ts`: Downtime Board (active cases, read-time overdue, no
+  cron) + consolidated Case Activity timeline from domain records.
+
+Router `maintenanceCases` (registered): list/get/createManual/createFromDiagnosis
+(idempotent, post-diagnosis)/transition/assign/reopen; addDecision/approve/
+criticalOverride; startCycle/markStage/returnToService/completeCycle;
+downtimeBoard. All gated by `maintenance_cases` + owner/manager (adminProcedure)
++ tenant scope. Critical override is owner/manager only. tsc clean; 84 tests pass.
+
+Remaining in Phase 3 (UI): case detail view, decision/approval/override controls,
+Downtime Board page, and Case Activity timeline in the client (Fleet Health tabs).
 
 ## Manual verification still required
 - Run `pnpm db:push` (or apply `0014` SQL) against a real database and confirm
