@@ -50,7 +50,7 @@ test results, deviations, and remaining work. Final developer docs live in
 | 2 | Vehicle data & Fleet Health | **In progress** — Attention Score core done |
 | 3 | Maintenance decision workflow | **Complete** (backend + UI) |
 | 4 | Repair-document review | **Complete** (auto-extraction blocked) |
-| 5 | Pilot controls | **Backend complete** — UI pending |
+| 5 | Pilot controls | **Complete** (backend + UI) |
 
 ## Phase 1 — Foundations & diagnostic safeguards ✅
 
@@ -302,8 +302,16 @@ Services + `pilot` router (registered):
   setConsent (owner only), recordConsent (staff), readiness, metrics
   (gated `pilot_metrics`), exportCases (owner/manager). tsc clean; 120 tests pass.
 
-Remaining in Phase 5 (UI): compact Pilot Metrics tab + readiness banner + consent
-action + export button in Fleet Health; internal-admin Pilot Operations view.
+Phase 5 UI (complete): Fleet Health gains a **readiness banner** (shows
+blocking/warnings when not ready) and a **Pilot metrics** tab (gated by
+`pilot_metrics`) with compact metric tiles, a pending-observation-window note,
+a "does not imply causation" caption, and an **Export cases (CSV)** button that
+downloads the tenant-scoped export client-side. Build rebuilds `FleetHealth-*.js`;
+tsc clean.
+
+Deferred (optional, non-blocking): a dedicated internal-admin Pilot Operations
+page (settings/consent are fully manageable via the `pilot` staff router;
+`upsertSettings`/`recordConsent` are callable by internal admins today).
 
 ## Manual verification still required
 - Run `pnpm db:push` (or apply `0014` SQL) against a real database and confirm

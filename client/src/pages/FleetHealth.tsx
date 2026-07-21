@@ -72,6 +72,17 @@ function IndicatorTile({
   );
 }
 
+function MetricTile({ label, value }: { label: string; value: number | null }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4">
+      <p className="text-xs font-medium text-slate-500">{label}</p>
+      <p className="mt-2 text-2xl font-bold tabular-nums text-slate-900">
+        {value == null ? "—" : value}
+      </p>
+    </div>
+  );
+}
+
 function vehicleLabel(v: {
   unitNumber: string | null;
   vin: string | null;
@@ -226,6 +237,10 @@ function FleetHealthContent() {
     retry: false,
   });
 
+  const metricsEnabled =
+    capabilities?.pilotEligible === true &&
+    (capabilities as { pilotMetrics?: boolean })?.pilotMetrics === true;
+
   const casesQuery = trpc.maintenanceCases.list.useQuery(
     { limit: 50 },
     { enabled: dashboardEnabled && casesEnabled, retry: false }
@@ -234,6 +249,25 @@ function FleetHealthContent() {
     enabled: dashboardEnabled && casesEnabled,
     retry: false,
   });
+  const readinessQuery = trpc.pilot.readiness.useQuery(undefined, {
+    enabled: dashboardEnabled,
+    retry: false,
+  });
+  const metricsQuery = trpc.pilot.metrics.useQuery(undefined, {
+    enabled: dashboardEnabled && metricsEnabled,
+    retry: false,
+  });
+  const exportCases = trpc.pilot.exportCases.useMutation();
+
+  function downloadCsv(csv: string, filename: string) {
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   const utils = trpc.useUtils();
   const acknowledge = trpc.fleetMaintenance.acknowledgeScore.useMutation({
@@ -332,11 +366,36 @@ function FleetHealthContent() {
               />
             </section>
 
+            {readinessQuery.data && readinessQuery.data.state !== "ready" ? (
+              <div
+                className={`mt-4 rounded-xl border p-3 text-sm ${
+                  readinessQuery.data.state === "needs_attention"
+                    ? "border-amber-200 bg-amber-50 text-amber-900"
+                    : "border-slate-200 bg-slate-50 text-slate-700"
+                }`}
+              >
+                <p className="font-semibold">
+                  Pilot readiness: {readinessQuery.data.state.replace(/_/g, " ")}
+                </p>
+                {[...readinessQuery.data.blocking, ...readinessQuery.data.warnings].length > 0 ? (
+                  <ul className="mt-1 list-disc pl-5">
+                    {readinessQuery.data.blocking.map((b, i) => (
+                      <li key={`b${i}`}>{b}</li>
+                    ))}
+                    {readinessQuery.data.warnings.map((w, i) => (
+                      <li key={`w${i}`} className="text-slate-500">{w}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
+
             <Tabs defaultValue="priorities" className="mt-6">
               <TabsList>
                 <TabsTrigger value="priorities">Vehicle priorities</TabsTrigger>
                 {casesEnabled ? <TabsTrigger value="cases">Active cases</TabsTrigger> : null}
                 {casesEnabled ? <TabsTrigger value="downtime">Downtime board</TabsTrigger> : null}
+                {metricsEnabled ? <TabsTrigger value="metrics">Pilot metrics</TabsTrigger> : null}
                 <TabsTrigger value="review">Events to review</TabsTrigger>
               </TabsList>
 
@@ -459,6 +518,59 @@ function FleetHealthContent() {
                         </a>
                       ))}
                     </div>
+                  )}
+                </TabsContent>
+              ) : null}
+
+              {metricsEnabled ? (
+                <TabsContent value="metrics" className="mt-4">
+                  <div className="mb-3 flex justify-end">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={exportCases.isPending}
+                      onClick={async () => {
+                        try {
+                          const res = await exportCases.mutateAsync({});
+                          downloadCsv(res.csv, res.filename);
+                        } catch {
+                          /* surfaced by mutation state */
+                        }
+                      }}
+                    >
+                      Export cases (CSV)
+                    </Button>
+                  </div>
+                  {metricsQuery.isLoading ? (
+                    <Skeleton className="h-40 w-full" />
+                  ) : !metricsQuery.data ? (
+                    <Card>
+                      <CardContent className="py-10 text-center text-sm text-slate-500">
+                        No metrics available yet.
+                      </CardContent>
+                    </Card>
+                  ) : (
+                    <>
+                      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                        <MetricTile label="Cases" value={metricsQuery.data.caseVolume} />
+                        <MetricTile label="Median decision (h)" value={metricsQuery.data.medianTimeToDecisionHours} />
+                        <MetricTile label="Avg downtime (h)" value={metricsQuery.data.averageDowntimeHours} />
+                        <MetricTile label="Total downtime (h)" value={metricsQuery.data.totalDowntimeHours} />
+                        <MetricTile label="First-time fix %" value={metricsQuery.data.firstTimeFixRatePct} />
+                        <MetricTile label="Repeat repair %" value={metricsQuery.data.repeatRepairRatePct} />
+                        <MetricTile label="Critical override %" value={metricsQuery.data.criticalOverrideRatePct} />
+                        <MetricTile label="Outcome completion %" value={metricsQuery.data.outcomeCompletionRatePct} />
+                      </section>
+                      {metricsQuery.data.pendingObservationWindow > 0 ? (
+                        <p className="mt-3 text-xs text-slate-500">
+                          {metricsQuery.data.pendingObservationWindow} case(s) are still within
+                          their 30-day observation window and are excluded from first-time-fix.
+                        </p>
+                      ) : null}
+                      <p className="mt-2 text-xs text-slate-400">
+                        Metrics describe operational results only; they do not imply causation.
+                      </p>
+                    </>
                   )}
                 </TabsContent>
               ) : null}
