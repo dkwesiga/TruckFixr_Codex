@@ -49,7 +49,7 @@ test results, deviations, and remaining work. Final developer docs live in
 | 1 | Foundations & diagnostic safeguards | **Complete** (committed) |
 | 2 | Vehicle data & Fleet Health | **In progress** — Attention Score core done |
 | 3 | Maintenance decision workflow | **Complete** (backend + UI) |
-| 4 | Repair-document review | Not started |
+| 4 | Repair-document review | **Backend complete** (auto-extraction blocked) |
 | 5 | Pilot controls | Not started |
 
 ## Phase 1 — Foundations & diagnostic safeguards ✅
@@ -223,6 +223,47 @@ Phase 3 UI (complete):
   `maintenance_cases` capability): case list links to detail; the board shows
   read-time overdue with a red rail. Build emits `MaintenanceCaseDetail-*.js`;
   `pnpm build:client` PASSED; tsc clean.
+
+## Phase 4 — Repair-document review (backend complete)
+
+**Automated structured extraction: BLOCKED (documented dependency).** The repo's
+only extraction abstraction is free-text image OCR (`extractPhotoEvidenceText`,
+400-char snippets via the AI orchestrator), which cannot reliably yield line
+items / totals / tax, and §8.6/§35 prohibit adding a provider solely for this
+feature. A provider-neutral `DocumentExtractor` interface exists (`manualExtractor`
+default) so a real extractor can be dropped in later; documents land in
+`manual_review_only` and the deterministic comparison runs on manually-entered /
+corrected values. Everything else in Phase 4 is fully implemented.
+
+Schema + migration `0017`: `repairDocuments` (checksum, processing state,
+normalized fields, corrections, supersession, duplicate links, region/consent),
+`repairAuthorizations`.
+
+Pure, tested modules (shared):
+- `documentLimits.ts` (fixed limits + `DOCUMENT_REVIEW_THRESHOLDS`, allowed
+  types/states).
+- `documentValidation.ts` — magic-byte sniffing; rejects executables/HTML/SVG,
+  forged extensions, oversized/empty files. 8 tests.
+- `documentComparison.ts` — deterministic estimate↔invoice diff in integer minor
+  units: total/subtotal variance (verify + high tiers), tax tolerance, labour
+  hours, added/removed/quantity/unit-price/duplicate lines, invoice-only repairs,
+  and a hard currency-mismatch stop (no cross-currency compare without a rate).
+  10 tests.
+- `repairAuthorizationPolicy.ts` — who may authorize (maintenance/manager/
+  external) given limits, delegation (default off), assignment, criticality,
+  review state, and high variance. 8 tests.
+
+Services + `repairDocuments` router (registered): upload (authoritative
+validation → SHA-256 → in-fleet duplicate detection, never revealing cross-fleet
+→ private `storagePut` with server-generated key `maintenance-cases/{fleet}/{case}/
+{doc}/{name}` → manual-review state), signed-URL download (never logged), manual
+field entry + correction (append-only corrections), retry (bounded attempts),
+deterministic comparison, and repair authorization. Upload/view allowed for
+owners/managers AND maintenance-permitted users; financial value entry,
+comparison, and approvals stay owner/manager (§10). tsc clean; 102 tests pass.
+
+Remaining in Phase 4 (UI): document upload + list, manual value entry/correction,
+comparison "Items to verify", and the authorize control on the case page.
 
 ## Manual verification still required
 - Run `pnpm db:push` (or apply `0014` SQL) against a real database and confirm

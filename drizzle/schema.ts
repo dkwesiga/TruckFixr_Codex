@@ -1599,3 +1599,85 @@ export type MaintenanceDecision = typeof maintenanceDecisions.$inferSelect;
 export type InsertMaintenanceDecision = typeof maintenanceDecisions.$inferInsert;
 export type RepairCycle = typeof repairCycles.$inferSelect;
 export type InsertRepairCycle = typeof repairCycles.$inferInsert;
+
+// =====================================================================
+// Phase 4: Repair documents + repair authorization.
+// Private storage keys are server-generated; raw text retention is minimal.
+// =====================================================================
+export const repairDocuments = pgTable(
+  "repairDocuments",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    caseId: integer("caseId")
+      .notNull()
+      .references(() => maintenanceCases.id, { onDelete: "cascade" }),
+    repairCycleId: integer("repairCycleId"),
+    documentType: varchar("documentType", { length: 24 }).default("unknown").notNull(),
+    originalFilename: varchar("originalFilename", { length: 255 }).notNull(),
+    // Server-generated private storage key (never client-supplied).
+    storageKey: varchar("storageKey", { length: 512 }).notNull(),
+    sizeBytes: integer("sizeBytes").notNull(),
+    mimeType: varchar("mimeType", { length: 64 }).notNull(),
+    checksumSha256: varchar("checksumSha256", { length: 64 }).notNull(),
+    uploadedByUserId: integer("uploadedByUserId"),
+    processingState: varchar("processingState", { length: 24 }).default("uploaded").notNull(),
+    extractionAttempts: integer("extractionAttempts").default(0).notNull(),
+    // Raw text retention minimized; normalized structured fields for comparison.
+    extractedRawText: text("extractedRawText"),
+    normalizedFieldsJson: jsonb("normalizedFieldsJson"),
+    extractionProvider: varchar("extractionProvider", { length: 64 }),
+    extractionModel: varchar("extractionModel", { length: 150 }),
+    schemaVersion: varchar("schemaVersion", { length: 32 }),
+    region: varchar("region", { length: 64 }),
+    consentAtUpload: boolean("consentAtUpload").default(false).notNull(),
+    confidence: integer("confidence"),
+    uncertaintyJson: jsonb("uncertaintyJson"),
+    correctionsJson: jsonb("correctionsJson"),
+    supersededDocumentId: integer("supersededDocumentId"),
+    duplicateOfDocumentId: integer("duplicateOfDocumentId"),
+    isApprovedEstimate: boolean("isApprovedEstimate").default(false).notNull(),
+    isFinalInvoice: boolean("isFinalInvoice").default(false).notNull(),
+    deletedAt: dateTimestamp(),
+    deletedByUserId: integer("deletedByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("repairDocuments_case_idx").on(table.caseId),
+    index("repairDocuments_fleet_checksum_idx").on(table.fleetId, table.checksumSha256),
+    index("repairDocuments_state_idx").on(table.fleetId, table.processingState),
+  ]
+);
+
+export const repairAuthorizations = pgTable(
+  "repairAuthorizations",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    caseId: integer("caseId")
+      .notNull()
+      .references(() => maintenanceCases.id, { onDelete: "cascade" }),
+    repairCycleId: integer("repairCycleId"),
+    limitCents: integer("limitCents"),
+    approvedAmountCents: integer("approvedAmountCents"),
+    currency: varchar("currency", { length: 8 }).default("CAD").notNull(),
+    state: varchar("state", { length: 24 }).default("pending").notNull(),
+    approverUserId: integer("approverUserId"),
+    approvedAt: dateTimestamp(),
+    note: text("note"),
+    createdByUserId: integer("createdByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [index("repairAuthorizations_case_idx").on(table.caseId)]
+);
+
+export type RepairDocument = typeof repairDocuments.$inferSelect;
+export type InsertRepairDocument = typeof repairDocuments.$inferInsert;
+export type RepairAuthorization = typeof repairAuthorizations.$inferSelect;
+export type InsertRepairAuthorization = typeof repairAuthorizations.$inferInsert;

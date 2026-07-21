@@ -79,6 +79,12 @@
       "version": "16",
       "tag": "0016_maintenance_cases_decisions_cycles",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "17",
+      "tag": "0017_repair_documents_authorization",
+      "breakpoints": true
     }
   ]
 }
