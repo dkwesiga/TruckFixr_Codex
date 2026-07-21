@@ -67,6 +67,12 @@
       "version": "14",
       "tag": "0014_fleet_maintenance_foundations",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "15",
+      "tag": "0015_fleet_maintenance_events_pm_score",
+      "breakpoints": true
     }
   ]
 }

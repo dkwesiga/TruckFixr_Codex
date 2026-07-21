@@ -105,14 +105,30 @@ Delivered so far:
   data-quality warnings. 9 tests pass. Pure/shared so the client renders
   explanations without a round-trip; never sent to diagnosis.
 
+- **Normalized vehicle events**: `vehicleEvents` table + provider-neutral
+  ingestion service (`server/services/vehicleEventIngestion.ts`) shared by
+  manual / internal-test / CSV paths. Idempotent within a fleet (dedup in-batch
+  and against stored keys), bounded batches, per-row categorization
+  (imported/duplicate/invalid/skipped/failed) with safe item errors, cross-fleet
+  vehicle rejection, structured→trusted / free-text→review_required. 6 tests.
+- **CSV utilities** (`shared/maintenance/csv.ts`): dependency-free parser +
+  formula-injection protection + import limits. 6 tests.
+- **PM calculation** (`shared/maintenance/pmStatus.ts`): pure next-due calc,
+  template/override interval resolution, statuses (not_due/due_soon/overdue/
+  insufficient_data/inactive), "whichever comes first", no false overdue on
+  missing data. 9 tests. Tables: `pmTemplates`, `pmAssignments`.
+- **Score persistence tables**: `attentionScoreSnapshots`,
+  `attentionScoreOverrides`.
+- **Repair outcome v2**: additive optional columns on `repairOutcomes`
+  (maintenanceCaseId, repairCycleId, systemCategory, …). Backward compatible.
+- Migration `0015_fleet_maintenance_events_pm_score.sql` + journal entry.
+
 Remaining in Phase 2 (not yet built):
-- `vehicleEvents` table + provider-neutral ingestion service (manual / internal
-  test / CSV import with idempotency, batching, review states).
-- Score persistence + snapshots (persist only on material change) + acknowledge /
-  operational override.
-- PM templates + assignments + pure next-due calculation service + statuses.
-- `pm_schedules`, events, integrations settings UI; Fleet Health dashboard page;
-  Vehicle Details integration; repair-outcome v2 additive fields.
+- Score persistence service (snapshot-on-material-change) + acknowledge /
+  operational override write paths; PM DB service (CRUD + completion).
+- tRPC router exposing events/PM/score; internal-admin test ingestion procedure.
+- Fleet Health dashboard page; Vehicle Details integration; Settings →
+  Integrations (manual events, CSV import, review queue).
 
 ## Manual verification still required
 - Run `pnpm db:push` (or apply `0014` SQL) against a real database and confirm

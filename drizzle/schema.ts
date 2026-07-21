@@ -705,6 +705,24 @@ export const repairOutcomes = pgTable("repairOutcomes", {
   promotedReferenceId: integer("promotedReferenceId"),
   promotedAt: dateTimestamp(),
   promotedByUserId: integer("promotedByUserId"),
+  // ---- Repair outcome v2 (all optional; existing payloads stay valid) ----
+  maintenanceCaseId: integer("maintenanceCaseId"),
+  repairCycleId: integer("repairCycleId"),
+  systemCategory: varchar("systemCategory", { length: 64 }),
+  componentCategory: varchar("componentCategory", { length: 64 }),
+  confirmedCauseCode: varchar("confirmedCauseCode", { length: 64 }),
+  confirmedFaultCode: varchar("confirmedFaultCode", { length: 64 }),
+  repairType: varchar("repairType", { length: 48 }),
+  couldContinueAtAssessment: varchar("couldContinueAtAssessment", { length: 32 }),
+  diagnosisCorrectness: varchar("diagnosisCorrectness", { length: 32 }),
+  agreementClassification: varchar("agreementClassification", { length: 48 }),
+  repairResult: varchar("repairResult", { length: 32 }),
+  repeatFailure: boolean("repeatFailure"),
+  actualDowntimeHours: numeric("actualDowntimeHours", { precision: 10, scale: 2 }),
+  actualRepairCostCents: integer("actualRepairCostCents"),
+  vehicleReturnedToServiceAt: dateTimestamp(),
+  technicianNotes: text("technicianNotes"),
+  submittedByUserId: integer("submittedByUserId"),
   createdAt: dateTimestamp().defaultNow().notNull(),
   updatedAt: dateTimestamp().defaultNow().notNull(),
 });
@@ -1271,3 +1289,181 @@ export type InsertFleetFeature = typeof fleetFeatures.$inferInsert;
 export type MaintenancePermission = typeof maintenancePermissions.$inferSelect;
 export type InsertMaintenancePermission =
   typeof maintenancePermissions.$inferInsert;
+
+// Normalized, provider-neutral vehicle events. Structured accepted events may
+// affect operational scoring; free-text/unknown default to review_required and
+// never enter scoring or diagnosis before a human accepts them. Raw payloads
+// are retained minimally and never loaded in ordinary list queries.
+export const vehicleEvents = pgTable(
+  "vehicleEvents",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
+    source: varchar("source", { length: 64 }).notNull(),
+    sourceEventId: varchar("sourceEventId", { length: 128 }),
+    eventType: varchar("eventType", { length: 48 }).notNull(),
+    eventTimestamp: dateTimestamp().notNull(),
+    odometerKm: numeric("odometerKm", { precision: 12, scale: 3 }),
+    engineHours: numeric("engineHours", { precision: 12, scale: 2 }),
+    dtcCode: varchar("dtcCode", { length: 32 }),
+    dtcStatus: varchar("dtcStatus", { length: 32 }),
+    severity: varchar("severity", { length: 32 }),
+    latitude: numeric("latitude", { precision: 9, scale: 6 }),
+    longitude: numeric("longitude", { precision: 9, scale: 6 }),
+    trustStatus: varchar("trustStatus", { length: 32 })
+      .default("review_required")
+      .notNull(),
+    reviewedByUserId: integer("reviewedByUserId"),
+    reviewedAt: dateTimestamp(),
+    reviewNotes: text("reviewNotes"),
+    idempotencyKey: varchar("idempotencyKey", { length: 64 }).notNull(),
+    normalizedPayloadJson: jsonb("normalizedPayloadJson"),
+    rawPayloadJson: jsonb("rawPayloadJson"),
+    createdByUserId: integer("createdByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("vehicleEvents_fleet_idem_unique").on(
+      table.fleetId,
+      table.idempotencyKey
+    ),
+    index("vehicleEvents_fleet_vehicle_idx").on(table.fleetId, table.vehicleId),
+    index("vehicleEvents_fleet_type_idx").on(table.fleetId, table.eventType),
+    index("vehicleEvents_trust_idx").on(table.fleetId, table.trustStatus),
+  ]
+);
+
+// Fleet-level preventive-maintenance templates. Require at least one interval
+// (enforced in application code). Missing data must not create false overdue.
+export const pmTemplates = pgTable(
+  "pmTemplates",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 150 }).notNull(),
+    description: text("description"),
+    intervalKm: integer("intervalKm"),
+    intervalEngineHours: integer("intervalEngineHours"),
+    intervalDays: integer("intervalDays"),
+    warningKm: integer("warningKm"),
+    warningEngineHours: integer("warningEngineHours"),
+    warningDays: integer("warningDays"),
+    whicheverComesFirst: boolean("whicheverComesFirst").default(true).notNull(),
+    active: boolean("active").default(true).notNull(),
+    createdByUserId: integer("createdByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [index("pmTemplates_fleet_idx").on(table.fleetId)]
+);
+
+export const pmAssignments = pgTable(
+  "pmAssignments",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
+    pmTemplateId: integer("pmTemplateId")
+      .notNull()
+      .references(() => pmTemplates.id, { onDelete: "cascade" }),
+    overrideIntervalKm: integer("overrideIntervalKm"),
+    overrideIntervalEngineHours: integer("overrideIntervalEngineHours"),
+    overrideIntervalDays: integer("overrideIntervalDays"),
+    overrideWarningKm: integer("overrideWarningKm"),
+    overrideWarningEngineHours: integer("overrideWarningEngineHours"),
+    overrideWarningDays: integer("overrideWarningDays"),
+    lastCompletedDate: dateTimestamp(),
+    lastCompletedOdometerKm: numeric("lastCompletedOdometerKm", {
+      precision: 12,
+      scale: 3,
+    }),
+    lastCompletedEngineHours: numeric("lastCompletedEngineHours", {
+      precision: 12,
+      scale: 2,
+    }),
+    active: boolean("active").default(true).notNull(),
+    createdByUserId: integer("createdByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("pmAssignments_vehicle_template_unique").on(
+      table.fleetId,
+      table.vehicleId,
+      table.pmTemplateId
+    ),
+    index("pmAssignments_fleet_vehicle_idx").on(table.fleetId, table.vehicleId),
+  ]
+);
+
+// Score snapshots are persisted only on material change / classification change
+// / acknowledgement / override — never on every page load.
+export const attentionScoreSnapshots = pgTable(
+  "attentionScoreSnapshots",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
+    total: integer("total").notNull(),
+    classification: varchar("classification", { length: 16 }).notNull(),
+    componentsJson: jsonb("componentsJson"),
+    dataQualityWarningsJson: jsonb("dataQualityWarningsJson"),
+    reason: varchar("reason", { length: 48 }).notNull(),
+    calculatedAt: dateTimestamp().notNull(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("attentionScoreSnapshots_fleet_vehicle_idx").on(
+      table.fleetId,
+      table.vehicleId
+    ),
+  ]
+);
+
+// One current operational display override + acknowledgement per vehicle.
+// Overrides never alter score components, diagnosis, or case creation.
+export const attentionScoreOverrides = pgTable(
+  "attentionScoreOverrides",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
+    acknowledgedByUserId: integer("acknowledgedByUserId"),
+    acknowledgedAt: dateTimestamp(),
+    acknowledgementNote: text("acknowledgementNote"),
+    overrideClassification: varchar("overrideClassification", { length: 16 }),
+    overrideReason: text("overrideReason"),
+    overrideByUserId: integer("overrideByUserId"),
+    overrideAt: dateTimestamp(),
+    active: boolean("active").default(true).notNull(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("attentionScoreOverrides_vehicle_unique").on(
+      table.fleetId,
+      table.vehicleId
+    ),
+  ]
+);
+
+export type VehicleEvent = typeof vehicleEvents.$inferSelect;
+export type InsertVehicleEvent = typeof vehicleEvents.$inferInsert;
+export type PmTemplate = typeof pmTemplates.$inferSelect;
+export type InsertPmTemplate = typeof pmTemplates.$inferInsert;
+export type PmAssignment = typeof pmAssignments.$inferSelect;
+export type InsertPmAssignment = typeof pmAssignments.$inferInsert;
+export type AttentionScoreSnapshot = typeof attentionScoreSnapshots.$inferSelect;
+export type AttentionScoreOverride = typeof attentionScoreOverrides.$inferSelect;
