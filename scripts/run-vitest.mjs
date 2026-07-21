@@ -68,6 +68,8 @@ const ctx = await startVitest(
         "server/**/*.spec.ts",
         "client/**/*.test.ts",
         "client/**/*.spec.ts",
+        "shared/**/*.test.ts",
+        "shared/**/*.spec.ts",
       ],
     },
   }

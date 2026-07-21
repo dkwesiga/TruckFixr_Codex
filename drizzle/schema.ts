@@ -1,5 +1,6 @@
 import {
   boolean,
+  index,
   integer,
   jsonb,
   numeric,
@@ -8,6 +9,7 @@ import {
   serial,
   text,
   timestamp,
+  uniqueIndex,
   varchar,
 } from "drizzle-orm/pg-core";
 
@@ -1196,3 +1198,76 @@ export const passwordResetTokens = pgTable("passwordResetTokens", {
   usedAt: dateTimestamp(),
   createdAt: dateTimestamp().defaultNow().notNull(),
 });
+
+// =====================================================================
+// Fleet Health & Maintenance Decision Workflow (feature-flagged pilot)
+// All tables below are additive. Every business record carries fleetId
+// so tenant isolation is enforced server-side. No defaults enable any
+// pilot capability; feature checks fail closed.
+// =====================================================================
+
+// General-purpose per-fleet feature flags. Distinct from the global
+// `features` catalog and `planFeatures`: this table gates pilot
+// capabilities per tenant. Default disabled; absence means disabled.
+export const fleetFeatures = pgTable(
+  "fleetFeatures",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    featureKey: varchar("featureKey", { length: 100 }).notNull(),
+    enabled: boolean("enabled").default(false).notNull(),
+    valueJson: jsonb("valueJson"),
+    createdByUserId: integer("createdByUserId"),
+    updatedByUserId: integer("updatedByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("fleetFeatures_fleet_key_unique").on(
+      table.fleetId,
+      table.featureKey
+    ),
+    index("fleetFeatures_fleet_idx").on(table.fleetId),
+    index("fleetFeatures_key_idx").on(table.featureKey),
+  ]
+);
+
+// Narrow, fleet-scoped operational grants for selected members. This is
+// NOT a membership role (owner/manager/driver are preserved). It grants
+// specific maintenance capabilities to an existing member without
+// elevating them to manager/owner or internal-admin.
+export const maintenancePermissions = pgTable(
+  "maintenancePermissions",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    userId: integer("userId").notNull(),
+    // JSON array of capability keys (see shared/maintenance/permissions.ts).
+    capabilitiesJson: jsonb("capabilitiesJson").notNull(),
+    active: boolean("active").default(true).notNull(),
+    grantedByUserId: integer("grantedByUserId"),
+    revokedByUserId: integer("revokedByUserId"),
+    revokedAt: dateTimestamp(),
+    notes: text("notes"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("maintenancePermissions_fleet_user_unique").on(
+      table.fleetId,
+      table.userId
+    ),
+    index("maintenancePermissions_fleet_idx").on(table.fleetId),
+    index("maintenancePermissions_user_idx").on(table.userId),
+  ]
+);
+
+export type FleetFeature = typeof fleetFeatures.$inferSelect;
+export type InsertFleetFeature = typeof fleetFeatures.$inferInsert;
+export type MaintenancePermission = typeof maintenancePermissions.$inferSelect;
+export type InsertMaintenancePermission =
+  typeof maintenancePermissions.$inferInsert;
