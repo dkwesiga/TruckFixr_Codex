@@ -317,6 +317,24 @@ Deferred (optional, non-blocking): a dedicated internal-admin Pilot Operations
 page (settings/consent are fully manageable via the `pilot` staff router;
 `upsertSettings`/`recordConsent` are callable by internal admins today).
 
+## Demo seed data (§50)
+
+`scripts/seed-maintenance-demo.ts` — idempotent, local-DB-guarded
+(`ALLOW_DEMO_REMOTE_SEED=true` to override). Scripts:
+`pnpm seed:maintenance-demo` and `pnpm seed:maintenance-demo:rollback`.
+Seeds a marked demo fleet (`Maintenance Pilot Demo`) with owner/manager/
+maintenance users, three vehicles, all pilot flags enabled, a maintenance grant,
+accepted + review-required events, a PM template with due-soon/overdue
+assignments, and cases covering stable / attention (approved) / critical (with
+override) / awaiting-parts-overdue / reopened-with-two-cycles — plus estimate &
+invoice documents (with a variance and a duplicate invoice line), a
+manual-review-only document, a structured repair outcome, pilot settings (no
+backup manager → a readiness warning), and consent left at `none`. Re-runnable:
+every entity is looked up by a stable `[mx-demo]` marker before creation; the
+rollback removes the demo fleet (cascades) plus `repairOutcomes`/vehicles/users.
+Type-clean and loads under tsx; a live run against a local DB is manual
+verification (no DB available in the implementation sandbox).
+
 ## Manual verification still required
 - Run `pnpm db:push` (or apply `0033` SQL) against a real database and confirm
   the two tables + indexes exist.
