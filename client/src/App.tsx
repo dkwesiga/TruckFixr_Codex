@@ -13,6 +13,9 @@ const NotFound = lazyWithChunkRecovery(() => import("./pages/NotFound"));
 const FleetReadinessLanding = lazyWithChunkRecovery(
   () => import("./pages/FleetReadinessLanding")
 );
+const FleetReadinessLandingV2 = lazyWithChunkRecovery(
+  () => import("./pages/FleetReadinessLandingV2")
+);
 const VerifiedInspection = lazyWithChunkRecovery(
   () => import("./pages/VerifiedInspection")
 );
@@ -96,6 +99,14 @@ const MaintenanceCaseDetail = lazyWithChunkRecovery(
 const Offline = lazyWithChunkRecovery(() => import("./pages/Offline"));
 const Privacy = lazyWithChunkRecovery(() => import("./pages/Privacy"));
 const Terms = lazyWithChunkRecovery(() => import("./pages/Terms"));
+const TryOneCase = lazyWithChunkRecovery(() => import("./pages/TryOneCase"));
+const PilotApply = lazyWithChunkRecovery(() => import("./pages/PilotApply"));
+const CaseReviewQueue = lazyWithChunkRecovery(
+  () => import("./pages/admin/CaseReviewQueue")
+);
+const OneCaseFunnel = lazyWithChunkRecovery(
+  () => import("./pages/admin/OneCaseFunnel")
+);
 
 // Internal, gated Maintenance Planning area. The route is only registered when
 // this Vite build flag is set, so normal pilot users never reach it. The page
@@ -111,6 +122,21 @@ const MAINTENANCE_PLANNING_ENABLED =
 // which fail closed. Default on for the pilot build so enabled fleets reach it.
 const FLEET_HEALTH_ENABLED =
   import.meta.env.VITE_ENABLE_FLEET_HEALTH !== "false";
+
+// Public guest "/try-one-case" acquisition flow. Gated by a Vite build flag
+// (fail-closed) that mirrors the server-side ENABLE_GUEST_WORKFLOW gate; guests
+// have no fleet, so this is a global flag rather than a per-fleet fleetFeatures.
+const TRY_ONE_CASE_ENABLED =
+  import.meta.env.VITE_ENABLE_TRY_ONE_CASE === "true";
+
+// Restructured homepage (§5 IA, "Try One Vehicle Case Free" primary CTA, real
+// dashboard embed). Off by default so `/` keeps the current landing page; flip
+// this build flag to promote V2, and unset it to roll back instantly.
+const HOMEPAGE_V2_ENABLED =
+  import.meta.env.VITE_ENABLE_HOMEPAGE_V2 === "true";
+const HomePage = HOMEPAGE_V2_ENABLED
+  ? FleetReadinessLandingV2
+  : FleetReadinessLanding;
 
 function RouteFallback() {
   return (
@@ -204,6 +230,12 @@ function Router() {
         />
         <Route path={"/defect/:id"} component={DefectDetail} />
         <Route path={"/truck/:id"} component={TruckDetail} />
+        {TRY_ONE_CASE_ENABLED ? (
+          <Route path={"/try-one-case"} component={TryOneCase} />
+        ) : null}
+        {TRY_ONE_CASE_ENABLED ? (
+          <Route path={"/pilot-apply"} component={PilotApply} />
+        ) : null}
         <Route path={"/pricing"} component={Pricing} />
         <Route path={"/privacy"} component={Privacy} />
         <Route path={"/terms"} component={Terms} />
@@ -240,13 +272,15 @@ function Router() {
         <Route path={"/admin/fleets"} component={AdminMetricsDashboard} />
         <Route path={"/admin/fleets/:fleetId"} component={AdminFleetDetail} />
         <Route path={"/admin/billing"} component={AdminBillingDashboard} />
+        <Route path={"/admin/case-review"} component={CaseReviewQueue} />
+        <Route path={"/admin/one-case-funnel"} component={OneCaseFunnel} />
         <Route
           path={"/admin/fault-codes"}
           component={FaultCodeReviewDashboard}
         />
         <Route path={"/partner/knowledge"} component={PartnerKnowledgeStudio} />
         <Route path={"/404"} component={NotFound} />
-        <Route path={"/"} component={FleetReadinessLanding} />
+        <Route path={"/"} component={HomePage} />
         <Route component={NotFound} />
       </Switch>
     </Suspense>

@@ -102,4 +102,17 @@ export const ENV = {
   observabilityMinSeverity: readEnv("OBSERVABILITY_MIN_SEVERITY") || "info",
   observabilityWebhookUrl: readEnv("OBSERVABILITY_WEBHOOK_URL"),
   observabilityClientSampleRate: readEnv("OBSERVABILITY_CLIENT_SAMPLE_RATE"),
+  // Public "/try-one-case" guest workflow (fail-closed; guests have no fleet so
+  // this is a global gate rather than a per-fleet fleetFeatures flag).
+  enableGuestWorkflow: readBooleanEnv("ENABLE_GUEST_WORKFLOW"),
+  // Signing secret for scoped/expiring guest links. Falls back to JWT_SECRET so
+  // no new required env var is introduced for the initial rollout.
+  guestTokenSecret: readEnv("GUEST_TOKEN_SECRET") || readEnv("JWT_SECRET"),
+  // Case-review reviewers (configurable per §20). Primary falls back to the
+  // sales notification inbox; backup is intended for a named qualified 310T tech.
+  caseReviewerEmail:
+    readEnv("CASE_REVIEWER_EMAIL") ||
+    readEnv("SALES_NOTIFICATION_EMAIL") ||
+    "info@truckfixr.com",
+  caseBackupReviewerEmail: readEnv("CASE_BACKUP_REVIEWER_EMAIL"),
 };
