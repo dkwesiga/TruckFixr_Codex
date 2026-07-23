@@ -15,6 +15,7 @@ import { getStripeAdminReadinessSummary } from "../services/stripeReadiness";
 import { findUserIdByStripeReference, getSubscriptionState, syncSubscriptionState } from "../services/subscriptions";
 import { hasPaidAccess, type BillingStatus, type SubscriptionTier } from "../../shared/billing";
 import { markPilotAccessConvertedToPaid } from "../services/pilotAccess";
+import { markPilotPaid } from "../services/pilotApplications";
 import { recordObservabilityEvent } from "../services/observability";
 
 const processedWebhookEventIds = new Set<string>();
@@ -70,6 +71,29 @@ export async function processStripeWebhookEvent(
   switch (event.type) {
     case "checkout.session.completed": {
       const object = event.data.object;
+
+      // One-time CAD $99 pilot payment (mode: "payment", no subscription).
+      // Link it back to the pilotApplications row and mark it paid. Payment does
+      // NOT activate the pilot — activation still requires agreement + kickoff.
+      const pilotMetadata =
+        ((object as { metadata?: Record<string, string> }).metadata ?? {}) as Record<
+          string,
+          string | undefined
+        >;
+      if (
+        pilotMetadata.billing_interval === "pilot" &&
+        pilotMetadata.pilot_application_id
+      ) {
+        const applicationId = Number(pilotMetadata.pilot_application_id);
+        if (Number.isFinite(applicationId)) {
+          try {
+            await markPilotPaid({ applicationId, paymentRef: String(object.id ?? "") });
+          } catch (error) {
+            console.error("[stripe] markPilotPaid failed for pilot application:", error);
+          }
+        }
+      }
+
       const customerId = typeof object.customer === "string" ? object.customer : null;
       const subscriptionId = typeof object.subscription === "string" ? object.subscription : null;
       const clientReferenceId =

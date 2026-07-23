@@ -23,6 +23,9 @@ import { fleetMaintenanceRouter } from "./routers/fleetMaintenance";
 import { maintenanceCasesRouter } from "./routers/maintenanceCases";
 import { repairDocumentsRouter } from "./routers/repairDocuments";
 import { pilotRouter } from "./routers/pilot";
+import { guestCasesRouter } from "./routers/guestCases";
+import { caseReviewRouter } from "./routers/caseReview";
+import { pilotApplicationsRouter } from "./routers/pilotApplications";
 
 export const appRouter = router({
   system: systemRouter,
@@ -49,6 +52,9 @@ export const appRouter = router({
   maintenanceCases: maintenanceCasesRouter,
   repairDocuments: repairDocumentsRouter,
   pilot: pilotRouter,
+  guestCases: guestCasesRouter,
+  caseReview: caseReviewRouter,
+  pilotApplications: pilotApplicationsRouter,
 });
 
 export type AppRouter = typeof appRouter;

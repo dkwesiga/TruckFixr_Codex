@@ -1742,3 +1742,295 @@ export type PilotSettings = typeof pilotSettings.$inferSelect;
 export type InsertPilotSettings = typeof pilotSettings.$inferInsert;
 export type ExternalAiConsent = typeof externalAiConsent.$inferSelect;
 export type InsertExternalAiConsent = typeof externalAiConsent.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Public "/try-one-case" guest workflow (migration 0038). Standalone, pre-account,
+// intentionally tenant-less. Mirrors drizzle/0038_guest_case_workflow.sql.
+// ---------------------------------------------------------------------------
+
+export const guestCases = pgTable(
+  "guestCases",
+  {
+    id: serial("id").primaryKey(),
+    publicToken: varchar("publicToken", { length: 64 }).notNull(),
+    status: varchar("status", { length: 24 }).default("started").notNull(),
+    concernCategory: varchar("concernCategory", { length: 32 }),
+    concernText: text("concernText").notNull(),
+    operatingStatus: varchar("operatingStatus", { length: 32 }).notNull(),
+    faultCodes: jsonb("faultCodes"),
+    vehicleIdentifier: jsonb("vehicleIdentifier"),
+    mileage: integer("mileage"),
+    engine: varchar("engine", { length: 120 }),
+    location: varchar("location", { length: 255 }),
+    internalSeverity: varchar("internalSeverity", { length: 16 }), // stable|attention|critical
+    customerReadiness: varchar("customerReadiness", { length: 16 }), // ready|monitor|service_soon|stop
+    operatingAction: varchar("operatingAction", { length: 40 }),
+    criticalTriggered: boolean("criticalTriggered").default(false).notNull(),
+    criticalTriggerCode: varchar("criticalTriggerCode", { length: 48 }),
+    answersJson: jsonb("answersJson"),
+    preliminaryJson: jsonb("preliminaryJson"),
+    decisionJson: jsonb("decisionJson"),
+    reviewStatus: varchar("reviewStatus", { length: 32 })
+      .default("automated_guidance_only")
+      .notNull(),
+    intakeSource: varchar("intakeSource", { length: 32 })
+      .default("web")
+      .notNull(),
+    anonSessionId: varchar("anonSessionId", { length: 64 }),
+    ipHash: varchar("ipHash", { length: 64 }),
+    matchedFleetId: integer("matchedFleetId").references(() => fleets.id, {
+      onDelete: "set null",
+    }),
+    attachedCaseId: integer("attachedCaseId").references(
+      () => maintenanceCases.id,
+      { onDelete: "set null" }
+    ),
+    // Outcome measurement (§25). All nullable; "unknown" values are allowed.
+    initialDecisionAt: dateTimestamp(),
+    humanReviewStartedAt: dateTimestamp(),
+    humanReviewCompletedAt: dateTimestamp(),
+    repairShopEngagedAt: dateTimestamp(),
+    confirmedRepair: boolean("confirmedRepair"),
+    repairCompletedAt: dateTimestamp(),
+    estimatedDowntimeHours: numeric("estimatedDowntimeHours", { precision: 6, scale: 1 }),
+    actualDowntimeHours: numeric("actualDowntimeHours", { precision: 6, scale: 1 }),
+    repairCostCents: integer("repairCostCents"),
+    callsMessagesAvoided: integer("callsMessagesAvoided"),
+    repeatIssueWithin30Days: boolean("repeatIssueWithin30Days"),
+    outcomeConfirmedBy: varchar("outcomeConfirmedBy", { length: 64 }),
+    outcomeConfidence: varchar("outcomeConfidence", { length: 24 }),
+    evidenceSource: varchar("evidenceSource", { length: 24 }), // measured|customer_reported|truckfixr_estimate|unknown
+    outcomeConfirmedAt: dateTimestamp(),
+    lastFollowUpStage: varchar("lastFollowUpStage", { length: 16 }),
+    lastFollowUpAt: dateTimestamp(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+    expiresAt: dateTimestamp(),
+  },
+  (table) => [
+    uniqueIndex("guestCases_publicToken_unique").on(table.publicToken),
+    index("guestCases_status_idx").on(table.status),
+    index("guestCases_createdAt_idx").on(table.createdAt),
+    index("guestCases_matchedFleet_idx").on(table.matchedFleetId),
+  ]
+);
+
+export const guestCaseEvents = pgTable(
+  "guestCaseEvents",
+  {
+    id: serial("id").primaryKey(),
+    guestCaseId: integer("guestCaseId")
+      .notNull()
+      .references(() => guestCases.id, { onDelete: "cascade" }),
+    type: varchar("type", { length: 48 }).notNull(),
+    payloadJson: jsonb("payloadJson"),
+    at: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [index("guestCaseEvents_case_idx").on(table.guestCaseId)]
+);
+
+export const guestCaseContacts = pgTable(
+  "guestCaseContacts",
+  {
+    id: serial("id").primaryKey(),
+    guestCaseId: integer("guestCaseId")
+      .notNull()
+      .references(() => guestCases.id, { onDelete: "cascade" }),
+    email: varchar("email", { length: 255 }),
+    phone: varchar("phone", { length: 40 }),
+    role: varchar("role", { length: 32 }),
+    consentEmail: boolean("consentEmail").default(false).notNull(),
+    consentSms: boolean("consentSms").default(false).notNull(),
+    consentWhatsapp: boolean("consentWhatsapp").default(false).notNull(),
+    consentMarketing: boolean("consentMarketing").default(false).notNull(),
+    authorityConfirmed: boolean("authorityConfirmed").default(false).notNull(),
+    capturedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [index("guestCaseContacts_case_idx").on(table.guestCaseId)]
+);
+
+export const freeCaseLedger = pgTable(
+  "freeCaseLedger",
+  {
+    id: serial("id").primaryKey(),
+    matchKeyHash: varchar("matchKeyHash", { length: 64 }).notNull(),
+    matchKind: varchar("matchKind", { length: 24 }).notNull(), // email_domain|phone|vin|unit|device|fleet
+    guestCaseId: integer("guestCaseId").references(() => guestCases.id, {
+      onDelete: "set null",
+    }),
+    consumedAt: dateTimestamp().defaultNow().notNull(),
+    duplicateConfidence: numeric("duplicateConfidence", {
+      precision: 5,
+      scale: 2,
+    }),
+    duplicateReason: varchar("duplicateReason", { length: 255 }),
+    manualOverrideBy: integer("manualOverrideBy"),
+    manualOverrideReason: varchar("manualOverrideReason", { length: 255 }),
+    abuseRiskScore: numeric("abuseRiskScore", { precision: 5, scale: 2 }),
+  },
+  (table) => [index("freeCaseLedger_matchKeyHash_idx").on(table.matchKeyHash)]
+);
+
+export const caseSlaConfig = pgTable(
+  "caseSlaConfig",
+  {
+    id: serial("id").primaryKey(),
+    category: varchar("category", { length: 40 }).notNull(),
+    withinServiceHoursMinutes: integer("withinServiceHoursMinutes").notNull(),
+    serviceHoursJson: jsonb("serviceHoursJson"),
+    active: boolean("active").default(true).notNull(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("caseSlaConfig_category_unique").on(table.category)]
+);
+
+export const caseReviewQueueItems = pgTable(
+  "caseReviewQueueItems",
+  {
+    id: serial("id").primaryKey(),
+    guestCaseId: integer("guestCaseId").references(() => guestCases.id, {
+      onDelete: "cascade",
+    }),
+    maintenanceCaseId: integer("maintenanceCaseId").references(
+      () => maintenanceCases.id,
+      { onDelete: "cascade" }
+    ),
+    category: varchar("category", { length: 40 }).notNull(), // critical_safety|technical_uncertainty|conflicting_information|high_cost_risk|manual_reviewer_escalation
+    status: varchar("status", { length: 32 })
+      .default("review_required")
+      .notNull(),
+    priority: varchar("priority", { length: 16 }).default("normal").notNull(),
+    afterHours: boolean("afterHours").default(false).notNull(),
+    reviewerUserId: integer("reviewerUserId"),
+    backupReviewerUserId: integer("backupReviewerUserId"),
+    escalationReason: varchar("escalationReason", { length: 255 }),
+    outcome: varchar("outcome", { length: 40 }),
+    reviewerNotes: text("reviewerNotes"),
+    slaDueAt: dateTimestamp(),
+    firstSeenAt: dateTimestamp().defaultNow().notNull(),
+    reviewerNotifiedAt: dateTimestamp(),
+    reviewStartedAt: dateTimestamp(),
+    completedAt: dateTimestamp(),
+    slaMet: boolean("slaMet"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("caseReviewQueueItems_status_idx").on(table.status),
+    index("caseReviewQueueItems_case_idx").on(table.guestCaseId),
+    index("caseReviewQueueItems_slaDue_idx").on(table.slaDueAt),
+  ]
+);
+
+export const analyticsEvents = pgTable(
+  "analyticsEvents",
+  {
+    id: serial("id").primaryKey(),
+    event: varchar("event", { length: 48 }).notNull(),
+    anonSessionId: varchar("anonSessionId", { length: 64 }),
+    intakeSource: varchar("intakeSource", { length: 32 }),
+    role: varchar("role", { length: 32 }),
+    deviceCategory: varchar("deviceCategory", { length: 16 }),
+    referralSource: varchar("referralSource", { length: 120 }),
+    guestCaseId: integer("guestCaseId").references(() => guestCases.id, {
+      onDelete: "set null",
+    }),
+    readiness: varchar("readiness", { length: 16 }),
+    severity: varchar("severity", { length: 16 }),
+    reviewRequirement: varchar("reviewRequirement", { length: 32 }),
+    funnelStep: varchar("funnelStep", { length: 40 }),
+    metadataJson: jsonb("metadataJson"),
+    at: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("analyticsEvents_event_at_idx").on(table.event, table.at),
+    index("analyticsEvents_case_idx").on(table.guestCaseId),
+  ]
+);
+
+export const pilotApplications = pgTable(
+  "pilotApplications",
+  {
+    id: serial("id").primaryKey(),
+    fleetName: varchar("fleetName", { length: 255 }).notNull(),
+    vehicleCount: integer("vehicleCount"),
+    vehicleTypesJson: jsonb("vehicleTypesJson"),
+    approxAge: varchar("approxAge", { length: 40 }),
+    coordinatorName: varchar("coordinatorName", { length: 255 }),
+    outsourced: boolean("outsourced"),
+    hasMaintenanceManager: boolean("hasMaintenanceManager"),
+    expectedCases30d: integer("expectedCases30d"),
+    primaryContactJson: jsonb("primaryContactJson"),
+    qualificationResult: varchar("qualificationResult", { length: 24 }), // qualified|needs_review|not_a_fit
+    state: varchar("state", { length: 24 }).default("applied").notNull(), // applied|under_review|qualified|payment_pending|paid|kickoff_pending|active|completed|converted|declined
+    agreementVersion: varchar("agreementVersion", { length: 32 }),
+    agreementAcceptedAt: dateTimestamp(),
+    acceptedByUserId: integer("acceptedByUserId"),
+    paymentRef: varchar("paymentRef", { length: 128 }),
+    agreementSnapshotJson: jsonb("agreementSnapshotJson"),
+    guestCaseId: integer("guestCaseId").references(() => guestCases.id, {
+      onDelete: "set null",
+    }),
+    fleetId: integer("fleetId").references(() => fleets.id, {
+      onDelete: "set null",
+    }),
+    pilotCreditAmountCents: integer("pilotCreditAmountCents"),
+    pilotCreditAppliedAt: dateTimestamp(),
+    // Kickoff (activation requirements): baseline + enrolled vehicles (≤5).
+    baselineJson: jsonb("baselineJson"),
+    enrolledVehicleIdsJson: jsonb("enrolledVehicleIdsJson"),
+    startDate: dateTimestamp(),
+    endDate: dateTimestamp(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("pilotApplications_state_idx").on(table.state),
+    index("pilotApplications_fleet_idx").on(table.fleetId),
+  ]
+);
+
+export type GuestCase = typeof guestCases.$inferSelect;
+export type InsertGuestCase = typeof guestCases.$inferInsert;
+export type GuestCaseEvent = typeof guestCaseEvents.$inferSelect;
+export type InsertGuestCaseEvent = typeof guestCaseEvents.$inferInsert;
+export type GuestCaseContact = typeof guestCaseContacts.$inferSelect;
+export type InsertGuestCaseContact = typeof guestCaseContacts.$inferInsert;
+export type FreeCaseLedgerEntry = typeof freeCaseLedger.$inferSelect;
+export type InsertFreeCaseLedgerEntry = typeof freeCaseLedger.$inferInsert;
+export type CaseSlaConfig = typeof caseSlaConfig.$inferSelect;
+export type InsertCaseSlaConfig = typeof caseSlaConfig.$inferInsert;
+export type CaseReviewQueueItem = typeof caseReviewQueueItems.$inferSelect;
+export type InsertCaseReviewQueueItem = typeof caseReviewQueueItems.$inferInsert;
+export type AnalyticsEvent = typeof analyticsEvents.$inferSelect;
+export type InsertAnalyticsEvent = typeof analyticsEvents.$inferInsert;
+export type PilotApplication = typeof pilotApplications.$inferSelect;
+export type InsertPilotApplication = typeof pilotApplications.$inferInsert;
+
+export const guestCaseFollowUps = pgTable(
+  "guestCaseFollowUps",
+  {
+    id: serial("id").primaryKey(),
+    guestCaseId: integer("guestCaseId")
+      .notNull()
+      .references(() => guestCases.id, { onDelete: "cascade" }),
+    stage: varchar("stage", { length: 16 }).notNull(), // 24h|3d|7d|30d
+    scheduledFor: dateTimestamp().notNull(),
+    channel: varchar("channel", { length: 16 }), // email|sms|whatsapp
+    status: varchar("status", { length: 16 }).default("pending").notNull(), // pending|sent|skipped|failed
+    sentAt: dateTimestamp(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("guestCaseFollowUps_case_idx").on(table.guestCaseId),
+    index("guestCaseFollowUps_due_idx").on(table.status, table.scheduledFor),
+    uniqueIndex("guestCaseFollowUps_case_stage_unique").on(
+      table.guestCaseId,
+      table.stage
+    ),
+  ]
+);
+
+export type GuestCaseFollowUp = typeof guestCaseFollowUps.$inferSelect;
+export type InsertGuestCaseFollowUp = typeof guestCaseFollowUps.$inferInsert;

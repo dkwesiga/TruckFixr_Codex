@@ -192,6 +192,7 @@ export const subscriptionsRouter = router({
       z.object({
         successPath: z.string().default("/profile?subscription=success"),
         cancelPath: z.string().default("/pricing?subscription=cancelled"),
+        pilotApplicationId: z.number().int().positive().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -236,6 +237,7 @@ export const subscriptionsRouter = router({
       const session = await createTruckFixrPilotCheckoutSession({
         customerId,
         companyId: current.activeFleetId,
+        pilotApplicationId: input.pilotApplicationId,
         successUrl: getAbsoluteUrl(input.successPath),
         cancelUrl: getAbsoluteUrl(input.cancelPath),
       });

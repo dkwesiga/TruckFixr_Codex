@@ -79,6 +79,9 @@ type TruckFixrPilotCheckoutInput = {
   companyId: number;
   successUrl: string;
   cancelUrl: string;
+  // Links the one-time pilot payment back to a pilotApplications row so the
+  // webhook can mark it paid (guest/account-first funnel).
+  pilotApplicationId?: number;
 };
 
 type StripeInvoice = {
@@ -256,6 +259,9 @@ export async function createTruckFixrPilotCheckoutSession(input: TruckFixrPilotC
       "metadata[plan_key]": "fleet_growth",
       "metadata[billing_interval]": "pilot",
       "metadata[product_context]": "truckfixr_fleet_ai",
+      ...(input.pilotApplicationId
+        ? { "metadata[pilot_application_id]": input.pilotApplicationId }
+        : {}),
     },
   });
 }
