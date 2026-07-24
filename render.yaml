@@ -177,6 +177,10 @@ services:
         value: https://api.truckfixr.com
       - key: VITE_APP_ID
         value: truckfixr-render
+      # Invite-only /try-one-case funnel (build-time). Route renders; the server
+      # requires a valid GUEST_INVITE_CODES code, so it stays fail-closed.
+      - key: VITE_ENABLE_TRY_ONE_CASE
+        value: "true"
       - key: VITE_SUPABASE_URL
         sync: false
       - key: VITE_SUPABASE_ANON_KEY
@@ -214,6 +218,14 @@ services:
         value: production
       - key: ALLOW_RUNTIME_SCHEMA_REPAIR
         value: "false"
+      # Public guest "/try-one-case" workflow. Enabled, but gated by invite codes.
+      - key: ENABLE_GUEST_WORKFLOW
+        value: "true"
+      # Invite-only gate (comma-separated codes). FAIL-CLOSED: until you set this
+      # in the Render dashboard, NO guest case can be started even with the
+      # workflow on. Set it to open the preview to invitees; clear it to close.
+      - key: GUEST_INVITE_CODES
+        sync: false
       - key: VITE_APP_ID
         value: truckfixr-render
       - key: APP_BASE_URL

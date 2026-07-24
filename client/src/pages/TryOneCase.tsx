@@ -117,6 +117,11 @@ export default function TryOneCase() {
   const [concernCategory, setConcernCategory] = useState("");
   const [operatingStatus, setOperatingStatus] = useState("");
   const [unitOrVin, setUnitOrVin] = useState("");
+  const [inviteCode, setInviteCode] = useState(() =>
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("invite") ?? ""
+      : ""
+  );
   const [intakeError, setIntakeError] = useState<string | null>(null);
 
   // Contact fields.
@@ -179,6 +184,7 @@ export default function TryOneCase() {
             : { unitNumber: unitOrVin.trim() }
           : undefined,
         intakeSource: "web",
+        inviteCode: inviteCode.trim() || undefined,
         trapField,
       } as never);
       setPublicToken(res.publicToken);
@@ -258,6 +264,12 @@ export default function TryOneCase() {
           className="absolute left-[-9999px] h-px w-px opacity-0"
         />
 
+        {/* Invite-only preview notice (provisional copy). */}
+        <div className="mb-4 rounded-md border border-[#F3D9A0] bg-[#FDF3DF] px-3 py-2 text-xs leading-5 text-[#7a5a12]">
+          <span className="font-bold uppercase tracking-wide">Invite-only preview</span> · provisional.
+          Decision support only — not a confirmed diagnosis, roadworthiness certification, or emergency service.
+        </div>
+
         {phase === "intake" && (
           <form onSubmit={handleIntakeSubmit} className={cn(cardClass, "space-y-5 p-5 sm:p-6")} noValidate>
             <div>
@@ -268,6 +280,20 @@ export default function TryOneCase() {
               <p className="mt-2 text-sm leading-6 text-[#38465F]">
                 No account, fleet setup, or payment required. TruckFixr gives you a clear next action.
               </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="inviteCode" className="text-sm font-semibold">
+                Invite code <span className="text-[#D81F2A]">*</span>
+              </Label>
+              <Input
+                id="inviteCode"
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value)}
+                placeholder="From your invite link or email"
+                autoComplete="off"
+              />
+              <p className="text-xs text-[#73777E]">This preview is invite-only.</p>
             </div>
 
             <div className="space-y-2">
