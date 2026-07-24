@@ -7,6 +7,7 @@ import {
   CONCERN_CATEGORIES,
   OPERATING_STATUSES,
 } from "../../shared/maintenance/guestCaseFlow";
+import { isInviteValid, parseInviteCodes } from "../../shared/guestInvite";
 import {
   answerGuestQuestion,
   getGuestCase,
@@ -19,6 +20,18 @@ import {
 function assertGuestWorkflowEnabled(): void {
   if (!ENV.enableGuestWorkflow) {
     throw new TRPCError({ code: "NOT_FOUND", message: "Not available." });
+  }
+}
+
+// Invite-only gate for the current rollout phase (fail-closed). A new case can
+// only be started with a valid invite code; with none configured, all are denied.
+function assertValidInvite(inviteCode: string | undefined | null): void {
+  const configured = parseInviteCodes(ENV.guestInviteCodes);
+  if (!isInviteValid(inviteCode, configured)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "This is an invite-only preview. A valid invite code is required.",
+    });
   }
 }
 
@@ -60,17 +73,19 @@ export const guestCasesRouter = router({
         location: z.string().trim().max(255).optional().nullable(),
         intakeSource: z.string().trim().max(32).optional(),
         anonSessionId: z.string().trim().max(64).optional().nullable(),
+        inviteCode: z.string().trim().max(64).optional().nullable(),
         // Honeypot — must stay empty.
         trapField: z.string().trim().max(255).optional().nullable(),
       })
     )
     .mutation(async ({ input, ctx }) => {
       assertGuestWorkflowEnabled();
+      assertValidInvite(input.inviteCode);
       if (input.trapField?.trim()) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Could not submit. Please try again." });
       }
       guestRateLimit(ctx, "guest_case_start", 8);
-      const { trapField: _trap, ...rest } = input;
+      const { trapField: _trap, inviteCode: _invite, ...rest } = input;
       return startGuestCase(rest as Parameters<typeof startGuestCase>[0]);
     }),
 

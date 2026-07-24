@@ -108,6 +108,9 @@ export const ENV = {
   // Signing secret for scoped/expiring guest links. Falls back to JWT_SECRET so
   // no new required env var is introduced for the initial rollout.
   guestTokenSecret: readEnv("GUEST_TOKEN_SECRET") || readEnv("JWT_SECRET"),
+  // Comma-separated invite codes for the invite-only /try-one-case phase.
+  // Fail-closed: if empty, no case can be started (the funnel stays unreachable).
+  guestInviteCodes: readEnv("GUEST_INVITE_CODES"),
   // Case-review reviewers (configurable per §20). Primary falls back to the
   // sales notification inbox; backup is intended for a named qualified 310T tech.
   caseReviewerEmail:
