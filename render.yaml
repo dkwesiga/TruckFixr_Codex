@@ -181,6 +181,11 @@ services:
       # requires a valid GUEST_INVITE_CODES code, so it stays fail-closed.
       - key: VITE_ENABLE_TRY_ONE_CASE
         value: "true"
+      # Client mirror of GUEST_INVITE_REQUIRED. "true" = show invite field +
+      # invite-only banner. Set to "false" (with the api GUEST_INVITE_REQUIRED)
+      # to present the funnel publicly.
+      - key: VITE_GUEST_INVITE_REQUIRED
+        value: "true"
       - key: VITE_SUPABASE_URL
         sync: false
       - key: VITE_SUPABASE_ANON_KEY
@@ -226,6 +231,11 @@ services:
       # workflow on. Set it to open the preview to invitees; clear it to close.
       - key: GUEST_INVITE_CODES
         sync: false
+      # Invite gate on/off. "true" = invite-only (current). Set BOTH this and the
+      # frontend VITE_GUEST_INVITE_REQUIRED to "false" to open the funnel publicly
+      # (only after legal/310T sign-off + a staffed reviewer).
+      - key: GUEST_INVITE_REQUIRED
+        value: "true"
       - key: VITE_APP_ID
         value: truckfixr-render
       - key: APP_BASE_URL

@@ -111,6 +111,10 @@ export const ENV = {
   // Comma-separated invite codes for the invite-only /try-one-case phase.
   // Fail-closed: if empty, no case can be started (the funnel stays unreachable).
   guestInviteCodes: readEnv("GUEST_INVITE_CODES"),
+  // Whether the invite gate is enforced. Default TRUE (invite-only). Set to
+  // false (together with the client VITE_GUEST_INVITE_REQUIRED) to open the
+  // funnel to the public once legal/310T sign-off is in hand.
+  guestInviteRequired: !/^(0|false|no|off)$/i.test(readEnv("GUEST_INVITE_REQUIRED") || "true"),
   // Case-review reviewers (configurable per §20). Primary falls back to the
   // sales notification inbox; backup is intended for a named qualified 310T tech.
   caseReviewerEmail:
