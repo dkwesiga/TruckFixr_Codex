@@ -20,6 +20,10 @@ const displayClass =
   "font-['Barlow_Condensed'] italic font-black uppercase leading-[1.05] tracking-[-0.01em] text-[#0A1A2E]";
 const redBtn = "bg-[#D81F2A] text-white hover:bg-[#A6121B]";
 
+// Invite-only vs public. Default invite-only; set VITE_GUEST_INVITE_REQUIRED=false
+// (with the server GUEST_INVITE_REQUIRED=false) to open the funnel to the public.
+const INVITE_REQUIRED = import.meta.env.VITE_GUEST_INVITE_REQUIRED !== "false";
+
 const OPERATING_STATUS_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "operating_normally", label: "Operating normally" },
   { value: "operating_with_symptoms", label: "Operating with symptoms" },
@@ -264,9 +268,13 @@ export default function TryOneCase() {
           className="absolute left-[-9999px] h-px w-px opacity-0"
         />
 
-        {/* Invite-only preview notice (provisional copy). */}
+        {/* Provisional notice. Wording depends on invite-only vs public mode. */}
         <div className="mb-4 rounded-md border border-[#F3D9A0] bg-[#FDF3DF] px-3 py-2 text-xs leading-5 text-[#7a5a12]">
-          <span className="font-bold uppercase tracking-wide">Invite-only preview</span> · provisional.
+          {INVITE_REQUIRED ? (
+            <>
+              <span className="font-bold uppercase tracking-wide">Invite-only preview</span> · provisional.{" "}
+            </>
+          ) : null}
           Decision support only — not a confirmed diagnosis, roadworthiness certification, or emergency service.
         </div>
 
@@ -282,19 +290,21 @@ export default function TryOneCase() {
               </p>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="inviteCode" className="text-sm font-semibold">
-                Invite code <span className="text-[#D81F2A]">*</span>
-              </Label>
-              <Input
-                id="inviteCode"
-                value={inviteCode}
-                onChange={(e) => setInviteCode(e.target.value)}
-                placeholder="From your invite link or email"
-                autoComplete="off"
-              />
-              <p className="text-xs text-[#73777E]">This preview is invite-only.</p>
-            </div>
+            {INVITE_REQUIRED && (
+              <div className="space-y-2">
+                <Label htmlFor="inviteCode" className="text-sm font-semibold">
+                  Invite code <span className="text-[#D81F2A]">*</span>
+                </Label>
+                <Input
+                  id="inviteCode"
+                  value={inviteCode}
+                  onChange={(e) => setInviteCode(e.target.value)}
+                  placeholder="From your invite link or email"
+                  autoComplete="off"
+                />
+                <p className="text-xs text-[#73777E]">This preview is invite-only.</p>
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor="concernText" className="text-sm font-semibold">

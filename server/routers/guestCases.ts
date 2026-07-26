@@ -23,9 +23,11 @@ function assertGuestWorkflowEnabled(): void {
   }
 }
 
-// Invite-only gate for the current rollout phase (fail-closed). A new case can
-// only be started with a valid invite code; with none configured, all are denied.
+// Invite gate for the current rollout phase (fail-closed). A new case can only be
+// started with a valid invite code; with none configured, all are denied. When
+// GUEST_INVITE_REQUIRED is false (public mode), the gate is skipped.
 function assertValidInvite(inviteCode: string | undefined | null): void {
+  if (!ENV.guestInviteRequired) return; // public mode — no invite needed
   const configured = parseInviteCodes(ENV.guestInviteCodes);
   if (!isInviteValid(inviteCode, configured)) {
     throw new TRPCError({
