@@ -24,10 +24,12 @@ function assertGuestWorkflowEnabled(): void {
 }
 
 // Invite gate for the current rollout phase (fail-closed). A new case can only be
-// started with a valid invite code; with none configured, all are denied. When
-// GUEST_INVITE_REQUIRED is false (public mode), the gate is skipped.
+// started with a valid invite code; with none configured, all are denied. The
+// gate is skipped only when the public-launch gate is active (approved sign-off +
+// configured reviewer — see shared/publicLaunch.ts); any missing precondition
+// keeps ENV.guestInviteRequired true, so the funnel fails safe to invite-only.
 function assertValidInvite(inviteCode: string | undefined | null): void {
-  if (!ENV.guestInviteRequired) return; // public mode — no invite needed
+  if (!ENV.guestInviteRequired) return; // public launch active — no invite needed
   const configured = parseInviteCodes(ENV.guestInviteCodes);
   if (!isInviteValid(inviteCode, configured)) {
     throw new TRPCError({

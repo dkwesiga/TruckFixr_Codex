@@ -129,12 +129,16 @@ const FLEET_HEALTH_ENABLED =
 const TRY_ONE_CASE_ENABLED =
   import.meta.env.VITE_ENABLE_TRY_ONE_CASE === "true";
 
-// Restructured homepage (§5 IA, "Try One Vehicle Case Free" primary CTA, real
-// dashboard embed). Off by default so `/` keeps the current landing page; flip
-// this build flag to promote V2, and unset it to roll back instantly.
-const HOMEPAGE_V2_ENABLED =
-  import.meta.env.VITE_ENABLE_HOMEPAGE_V2 === "true";
-const HomePage = HOMEPAGE_V2_ENABLED
+// Public-launch gate (client mirror of the server gate in shared/publicLaunch.ts).
+// One flag drives BOTH surfaces so they can never disagree: when public launch is
+// approved, `/` serves the restructured V2 homepage AND the funnel presents
+// publicly (no invite). Off by default → current landing + invite-only funnel.
+// Flip VITE_PUBLIC_LAUNCH_APPROVED to "true" only alongside the api-side
+// PUBLIC_LAUNCH_APPROVED + PUBLIC_LAUNCH_SIGNOFF + CASE_REVIEWER_EMAIL; unset it
+// to roll back instantly.
+const PUBLIC_LAUNCH_APPROVED =
+  import.meta.env.VITE_PUBLIC_LAUNCH_APPROVED === "true";
+const HomePage = PUBLIC_LAUNCH_APPROVED
   ? FleetReadinessLandingV2
   : FleetReadinessLanding;
 

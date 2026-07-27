@@ -10,15 +10,25 @@ and off by default.
 |---|---|---|---|
 | `ENABLE_GUEST_WORKFLOW` | server env | off | Gates all `guestCases.*` public procedures (fail-closed, returns not-found when off). |
 | `VITE_ENABLE_TRY_ONE_CASE` | client build | off | Registers `/try-one-case` and `/pilot-apply` routes. |
-| `VITE_ENABLE_HOMEPAGE_V2` | client build | off | Serves the restructured homepage at `/`; unset → current landing (instant rollback). |
+| `GUEST_INVITE_CODES` | server env | — | Comma-separated invite codes for the invite-only phase. Empty ⇒ no case can start (fail-closed). |
+| **`PUBLIC_LAUNCH_APPROVED`** | server env | off | Public-launch gate (go decision). Part 1 of 3 — see §7. |
+| **`PUBLIC_LAUNCH_SIGNOFF`** | server env | — | Recorded legal/310T/commercial sign-off string. Part 2 of 3 — **must be non-empty** for public launch. |
+| **`VITE_PUBLIC_LAUNCH_APPROVED`** | client build | off | Client mirror. `true` ⇒ V2 homepage at `/` **and** funnel shown publicly; unset ⇒ current landing + invite-only (instant rollback). |
 | `GUEST_TOKEN_SECRET` | server env | falls back to `JWT_SECRET` | HMAC signing for scoped/expiring guest links. |
-| `CASE_REVIEWER_EMAIL` | server env | sales inbox | Primary case reviewer for alerts. |
+| `CASE_REVIEWER_EMAIL` | server env | sales inbox fallback | Primary case reviewer for alerts. Part 3 of 3 of the public-launch gate — the gate checks the **raw** var (fallback does not count). |
 | `CASE_BACKUP_REVIEWER_EMAIL` | server env | — | Named qualified **310T** backup reviewer. |
 | `RESEND_API_KEY` / `EMAIL_FROM` | server env | — | Reviewer alerts + guest follow-up emails (no-op if unset). |
 | `STRIPE_PRICE_FLEET_PILOT_30_DAY` | server env | — | **Must be a one-time CAD $99 price** (see §6). |
 
 > Client flags are **build-time** (Vite) — rebuild after changing. Server flags are
 > runtime. There is no per-fleet `fleetFeatures` gate for guests (they have no fleet).
+>
+> **Public launch is a single coupled gate** (`shared/publicLaunch.ts`): the V2 homepage
+> and the open (no-invite) funnel go live *together* and only when **all three** server
+> preconditions hold — `PUBLIC_LAUNCH_APPROVED=true` **AND** `PUBLIC_LAUNCH_SIGNOFF` set
+> **AND** `CASE_REVIEWER_EMAIL` set. Miss any one and the server **fails safe** to
+> invite-only, regardless of the client flag. This makes it impossible to publish a "free
+> case" CTA that lands on an invite wall.
 
 ## 2. Migrations to apply (out-of-band, env-guarded)
 
@@ -35,19 +45,22 @@ All are idempotent (`CREATE TABLE / ADD COLUMN IF NOT EXISTS`).
 
 1. **Internal testing** (staging): flags on in a non-prod env, seed scenarios
    (`pnpm seed:guest-demo`), run ≥10 realistic cases through the funnel + review + outcome.
-2. **Invite-only**: keep `VITE_ENABLE_HOMEPAGE_V2` **off** at `/` (public still sees the
-   current landing). Share the direct `/try-one-case` link with selected Mr Diesel +
-   TruckFixr contacts (route enabled via `VITE_ENABLE_TRY_ONE_CASE`). Use **provisional**
-   copy, clearly marked.
+2. **Invite-only**: leave the public-launch gate **off** (default) — public still sees the
+   current landing, and the funnel requires a `GUEST_INVITE_CODES` code. Share the direct
+   `/try-one-case?invite=…` link with selected Mr Diesel + TruckFixr contacts (route enabled
+   via `VITE_ENABLE_TRY_ONE_CASE`). Use **provisional** copy, clearly marked.
 3. **Review**: usability, safety, SLA performance, outcomes, conversion. Correct friction.
 4. **Warm traffic**: expand the invite list.
-5. **Promote homepage**: set `VITE_ENABLE_HOMEPAGE_V2=true` and rebuild → `/` shows V2.
+5. **Public launch** (only after the §7 sign-off): flip the coupled gate — see the §7
+   launch procedure. This promotes the V2 homepage **and** opens the funnel together.
 6. **Retain rollback** for 2–4 weeks; monitor. Then remove the fallback.
 
 ## 4. Rollback
 
-- Homepage: unset `VITE_ENABLE_HOMEPAGE_V2` + rebuild → current landing returns.
-- Funnel: unset `VITE_ENABLE_TRY_ONE_CASE` (routes 404) and `ENABLE_GUEST_WORKFLOW`
+- Public launch: unset `VITE_PUBLIC_LAUNCH_APPROVED` + rebuild (homepage → current landing)
+  and set `PUBLIC_LAUNCH_APPROVED=false` on the api (funnel → invite-only). Either one alone
+  is enough for the server to fail safe to invite-only.
+- Funnel entirely: unset `VITE_ENABLE_TRY_ONE_CASE` (routes 404) and `ENABLE_GUEST_WORKFLOW`
   (server returns not-found).
 - Data: all migrations are additive — **no destructive rollback needed**. Guest tables
   simply stop receiving writes.
@@ -94,3 +107,19 @@ Invite-only testing may proceed with clearly-marked provisional copy.
 - [ ] Confirm reviewer coverage + backup 310T contact configured.
 
 **Sign-off:** commercial ____ · 310T ____ · legal ____ · date ____
+
+### Launch procedure (do this only once the boxes above are checked)
+
+The gate is designed so you cannot go public without recording the sign-off:
+
+1. **api (`truckfixr-api`)** — set all three:
+   - `CASE_REVIEWER_EMAIL` = the staffed reviewer's inbox.
+   - `PUBLIC_LAUNCH_SIGNOFF` = the recorded sign-off, e.g. `commercial+310T+legal 2026-08-15`.
+   - `PUBLIC_LAUNCH_APPROVED` = `true`.
+2. **frontend (`TruckFixr-frontend`)** — set `VITE_PUBLIC_LAUNCH_APPROVED` = `true` and
+   redeploy (build-time flag).
+3. Both services autodeploy from `main`. Verify `/` shows V2 and `/try-one-case` accepts a
+   submission **without** an invite code.
+
+If any api precondition is missing, the server keeps requiring an invite (fail-safe); the
+client shows a friendly "not open to everyone just yet" message instead of an invite error.
