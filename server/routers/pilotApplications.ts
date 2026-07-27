@@ -2,6 +2,8 @@ import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { adminProcedure, publicProcedure, router, staffProcedure } from "../_core/trpc";
 import { enforceIpRateLimit } from "../_core/rateLimit";
+import { getSubscriptionState } from "../services/subscriptions";
+import { canManageCompanyBilling } from "../services/companyAccess";
 import {
   acceptAgreement,
   activatePilot,
@@ -60,24 +62,40 @@ export const pilotApplicationsRouter = router({
       return applyForPilot(rest as Parameters<typeof applyForPilot>[0]);
     }),
 
+  // Authenticated owner accepts the pilot agreement. The fleet is derived from the
+  // signed-in owner's active fleet (not client-supplied), and billing authority is
+  // enforced, so an application can only ever be attached to a fleet the caller owns.
   acceptAgreement: adminProcedure
     .input(
       z.object({
         applicationId: z.number().int().positive(),
         agreementVersion: z.string().trim().min(1).max(64),
-        fleetId: z.number().int().positive(),
         snapshot: z.record(z.string(), z.unknown()).optional(),
       })
     )
-    .mutation(({ input, ctx }) =>
-      acceptAgreement({
+    .mutation(async ({ input, ctx }) => {
+      const { activeFleetId } = await getSubscriptionState(ctx.user.id);
+      if (!activeFleetId) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "Set up your fleet before accepting the pilot agreement.",
+        });
+      }
+      const canManage = await canManageCompanyBilling({ fleetId: activeFleetId, user: ctx.user });
+      if (!canManage) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Only the company owner can accept the pilot agreement and pay.",
+        });
+      }
+      return acceptAgreement({
         applicationId: input.applicationId,
         agreementVersion: input.agreementVersion,
         acceptedByUserId: ctx.user.id,
-        fleetId: input.fleetId,
+        fleetId: activeFleetId,
         snapshot: input.snapshot ?? null,
-      })
-    ),
+      });
+    }),
 
   beginCheckout: adminProcedure
     .input(z.object({ applicationId: z.number().int().positive() }))

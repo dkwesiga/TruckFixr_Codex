@@ -21,6 +21,7 @@ import {
   syncSubscriptionState,
 } from "../services/subscriptions";
 import { recordPilotMilestone, redeemPilotAccessCode } from "../services/pilotAccess";
+import { beginCheckout } from "../services/pilotApplications";
 import { ENV } from "../_core/env";
 import { canManageCompanyBilling } from "../services/companyAccess";
 import {
@@ -232,6 +233,17 @@ export const subscriptionsRouter = router({
         });
         customerId = customer.id;
         await ensureStripeCustomerId(ctx.user.id, customer.id);
+      }
+
+      // Mark the pilot application as payment-pending when this checkout is for one.
+      // Best-effort: a non-transitionable state (e.g. already paid) must not block
+      // the user from reaching Stripe — the webhook's markPilotPaid is idempotent.
+      if (input.pilotApplicationId) {
+        try {
+          await beginCheckout({ applicationId: input.pilotApplicationId });
+        } catch {
+          /* ignore state-guard errors; payment is still recorded by the webhook */
+        }
       }
 
       const session = await createTruckFixrPilotCheckoutSession({

@@ -86,9 +86,14 @@ pilot payment is now automated end-to-end on the server:
 - `markPilotPaid` is idempotent and authoritative (marks paid from `qualified` or
   `payment_pending`). The manual staff `pilotApplications.markPaid` remains as a fallback.
 
-**Remaining client step:** the authenticated "accept & pay" screen (after sign-in from
-`/pilot-apply`) must call `subscriptions.createPilotCheckoutSession({ pilotApplicationId })`
-and redirect to the returned Stripe URL. No custom card entry — hosted Checkout only.
+**Accept & pay (wired):** the authenticated screen at **`/pilot/accept?application=<id>`**
+(`client/src/pages/PilotAccept.tsx`) records agreement acceptance via
+`pilotApplications.acceptAgreement` (fleet derived from the signed-in owner; billing
+authority enforced), then calls `subscriptions.createPilotCheckoutSession({ pilotApplicationId })`
+and redirects to hosted Stripe Checkout — no custom card entry. `createPilotCheckoutSession`
+best-effort moves the application to `payment_pending`; the webhook's `markPilotPaid` is the
+authoritative paid signal. Qualified applicants reach it from `/pilot-apply`; the page is
+resilient across the sign-in round trip (application id persisted client-side).
 
 ## 7. Legal & safety approval gate (MANDATORY before broad public rollout)
 

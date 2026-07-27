@@ -101,6 +101,7 @@ const Privacy = lazyWithChunkRecovery(() => import("./pages/Privacy"));
 const Terms = lazyWithChunkRecovery(() => import("./pages/Terms"));
 const TryOneCase = lazyWithChunkRecovery(() => import("./pages/TryOneCase"));
 const PilotApply = lazyWithChunkRecovery(() => import("./pages/PilotApply"));
+const PilotAccept = lazyWithChunkRecovery(() => import("./pages/PilotAccept"));
 const CaseReviewQueue = lazyWithChunkRecovery(
   () => import("./pages/admin/CaseReviewQueue")
 );
@@ -239,6 +240,9 @@ function Router() {
         ) : null}
         {TRY_ONE_CASE_ENABLED ? (
           <Route path={"/pilot-apply"} component={PilotApply} />
+        ) : null}
+        {TRY_ONE_CASE_ENABLED ? (
+          <Route path={"/pilot/accept"} component={PilotAccept} />
         ) : null}
         <Route path={"/pricing"} component={Pricing} />
         <Route path={"/privacy"} component={Privacy} />
