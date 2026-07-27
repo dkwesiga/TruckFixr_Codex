@@ -20,9 +20,11 @@ const displayClass =
   "font-['Barlow_Condensed'] italic font-black uppercase leading-[1.05] tracking-[-0.01em] text-[#0A1A2E]";
 const redBtn = "bg-[#D81F2A] text-white hover:bg-[#A6121B]";
 
-// Invite-only vs public. Default invite-only; set VITE_GUEST_INVITE_REQUIRED=false
-// (with the server GUEST_INVITE_REQUIRED=false) to open the funnel to the public.
-const INVITE_REQUIRED = import.meta.env.VITE_GUEST_INVITE_REQUIRED !== "false";
+// Invite-only vs public, keyed to the single public-launch flag (see App.tsx and
+// shared/publicLaunch.ts). Default invite-only; the funnel opens to the public
+// only when VITE_PUBLIC_LAUNCH_APPROVED=true (set together with the server-side
+// PUBLIC_LAUNCH_* preconditions, which independently hard-gate submissions).
+const INVITE_REQUIRED = import.meta.env.VITE_PUBLIC_LAUNCH_APPROVED !== "true";
 
 const OPERATING_STATUS_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "operating_normally", label: "Operating normally" },
@@ -194,7 +196,17 @@ export default function TryOneCase() {
       setPublicToken(res.publicToken);
       applyStep(res);
     } catch (err) {
-      setIntakeError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      const raw = err instanceof Error ? err.message : "Something went wrong. Please try again.";
+      // Fail-safe UX: if the client is in public mode but the server hasn't
+      // completed the public-launch gate (e.g. sign-off/reviewer not yet set),
+      // the server still requires an invite. Show a friendly "not open yet"
+      // instead of an invite-code error the public visitor can't act on.
+      const looksLikeInviteGate = /invite/i.test(raw);
+      setIntakeError(
+        !INVITE_REQUIRED && looksLikeInviteGate
+          ? "The free case preview isn't open to everyone just yet — please check back soon."
+          : raw
+      );
     }
   }
 

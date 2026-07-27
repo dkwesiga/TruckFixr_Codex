@@ -1,7 +1,22 @@
+import { isPublicLaunchActive } from "../../shared/publicLaunch";
+
 const readEnv = (name: string) => process.env[name]?.trim() ?? "";
 const readEnvWithAliases = (primary: string, aliases: string[] = []) =>
   [primary, ...aliases].map(readEnv).find(Boolean) ?? "";
 const readBooleanEnv = (name: string) => /^(1|true|yes)$/i.test(readEnv(name));
+
+// Public-launch gate inputs (see shared/publicLaunch.ts). The funnel goes public
+// (open, no invite) AND the V2 homepage goes live only when all three hold.
+const publicLaunchApproved = readBooleanEnv("PUBLIC_LAUNCH_APPROVED");
+const publicLaunchSignoff = readEnv("PUBLIC_LAUNCH_SIGNOFF");
+// Explicit reviewer config (NOT the sales-inbox fallback below) — the staffed-
+// reviewer precondition. Requires an operator to actually set CASE_REVIEWER_EMAIL.
+const caseReviewerConfigured = Boolean(readEnv("CASE_REVIEWER_EMAIL"));
+const publicLaunchActive = isPublicLaunchActive({
+  approved: publicLaunchApproved,
+  signoff: publicLaunchSignoff,
+  reviewerConfigured: caseReviewerConfigured,
+});
 
 // Centralized env access for both local .env development and deployed runtime.
 export const ENV = {
@@ -111,10 +126,16 @@ export const ENV = {
   // Comma-separated invite codes for the invite-only /try-one-case phase.
   // Fail-closed: if empty, no case can be started (the funnel stays unreachable).
   guestInviteCodes: readEnv("GUEST_INVITE_CODES"),
-  // Whether the invite gate is enforced. Default TRUE (invite-only). Set to
-  // false (together with the client VITE_GUEST_INVITE_REQUIRED) to open the
-  // funnel to the public once legal/310T sign-off is in hand.
-  guestInviteRequired: !/^(0|false|no|off)$/i.test(readEnv("GUEST_INVITE_REQUIRED") || "true"),
+  // Public-launch gate (see shared/publicLaunch.ts). Set PUBLIC_LAUNCH_APPROVED=true
+  // AND PUBLIC_LAUNCH_SIGNOFF=<recorded legal/310T/commercial sign-off> AND
+  // CASE_REVIEWER_EMAIL to graduate the funnel from invite-only to public.
+  publicLaunchApproved,
+  publicLaunchSignoff,
+  publicLaunchActive,
+  // Derived: the invite gate is enforced UNLESS public launch is active. When
+  // any launch precondition is missing this stays true, so the funnel fails
+  // safe to invite-only (using GUEST_INVITE_CODES).
+  guestInviteRequired: !publicLaunchActive,
   // Case-review reviewers (configurable per §20). Primary falls back to the
   // sales notification inbox; backup is intended for a named qualified 310T tech.
   caseReviewerEmail:

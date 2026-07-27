@@ -181,11 +181,14 @@ services:
       # requires a valid GUEST_INVITE_CODES code, so it stays fail-closed.
       - key: VITE_ENABLE_TRY_ONE_CASE
         value: "true"
-      # Client mirror of GUEST_INVITE_REQUIRED. "true" = show invite field +
-      # invite-only banner. Set to "false" (with the api GUEST_INVITE_REQUIRED)
-      # to present the funnel publicly.
-      - key: VITE_GUEST_INVITE_REQUIRED
-        value: "true"
+      # Public-launch gate (client mirror). One flag drives BOTH the homepage and
+      # the funnel: "true" serves the V2 homepage AND presents the funnel publicly
+      # (no invite); default "false" keeps the current landing + invite-only
+      # funnel. Flip to "true" ONLY together with the api-side PUBLIC_LAUNCH_*
+      # vars (the server independently hard-gates submissions), and only after
+      # Ontario legal + 310T + commercial sign-off and a staffed reviewer.
+      - key: VITE_PUBLIC_LAUNCH_APPROVED
+        value: "false"
       - key: VITE_SUPABASE_URL
         sync: false
       - key: VITE_SUPABASE_ANON_KEY
@@ -231,11 +234,22 @@ services:
       # workflow on. Set it to open the preview to invitees; clear it to close.
       - key: GUEST_INVITE_CODES
         sync: false
-      # Invite gate on/off. "true" = invite-only (current). Set BOTH this and the
-      # frontend VITE_GUEST_INVITE_REQUIRED to "false" to open the funnel publicly
-      # (only after legal/310T sign-off + a staffed reviewer).
-      - key: GUEST_INVITE_REQUIRED
-        value: "true"
+      # Public-launch gate (server, hard). The funnel opens to the public ONLY
+      # when ALL of these hold, else it fails safe to invite-only:
+      #   1. PUBLIC_LAUNCH_APPROVED=true  — the go decision.
+      #   2. PUBLIC_LAUNCH_SIGNOFF set     — recorded legal/310T/commercial sign-off
+      #      (a non-empty audit string, e.g. "legal+310T+commercial 2026-08").
+      #   3. CASE_REVIEWER_EMAIL set       — a staffed reviewer (below).
+      # Flip PUBLIC_LAUNCH_APPROVED + set PUBLIC_LAUNCH_SIGNOFF here AND set the
+      # frontend VITE_PUBLIC_LAUNCH_APPROVED=true to go public.
+      - key: PUBLIC_LAUNCH_APPROVED
+        value: "false"
+      - key: PUBLIC_LAUNCH_SIGNOFF
+        sync: false
+      # Staffed case reviewer (required for public launch; also receives review
+      # alerts). Leave unset to keep the public-launch gate fail-safe closed.
+      - key: CASE_REVIEWER_EMAIL
+        sync: false
       - key: VITE_APP_ID
         value: truckfixr-render
       - key: APP_BASE_URL
