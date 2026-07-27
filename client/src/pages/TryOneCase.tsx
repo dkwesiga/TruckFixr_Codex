@@ -11,6 +11,10 @@ import { trackEvent } from "@/lib/analytics";
 import { trpc } from "@/lib/trpc";
 import { useSeoMeta } from "@/lib/useSeoMeta";
 import { ReadinessPill, type Readiness } from "@/components/readiness/ReadinessPill";
+import {
+  GUEST_RESULT_DISCLAIMER_TEXT,
+  GUEST_RESULT_DISCLAIMER_VERSION,
+} from "@shared/maintenance/guestDisclaimer";
 
 // Shared visual language with the marketing landing (kept in sync intentionally).
 const shell = "mx-auto w-full max-w-[640px] px-4 sm:px-6";
@@ -138,6 +142,7 @@ export default function TryOneCase() {
   const [consentWhatsapp, setConsentWhatsapp] = useState(false);
   const [consentMarketing, setConsentMarketing] = useState(false);
   const [authorityConfirmed, setAuthorityConfirmed] = useState(false);
+  const [disclaimerAck, setDisclaimerAck] = useState(false);
   const [trapField, setTrapField] = useState(""); // honeypot
   const [contactError, setContactError] = useState<string | null>(null);
 
@@ -229,21 +234,27 @@ export default function TryOneCase() {
   async function handleContactSubmit(e: FormEvent) {
     e.preventDefault();
     setContactError(null);
-    if (!email.trim() && !phone.trim()) {
-      setContactError("Enter an email address or a mobile number so we can share the result.");
+    if (!email.trim()) {
+      setContactError("Enter an email address so we can send the result.");
+      return;
+    }
+    if (!disclaimerAck) {
+      setContactError("Please acknowledge the disclaimer to see the full result.");
       return;
     }
     if (!publicToken) return;
     try {
       const res = await contactMutation.mutateAsync({
         publicToken,
-        email: email.trim() || undefined,
+        email: email.trim(),
         phone: phone.trim() || undefined,
         consentEmail,
         consentSms,
         consentWhatsapp,
         consentMarketing,
         authorityConfirmed,
+        disclaimerAcknowledged: true,
+        disclaimerVersion: GUEST_RESULT_DISCLAIMER_VERSION,
         trapField,
       });
       setDecision(res.decision as DecisionCard);
@@ -466,14 +477,16 @@ export default function TryOneCase() {
           <form onSubmit={handleContactSubmit} className={cn(cardClass, "space-y-5 p-5 sm:p-6")} noValidate>
             <div>
               <h2 className={cn(displayClass, "text-xl sm:text-2xl")}>Where should we send the result?</h2>
-              <p className="mt-2 text-sm text-[#38465F]">Email or mobile — you only need one.</p>
+              <p className="mt-2 text-sm text-[#38465F]">We'll email your full decision card and next steps.</p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="email" className="text-sm font-semibold">Email</Label>
-              <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@fleet.com" />
+              <Label htmlFor="email" className="text-sm font-semibold">
+                Email <span className="text-[#D81F2A]">*</span>
+              </Label>
+              <Input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@fleet.com" />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="phone" className="text-sm font-semibold">Mobile number</Label>
+              <Label htmlFor="phone" className="text-sm font-semibold">Mobile number (optional)</Label>
               <Input id="phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 555-0100" />
             </div>
 
@@ -511,10 +524,21 @@ export default function TryOneCase() {
               </span>
             </label>
 
+            <label className="flex items-start gap-2 rounded-md border border-[#E2E6EC] bg-[#F8FAFC] p-3 text-xs leading-5 text-[#38465F]">
+              <input
+                type="checkbox"
+                checked={disclaimerAck}
+                onChange={(e) => setDisclaimerAck(e.target.checked)}
+                className="mt-0.5 h-4 w-4"
+                required
+              />
+              <span>{GUEST_RESULT_DISCLAIMER_TEXT}</span>
+            </label>
+
             {contactError && (
               <p className="text-sm font-medium text-[#D81F2A]" role="alert">{contactError}</p>
             )}
-            <Button type="submit" disabled={contactMutation.isPending} className={cn("h-12 w-full text-[15px] font-bold", redBtn)}>
+            <Button type="submit" disabled={contactMutation.isPending || !disclaimerAck} className={cn("h-12 w-full text-[15px] font-bold", redBtn)}>
               {contactMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Show my decision
             </Button>

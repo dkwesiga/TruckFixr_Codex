@@ -1844,6 +1844,10 @@ export const guestCaseContacts = pgTable(
     consentWhatsapp: boolean("consentWhatsapp").default(false).notNull(),
     consentMarketing: boolean("consentMarketing").default(false).notNull(),
     authorityConfirmed: boolean("authorityConfirmed").default(false).notNull(),
+    // Recorded acknowledgment of the results disclaimer (the liability record).
+    disclaimerAcknowledged: boolean("disclaimerAcknowledged").default(false).notNull(),
+    disclaimerVersion: varchar("disclaimerVersion", { length: 32 }),
+    disclaimerAcknowledgedAt: dateTimestamp(),
     capturedAt: dateTimestamp().defaultNow().notNull(),
   },
   (table) => [index("guestCaseContacts_case_idx").on(table.guestCaseId)]

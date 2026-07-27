@@ -132,22 +132,35 @@ describe("answerGuestQuestion — safety sweep can escalate", () => {
 });
 
 describe("submitGuestContact", () => {
-  it("requires at least one contact method", async () => {
+  const ack = { disclaimerAcknowledged: true, disclaimerVersion: "test-v1" } as const;
+
+  it("requires an email address", async () => {
     const { publicToken } = await startGuestCase({
       concernText: "amber light",
       operatingStatus: "operating_normally",
       concernCategory: "warning_light",
     });
-    await expect(submitGuestContact({ publicToken })).rejects.toThrow(/email address or a mobile number/i);
+    await expect(submitGuestContact({ publicToken, ...ack })).rejects.toThrow(/email address is required/i);
   });
 
-  it("records contact + decision and consents default to what was passed (not preselected)", async () => {
+  it("requires the disclaimer acknowledgment before releasing the decision", async () => {
     const { publicToken } = await startGuestCase({
       concernText: "amber light",
       operatingStatus: "operating_normally",
       concernCategory: "warning_light",
     });
-    const res = await submitGuestContact({ publicToken, email: "ops@fleet-a.com", consentEmail: true });
+    await expect(
+      submitGuestContact({ publicToken, email: "ops@fleet-a.com" })
+    ).rejects.toThrow(/acknowledge the disclaimer/i);
+  });
+
+  it("records contact + decision, the disclaimer ack, and consents (not preselected)", async () => {
+    const { publicToken } = await startGuestCase({
+      concernText: "amber light",
+      operatingStatus: "operating_normally",
+      concernCategory: "warning_light",
+    });
+    const res = await submitGuestContact({ publicToken, email: "ops@fleet-a.com", consentEmail: true, ...ack });
     expect(res.decision.readiness).toBeDefined();
     expect(res.decision.possibleCausesSuppressed).toBe(true);
     const contact = rows("guestCaseContacts")[0];
@@ -155,15 +168,18 @@ describe("submitGuestContact", () => {
     expect(contact.consentSms).toBe(false);
     expect(contact.consentWhatsapp).toBe(false);
     expect(contact.consentMarketing).toBe(false);
+    expect(contact.disclaimerAcknowledged).toBe(true);
+    expect(contact.disclaimerVersion).toBe("test-v1");
+    expect(contact.disclaimerAcknowledgedAt).toBeInstanceOf(Date);
   });
 
   it("flags the free-case limit gracefully on a repeat non-critical submission (never hard-blocks)", async () => {
     const first = await startGuestCase({ concernText: "amber light", operatingStatus: "operating_normally", concernCategory: "warning_light" });
-    const r1 = await submitGuestContact({ publicToken: first.publicToken, email: "ops@fleet-a.com" });
+    const r1 = await submitGuestContact({ publicToken: first.publicToken, email: "ops@fleet-a.com", ...ack });
     expect(r1.freeCaseLimitReached).toBe(false);
 
     const second = await startGuestCase({ concernText: "another amber light", operatingStatus: "operating_normally", concernCategory: "warning_light" });
-    const r2 = await submitGuestContact({ publicToken: second.publicToken, email: "ops@fleet-a.com" });
+    const r2 = await submitGuestContact({ publicToken: second.publicToken, email: "ops@fleet-a.com", ...ack });
     expect(r2.freeCaseLimitReached).toBe(true);
     expect(r2.pilotSuggested).toBe(true);
     // Guidance is still returned — not blocked.
@@ -173,10 +189,10 @@ describe("submitGuestContact", () => {
   it("never applies the free-case limit to a critical case", async () => {
     // Seed the ledger via a prior non-critical submission with the same email.
     const seed = await startGuestCase({ concernText: "amber light", operatingStatus: "operating_normally", concernCategory: "warning_light" });
-    await submitGuestContact({ publicToken: seed.publicToken, email: "driver@fleet-b.com" });
+    await submitGuestContact({ publicToken: seed.publicToken, email: "driver@fleet-b.com", ...ack });
 
     const crit = await startGuestCase({ concernText: "smoke from the engine", operatingStatus: "stopped", concernCategory: "symptom" });
-    const res = await submitGuestContact({ publicToken: crit.publicToken, email: "driver@fleet-b.com" });
+    const res = await submitGuestContact({ publicToken: crit.publicToken, email: "driver@fleet-b.com", ...ack });
     expect(res.freeCaseLimitReached).toBe(false);
   });
 });

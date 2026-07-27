@@ -381,13 +381,24 @@ export async function submitGuestContact(params: {
   consentWhatsapp?: boolean;
   consentMarketing?: boolean;
   authorityConfirmed?: boolean;
+  disclaimerAcknowledged?: boolean;
+  disclaimerVersion?: string | null;
 }) {
   const email = params.email?.trim().toLowerCase() || null;
   const phone = params.phone?.trim() || null;
-  if (!email && !phone) {
+  if (!email) {
     throw new TRPCError({
       code: "BAD_REQUEST",
-      message: "Provide either an email address or a mobile number.",
+      message: "An email address is required to release the full result.",
+    });
+  }
+  // The disclaimer acknowledgment is the liability record — never release the full
+  // decision card without it. (The preliminary result and any critical/unsafe
+  // safety warning are shown earlier, ungated.)
+  if (params.disclaimerAcknowledged !== true) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Please acknowledge the disclaimer to see the full result.",
     });
   }
 
@@ -415,6 +426,9 @@ export async function submitGuestContact(params: {
     consentWhatsapp: params.consentWhatsapp === true,
     consentMarketing: params.consentMarketing === true,
     authorityConfirmed: params.authorityConfirmed === true,
+    disclaimerAcknowledged: true,
+    disclaimerVersion: params.disclaimerVersion?.trim() || null,
+    disclaimerAcknowledgedAt: new Date(),
     capturedAt: new Date(),
   });
 
