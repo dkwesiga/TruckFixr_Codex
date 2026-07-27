@@ -1,5 +1,26 @@
 type AnalyticsProperties = Record<string, unknown> | undefined;
 
+const SESSION_KEY = "truckfixr_analytics_session";
+
+function getAnonymousSessionId() {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const existing = window.localStorage.getItem(SESSION_KEY);
+    if (existing) return existing;
+    const next = crypto.randomUUID().replace(/-/g, "");
+    window.localStorage.setItem(SESSION_KEY, next);
+    return next;
+  } catch {
+    return undefined;
+  }
+}
+
+function getDeviceCategory() {
+  if (typeof window === "undefined") return "unknown" as const;
+  const width = window.innerWidth;
+  return width < 640 ? "mobile" as const : width < 1024 ? "tablet" as const : "desktop" as const;
+}
+
 // Matches the server-side redaction key list (server/services/observability.ts)
 // so call sites can pass natural property names without leaking PII into the
 // dev console.
@@ -35,6 +56,15 @@ export function identifyUser(_userId: string, _properties?: AnalyticsProperties)
 
 export function trackEvent(eventName: string, properties?: AnalyticsProperties) {
   logAnalyticsEvent(eventName, properties);
+  if (typeof window === "undefined") return;
+  const safeProperties = redactAnalyticsProperties(properties);
+  void fetch("/api/analytics/event", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ event: eventName, anonSessionId: getAnonymousSessionId(), deviceCategory: getDeviceCategory(), metadata: safeProperties, readiness: typeof safeProperties.readiness === "string" ? safeProperties.readiness : undefined, severity: typeof safeProperties.severity === "string" ? safeProperties.severity : undefined, role: typeof safeProperties.role === "string" ? safeProperties.role : undefined }),
+    credentials: "include",
+    keepalive: true,
+  }).catch(() => {});
 }
 
 export function trackSignup(method: 'oauth' | 'email', properties?: AnalyticsProperties) {

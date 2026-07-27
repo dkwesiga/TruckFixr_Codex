@@ -59,6 +59,20 @@ const POST_0012_RLS_TABLES = [
   "combinedInspectionSessions",
   "adminFleetNotes",
   "lead_submissions",
+  "guestCases",
+  "guestCaseEvents",
+  "guestCaseContacts",
+  "freeCaseLedger",
+  "caseReviewQueueItems",
+  "analyticsEvents",
+  "pilotApplications",
+  "pilotSettings",
+  "maintenanceCases",
+  "maintenanceDecisions",
+  "repairCycles",
+  "repairDocuments",
+  "repairAuthorizations",
+  "partnerProfiles",
 ] as const;
 
 async function assertPost0012RlsEnabled(client: PoolClient) {
