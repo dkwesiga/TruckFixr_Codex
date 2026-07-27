@@ -55,23 +55,23 @@ export async function seedGuestDemo() {
 
   // 2. Service Soon — stopped, needs scheduling.
   const serviceSoon = await startGuestCase({ ...base, concernText: "Engine lost power and stopped on the shoulder", operatingStatus: "stopped", concernCategory: "symptom", vehicleIdentifier: { unitNumber: "D-118" } });
-  await submitGuestContact({ publicToken: serviceSoon.publicToken, email: "ops@demo-fleet.com", consentEmail: true });
+  await submitGuestContact({ publicToken: serviceSoon.publicToken, email: "ops@demo-fleet.com", consentEmail: true, disclaimerAcknowledged: true, disclaimerVersion: "seed" });
 
   // 3. Stop — critical trigger (persisted + review queued).
   await startGuestCase({ ...base, concernText: "Driver reports the brakes failed coming down a hill", operatingStatus: "stopped", concernCategory: "symptom", vehicleIdentifier: { unitNumber: "D-214" } });
 
   // 4. Duplicate free-case attempt — same email domain as #2 -> graceful limit.
   const dup = await startGuestCase({ ...base, concernText: "Coolant temperature reading high", operatingStatus: "operating_with_symptoms", concernCategory: "warning_light", vehicleIdentifier: { unitNumber: "D-402" } });
-  await submitGuestContact({ publicToken: dup.publicToken, email: "dispatch@demo-fleet.com", consentEmail: true });
+  await submitGuestContact({ publicToken: dup.publicToken, email: "dispatch@demo-fleet.com", consentEmail: true, disclaimerAcknowledged: true, disclaimerVersion: "seed" });
 
   // 5. Prior confirmed repair (sets up repeat detection).
   const prior = await startGuestCase({ ...base, concernText: "DPF regeneration fault", operatingStatus: "operating_with_symptoms", concernCategory: "fault_code", vehicleIdentifier: { vin: "1DEMOVIN0000001" } });
-  await submitGuestContact({ publicToken: prior.publicToken, email: "shop@demo-fleet.com", consentEmail: true });
+  await submitGuestContact({ publicToken: prior.publicToken, email: "shop@demo-fleet.com", consentEmail: true, disclaimerAcknowledged: true, disclaimerVersion: "seed" });
   await recordOutcome({ publicToken: prior.publicToken, confirmedRepair: true, repairCompletedAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000), actualDowntimeHours: 6, evidenceSource: "customer_reported" });
 
   // 6. Repeat within 30 days — same VIN as #5.
   const repeat = await startGuestCase({ ...base, concernText: "DPF fault returned after the repair", operatingStatus: "operating_with_symptoms", concernCategory: "fault_code", vehicleIdentifier: { vin: "1DEMOVIN0000001" } });
-  await submitGuestContact({ publicToken: repeat.publicToken, email: "shop@demo-fleet.com", consentEmail: true });
+  await submitGuestContact({ publicToken: repeat.publicToken, email: "shop@demo-fleet.com", consentEmail: true, disclaimerAcknowledged: true, disclaimerVersion: "seed" });
   await recordOutcome({ publicToken: repeat.publicToken, confirmedRepair: true, evidenceSource: "unknown" });
 
   // 7. Pilot application (qualified).

@@ -38,6 +38,7 @@ Apply in filename order via `scripts/verify/apply-readiness-migrations.ts`
 - `0038_guest_case_workflow.sql` — guest case tables
 - `0039_guest_case_outcomes.sql` — outcome columns + follow-ups table
 - `0040_pilot_kickoff.sql` — pilot kickoff columns
+- `0042_guest_contact_disclaimer_ack.sql` — results-disclaimer acknowledgment columns on `guestCaseContacts`
 
 All are idempotent (`CREATE TABLE / ADD COLUMN IF NOT EXISTS`).
 

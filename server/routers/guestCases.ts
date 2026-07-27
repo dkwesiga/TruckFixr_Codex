@@ -109,22 +109,22 @@ export const guestCasesRouter = router({
 
   submitContact: publicProcedure
     .input(
-      z
-        .object({
-          publicToken: z.string().trim().min(10).max(128),
-          email: z.string().trim().email().max(255).optional().nullable(),
-          phone: z.string().trim().max(40).optional().nullable(),
-          role: z.string().trim().max(32).optional().nullable(),
-          consentEmail: z.boolean().optional(),
-          consentSms: z.boolean().optional(),
-          consentWhatsapp: z.boolean().optional(),
-          consentMarketing: z.boolean().optional(),
-          authorityConfirmed: z.boolean().optional(),
-          trapField: z.string().trim().max(255).optional().nullable(),
-        })
-        .refine((v) => Boolean(v.email) || Boolean(v.phone), {
-          message: "Provide either an email address or a mobile number.",
-        })
+      z.object({
+        publicToken: z.string().trim().min(10).max(128),
+        // Email is required before the full decision card is released.
+        email: z.string().trim().email().max(255),
+        phone: z.string().trim().max(40).optional().nullable(),
+        role: z.string().trim().max(32).optional().nullable(),
+        consentEmail: z.boolean().optional(),
+        consentSms: z.boolean().optional(),
+        consentWhatsapp: z.boolean().optional(),
+        consentMarketing: z.boolean().optional(),
+        authorityConfirmed: z.boolean().optional(),
+        // Recorded acknowledgment of the results disclaimer — must be true.
+        disclaimerAcknowledged: z.literal(true),
+        disclaimerVersion: z.string().trim().max(32).optional(),
+        trapField: z.string().trim().max(255).optional().nullable(),
+      })
     )
     .mutation(async ({ input, ctx }) => {
       assertGuestWorkflowEnabled();
