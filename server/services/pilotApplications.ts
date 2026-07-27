@@ -123,6 +123,7 @@ export async function acceptAgreement(params: {
       updatedAt: new Date(),
     })
     .where(eq(pilotApplications.id, params.applicationId));
+  await emit(db, "pilot_agreement_accepted");
   return load(db, params.applicationId);
 }
 

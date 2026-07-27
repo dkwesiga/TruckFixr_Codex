@@ -49,7 +49,7 @@ describe("pilotApplications router authorization", () => {
 
   it("blocks non-owners from accepting the agreement", async () => {
     await expect(
-      callerFactory(driverCtx).acceptAgreement({ applicationId: 1, agreementVersion: "v1", fleetId: 10 })
+      callerFactory(driverCtx).acceptAgreement({ applicationId: 1, agreementVersion: "v1" })
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 

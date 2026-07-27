@@ -136,9 +136,9 @@ export default function PilotApply() {
                 <p className="text-sm text-[#38465F]">
                   Next, sign in (or create a quick account) to accept the agreement and complete the CAD $99 payment. Payment is one-time and credited toward your first month if you continue within 14 days after the pilot.
                 </p>
-                <Link href="/access">
+                <Link href={`/pilot/accept?application=${result.id}`}>
                   <Button className={cn("h-12 w-full text-[15px] font-bold", redBtn)}>
-                    Sign in to accept &amp; pay
+                    Continue to accept &amp; pay
                     <ArrowRight className="ml-2 h-4 w-4" />
                   </Button>
                 </Link>
