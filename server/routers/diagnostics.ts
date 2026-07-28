@@ -6,6 +6,7 @@ import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import {
   activityLogs,
+  analyticsEvents,
   aiQualityReviews,
   defects,
   fleets,
@@ -2038,14 +2039,21 @@ export const diagnosticsRouter = router({
         await db
           .update(aiQualityReviews)
           .set({
-            confirmedOutcomeStatus: input.successful ? "confirmed_successful" : "confirmed_unsuccessful",
+            confirmedOutcomeStatus:
+              input.aiDiagnosisCorrect === "no"
+                ? "confirmed_contradicted"
+                : input.aiDiagnosisCorrect === "partially"
+                  ? "confirmed_partial"
+                  : input.successful
+                    ? "confirmed_successful"
+                    : "confirmed_unsuccessful",
             managerConfirmed: confirmationState === "manager_confirmed",
             mechanicConfirmed: confirmationState === "mechanic_confirmed",
             metadata: sql`coalesce(${aiQualityReviews.metadata}, '{}'::jsonb) || ${JSON.stringify({
               feedback: feedbackMetadata,
             })}::jsonb`,
           } as any)
-          .where(eq(aiQualityReviews.diagnosticCaseId, input.diagnosticCaseId))
+          .where(and(eq(aiQualityReviews.diagnosticCaseId, input.diagnosticCaseId), eq(aiQualityReviews.fleetId, input.fleetId)))
           .catch((error) => {
             console.warn("[Diagnostics] Unable to link feedback to AI quality review:", error);
           });
@@ -2075,6 +2083,22 @@ export const diagnosticsRouter = router({
           summary: `${input.cause} confirmed with fix: ${input.confirmedFix}`,
         },
       });
+
+      await db.insert(analyticsEvents).values({
+        event: "outcome_confirmed",
+        intakeSource: "fleet_diagnostic",
+        role: confirmationState === "mechanic_confirmed" ? "mechanic" : ctx.user.role,
+        readiness: input.successful ? "resolved" : "follow_up_required",
+        severity: input.complianceImpact,
+        funnelStep: "diagnostic_outcome",
+        metadataJson: {
+          diagnosticCaseId: input.diagnosticCaseId ?? null,
+          aiDiagnosisCorrect: input.aiDiagnosisCorrect,
+          confirmationState,
+          normalizedRepairOutcomeSaved,
+        },
+        at: new Date(),
+      }).catch(() => {});
 
       return { success: true, saved: true, normalizedRepairOutcomeSaved };
     }),

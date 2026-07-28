@@ -19,6 +19,8 @@ import {
   normalizeSeverity,
   recordObservabilityEvent,
 } from "../services/observability";
+import { analyticsEventInputSchema, recordAnalyticsEvent } from "../services/analyticsEvents";
+import { enforceIpRateLimit } from "./rateLimit";
 
 function normalizeOrigin(value: string) {
   try {
@@ -296,6 +298,17 @@ async function startServer() {
       /* never surface ingestion failures to the browser */
     }
 
+    res.status(204).end();
+  });
+
+  app.post("/api/analytics/event", async (req, res) => {
+    try {
+      enforceIpRateLimit({ req, bucket: "analytics_event", limit: 240, windowMs: 10 * 60 * 1000, message: "Too many analytics events." });
+      const input = analyticsEventInputSchema.parse(req.body ?? {});
+      await recordAnalyticsEvent(input);
+    } catch {
+      // Analytics is best-effort and must never block the product flow.
+    }
     res.status(204).end();
   });
 

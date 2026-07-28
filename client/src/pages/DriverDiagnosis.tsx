@@ -633,6 +633,8 @@ function DriverDiagnosisContent() {
             {shouldShowClarificationPanel && diagnosisView ? (
               <div
                 ref={clarificationPanelRef}
+                aria-live="polite"
+                aria-busy={diagnoseMutation.isPending}
                 className={`rounded-2xl border p-4 ${
                   isAwaitingClarification ? "border-blue-200 bg-blue-50" : "border-amber-200 bg-amber-50"
                 }`}
@@ -651,20 +653,23 @@ function DriverDiagnosisContent() {
                 </p>
                 {isAwaitingClarification ? (
                   <>
-                    <p className="mt-3 text-sm font-medium text-slate-950">{activeClarifyingQuestion}</p>
+                    <p id="clarifying-question" className="mt-3 text-sm font-medium text-slate-950">{activeClarifyingQuestion}</p>
                     <div className="mt-4 space-y-3">
                       <Textarea
                         value={clarificationAnswer}
                         onChange={(event) => setClarificationAnswer(event.target.value)}
+                        aria-label="Answer the clarifying diagnostic question"
+                        aria-describedby="clarifying-question"
+                        maxLength={600}
                         placeholder="Answer this question to continue the diagnostic loop."
-                        className="min-h-24 bg-white"
+                        className="min-h-24 bg-white text-base leading-6"
                       />
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <p className="text-xs text-slate-500">
-                          Clarification round {clarificationHistory.length + 1} of 3
+                          Clarification round {clarificationHistory.length + 1} of 3 · Keep it brief and specific
                         </p>
                         <Button
-                          className="bg-blue-600 hover:bg-blue-700"
+                          className="min-h-11 w-full bg-blue-600 hover:bg-blue-700 sm:w-auto"
                           disabled={!clarificationAnswer.trim() || diagnoseMutation.isPending}
                           onClick={() => {
                             const nextHistory = [
@@ -682,7 +687,7 @@ function DriverDiagnosisContent() {
                   </>
                 ) : (
                   <Button
-                    className="mt-4 bg-blue-600 hover:bg-blue-700"
+                    className="mt-4 min-h-11 w-full bg-blue-600 hover:bg-blue-700 sm:w-auto"
                     disabled={diagnoseMutation.isPending}
                     onClick={() => void runDiagnosis(clarificationHistory)}
                   >
@@ -712,7 +717,7 @@ function DriverDiagnosisContent() {
                   <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
                     <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Clarification in progress</p>
                     <p className="mt-2 text-sm text-slate-700">
-                      TruckFixr AI is still separating the top causes. The next question is shown directly under the Generate Diagnosis button so it can be answered before the summary appears.
+                      TruckFixr AI is still separating the top causes. Answer the focused question above before the summary appears. If the question is unavailable, retry once to request a fresh question.
                     </p>
                   </div>
                   {clarificationHistory.length > 0 ? (
@@ -736,7 +741,7 @@ function DriverDiagnosisContent() {
                     TruckFixr AI is still in clarification mode, but the next question did not come through cleanly. Try generating the diagnosis again and TruckFixr will request a fresh clarifying question.
                   </p>
                   <Button
-                    className="mt-4 bg-blue-600 hover:bg-blue-700"
+                    className="mt-4 min-h-11 w-full bg-blue-600 hover:bg-blue-700 sm:w-auto"
                     disabled={diagnoseMutation.isPending}
                     onClick={() => void runDiagnosis(clarificationHistory)}
                   >
