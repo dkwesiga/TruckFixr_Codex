@@ -96,6 +96,35 @@ best-effort moves the application to `payment_pending`; the webhook's `markPilot
 authoritative paid signal. Qualified applicants reach it from `/pilot-apply`; the page is
 resilient across the sign-in round trip (application id persisted client-side).
 
+### 6a. Stripe webhook + env setup (REQUIRED — the paid path is dead without it)
+
+The pilot payment path needs three Stripe env vars on **truckfixr-api**, all in the **same
+mode** (Live for real payments, Test for rehearsal). A wrong-mode signing secret is the
+classic footgun — signatures never match.
+
+| Var | Value | Notes |
+|---|---|---|
+| `STRIPE_SECRET_KEY` | `sk_live_…` | The API's Stripe key. |
+| `STRIPE_WEBHOOK_SECRET` | `whsec_…` | Signing secret of the webhook endpoint below. |
+| `STRIPE_PRICE_FLEET_PILOT_30_DAY` | `price_…` | One-time **CAD $99** price. |
+
+> **Gotcha:** `isStripeConfigured() = Boolean(stripeSecretKey && stripeWebhookSecret)`. If
+> `STRIPE_WEBHOOK_SECRET` is unset, `createPilotCheckoutSession` throws *"Stripe is not
+> configured yet"* and **checkout can't even start** — not just the webhook. The API logs
+> `STRIPE_WEBHOOK_SECRET is required` at startup when it's missing. Env vars load at startup,
+> so the API must **restart** (Render auto-redeploys on an env change; confirm via the
+> `uptimeSeconds` reset at `GET /healthz`) before a newly-set secret takes effect.
+
+**Setup steps:**
+1. Stripe Dashboard → Developers → Webhooks → add an endpoint at
+   **`https://api.truckfixr.com/api/stripe/webhook`**, subscribed to at least
+   **`checkout.session.completed`** (drives `markPilotPaid`). Match the mode to your keys.
+2. Copy that endpoint's **Signing secret** (`whsec_…`) → set `STRIPE_WEBHOOK_SECRET` on
+   truckfixr-api in Render → save (API redeploys).
+3. **Verify:** from the webhook endpoint, **Send test event** → `checkout.session.completed`
+   → expect **HTTP 200**. A `400` means a signature/mode mismatch — re-copy the signing
+   secret from the endpoint matching your `sk_…` mode.
+
 ## 7. Legal & safety approval gate (MANDATORY before broad public rollout)
 
 Broad public rollout must NOT proceed until all of the following are signed off.
