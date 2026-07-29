@@ -183,12 +183,12 @@ services:
         value: "true"
       # Public-launch gate (client mirror). One flag drives BOTH the homepage and
       # the funnel: "true" serves the V2 homepage AND presents the funnel publicly
-      # (no invite); default "false" keeps the current landing + invite-only
-      # funnel. Flip to "true" ONLY together with the api-side PUBLIC_LAUNCH_*
-      # vars (the server independently hard-gates submissions), and only after
-      # Ontario legal + 310T + commercial sign-off and a staffed reviewer.
+      # (no invite). Set together with the api-side PUBLIC_LAUNCH_* vars (the
+      # server independently hard-gates submissions on PUBLIC_LAUNCH_SIGNOFF +
+      # CASE_REVIEWER_EMAIL, so the funnel stays fail-safe invite-only until those
+      # are set even with this on).
       - key: VITE_PUBLIC_LAUNCH_APPROVED
-        value: "false"
+        value: "true"
       - key: VITE_SUPABASE_URL
         sync: false
       - key: VITE_SUPABASE_ANON_KEY
@@ -243,7 +243,7 @@ services:
       # Flip PUBLIC_LAUNCH_APPROVED + set PUBLIC_LAUNCH_SIGNOFF here AND set the
       # frontend VITE_PUBLIC_LAUNCH_APPROVED=true to go public.
       - key: PUBLIC_LAUNCH_APPROVED
-        value: "false"
+        value: "true"
       - key: PUBLIC_LAUNCH_SIGNOFF
         sync: false
       # Staffed case reviewer (required for public launch; also receives review
