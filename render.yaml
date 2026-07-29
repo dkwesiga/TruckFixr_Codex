@@ -7,7 +7,7 @@ services:
       - truckfixr.com
       - www.truckfixr.com
     autoDeploy: true
-    buildCommand: npm install -g pnpm@10.15.1 && CI=true pnpm install --frozen-lockfile --force --reporter=append-only && pnpm build:client
+    buildCommand: npm install -g pnpm@10.15.1 && rm -rf node_modules/.bin/pnpm node_modules/.bin/pnpx node_modules/pnpm && CI=true pnpm install --frozen-lockfile --force --reporter=append-only && pnpm build:client
     staticPublishPath: dist/public
     headers:
       - path: /assets/*
@@ -216,7 +216,7 @@ services:
     plan: free
     rootDir: .
     autoDeploy: true
-    buildCommand: npm install -g pnpm@10.15.1 && CI=true pnpm install --frozen-lockfile --force --reporter=append-only && pnpm build
+    buildCommand: npm install -g pnpm@10.15.1 && rm -rf node_modules/.bin/pnpm node_modules/.bin/pnpx node_modules/pnpm && CI=true pnpm install --frozen-lockfile --force --reporter=append-only && pnpm build
     startCommand: pnpm start:server
     healthCheckPath: /healthz
     envVars:
