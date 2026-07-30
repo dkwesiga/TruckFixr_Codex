@@ -16,6 +16,9 @@ const FleetReadinessLanding = lazyWithChunkRecovery(
 const FleetReadinessLandingV2 = lazyWithChunkRecovery(
   () => import("./pages/FleetReadinessLandingV2")
 );
+const FleetReadinessLandingV3 = lazyWithChunkRecovery(
+  () => import("./pages/FleetReadinessLandingV3")
+);
 const VerifiedInspection = lazyWithChunkRecovery(
   () => import("./pages/VerifiedInspection")
 );
@@ -139,9 +142,16 @@ const TRY_ONE_CASE_ENABLED =
 // to roll back instantly.
 const PUBLIC_LAUNCH_APPROVED =
   import.meta.env.VITE_PUBLIC_LAUNCH_APPROVED === "true";
-const HomePage = PUBLIC_LAUNCH_APPROVED
-  ? FleetReadinessLandingV2
-  : FleetReadinessLanding;
+// Preview flag for the V3 landing (preventive + predictive). When set, `/` serves
+// V3 so it can be previewed at the URL while V2 stays the approved public default.
+// Flip this to "true" to promote V3 once approved; unset to roll back to V2.
+const HOMEPAGE_V3_ENABLED =
+  import.meta.env.VITE_HOMEPAGE_V3 === "true";
+const HomePage = HOMEPAGE_V3_ENABLED
+  ? FleetReadinessLandingV3
+  : PUBLIC_LAUNCH_APPROVED
+    ? FleetReadinessLandingV2
+    : FleetReadinessLanding;
 
 function RouteFallback() {
   return (
@@ -235,6 +245,10 @@ function Router() {
         />
         <Route path={"/defect/:id"} component={DefectDetail} />
         <Route path={"/truck/:id"} component={TruckDetail} />
+        {/* Unlisted preview of the V3 landing — lets it be reviewed at /landing-v3
+            while `/` stays on the approved homepage. Promote by flipping
+            VITE_HOMEPAGE_V3. */}
+        <Route path={"/landing-v3"} component={FleetReadinessLandingV3} />
         {TRY_ONE_CASE_ENABLED ? (
           <Route path={"/try-one-case"} component={TryOneCase} />
         ) : null}
