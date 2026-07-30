@@ -110,9 +110,31 @@ function Hero() {
             No fleet import. No account setup. No payment required for your first case.
           </p>
         </div>
-        <FleetHealthPreview compact />
+        <HeroPhoto />
       </div>
     </section>
+  );
+}
+
+function HeroPhoto() {
+  return (
+    <div className="relative overflow-hidden rounded-xl border border-[#C3C7CE] shadow-[0_22px_55px_-26px_rgba(10,26,46,0.5)]">
+      <img
+        src="/hero-fleet.jpg"
+        alt="A commercial fleet maintenance facility at sunset — trucks staged in the yard, solar-roofed service bays, and a control tower overseeing operations."
+        width={1380}
+        height={720}
+        loading="eager"
+        className="aspect-[1380/720] h-full w-full object-cover"
+      />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-[#00101E]/55 to-transparent" />
+      <div className="absolute bottom-3 left-3 flex items-center gap-2 rounded-full bg-white/90 px-3 py-1 backdrop-blur">
+        <span className="h-2 w-2 rounded-full bg-[#1EA66C]" aria-hidden="true" />
+        <span className={cn(monoClass, "text-[11px] font-bold uppercase tracking-wide text-[#0A1A2E]")}>
+          Fleet-wide readiness
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -126,7 +148,16 @@ const DEMO_VEHICLES: Array<{ unit: string; readiness: Readiness; reason: string 
   { unit: "Unit 351", readiness: "ready", reason: "No open concerns" },
 ];
 
-function FleetHealthPreview({ compact = false }: { compact?: boolean }) {
+// Status palette (matches ReadinessPill) — drives the colored metrics and the
+// per-row accent border, mirroring the stitch "Fleet Readiness Board" treatment.
+const READINESS_HEX: Record<Readiness, string> = {
+  ready: "#1EA66C",
+  monitor: "#2D7DE0",
+  service_soon: "#F2A516",
+  stop: "#D81F2A",
+};
+
+function FleetHealthPreview() {
   const counts = DEMO_VEHICLES.reduce(
     (acc, v) => ({ ...acc, [v.readiness]: (acc[v.readiness] ?? 0) + 1 }),
     {} as Record<Readiness, number>
@@ -140,20 +171,29 @@ function FleetHealthPreview({ compact = false }: { compact?: boolean }) {
   return (
     <div className={cn(cardClass, "overflow-hidden")}>
       <div className="flex items-center justify-between border-b border-[#E2E6EC] bg-[#0A1A2E] px-4 py-3">
-        <p className={cn(monoClass, "text-xs font-bold uppercase tracking-wide text-[#abcaea]")}>Fleet Health — sample</p>
-        <Activity className="h-4 w-4 text-[#abcaea]" aria-hidden="true" />
+        <div className="flex items-center gap-2">
+          <Activity className="h-4 w-4 text-[#abcaea]" aria-hidden="true" />
+          <p className={cn(monoClass, "text-xs font-bold uppercase tracking-wide text-white")}>Fleet Readiness</p>
+        </div>
+        <span className={cn(monoClass, "rounded-full bg-[#abcaea]/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#abcaea]")}>
+          Sample
+        </span>
       </div>
       <div className="grid grid-cols-4 gap-2 p-3">
         {tiles.map(([r, label]) => (
           <div key={r} className="rounded-md bg-[#F1F4F9] p-2 text-center">
-            <div className="text-lg font-black text-[#0A1A2E]">{counts[r] ?? 0}</div>
+            <div className="text-xl font-black" style={{ color: READINESS_HEX[r] }}>{counts[r] ?? 0}</div>
             <div className="text-[10px] font-bold uppercase tracking-wide text-[#73777E]">{label}</div>
           </div>
         ))}
       </div>
       <ul className="divide-y divide-[#EEF1F5]">
-        {(compact ? DEMO_VEHICLES.slice(0, 4) : DEMO_VEHICLES).map((v) => (
-          <li key={v.unit} className="flex items-center justify-between gap-3 px-4 py-2.5">
+        {DEMO_VEHICLES.map((v) => (
+          <li
+            key={v.unit}
+            className="flex items-center justify-between gap-3 border-l-[3px] bg-white px-4 py-2.5"
+            style={{ borderLeftColor: READINESS_HEX[v.readiness] }}
+          >
             <div>
               <div className="text-sm font-bold text-[#0A1A2E]">{v.unit}</div>
               <div className="text-xs text-[#73777E]">{v.reason}</div>
