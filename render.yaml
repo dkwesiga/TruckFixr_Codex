@@ -189,6 +189,11 @@ services:
       # are set even with this on).
       - key: VITE_PUBLIC_LAUNCH_APPROVED
         value: "true"
+      # Preview flag for the V3 landing (preventive + predictive). Default off, so
+      # `/` keeps the approved V2 homepage. Set to "true" to preview V3 at the URL,
+      # and to promote it once approved; unset to roll back to V2 instantly.
+      - key: VITE_HOMEPAGE_V3
+        value: "false"
       - key: VITE_SUPABASE_URL
         sync: false
       - key: VITE_SUPABASE_ANON_KEY
