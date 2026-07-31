@@ -1,10 +1,10 @@
 import { useState, type ComponentType, type ReactNode } from "react";
 import { Link } from "wouter";
 import {
-  Activity,
   AlertTriangle,
   ArrowRight,
   CalendarClock,
+  Check,
   ClipboardCheck,
   Compass,
   Gauge,
@@ -12,8 +12,10 @@ import {
   RefreshCw,
   Route,
   ShieldCheck,
+  Truck,
   TrendingUp,
   Wrench,
+  type LucideIcon,
 } from "lucide-react";
 import AppLogo from "@/components/AppLogo";
 import { Button } from "@/components/ui/button";
@@ -146,60 +148,87 @@ function SectionHeading({ eyebrow, title, description, dark = false, center = fa
 }
 
 // ── Block 1: Hero + product Fleet Health preview card ────────────────────────
-const HERO_VEHICLES: Array<{ unit: string; readiness: Readiness; reason: string }> = [
-  { unit: "Unit 214", readiness: "service_soon", reason: "Repeated aftertreatment warning · recent regen · reported power loss" },
-  { unit: "Unit 402", readiness: "monitor", reason: "Intermittent derate reported by driver" },
-  { unit: "Unit 118", readiness: "ready", reason: "No open concerns" },
+function ScoreGauge({ score }: { score: number }) {
+  const r = 76;
+  const circumference = 2 * Math.PI * r;
+  const offset = circumference * (1 - score / 100);
+  return (
+    <div className="flex flex-col items-center">
+      <div className="relative h-40 w-40 sm:h-44 sm:w-44">
+        <svg viewBox="0 0 180 180" className="h-full w-full -rotate-90" role="img" aria-label={`Fleet health score ${score} percent`}>
+          <circle cx="90" cy="90" r={r} fill="none" stroke="#E2E6EC" strokeWidth="14" />
+          <circle
+            cx="90"
+            cy="90"
+            r={r}
+            fill="none"
+            stroke="#1EA66C"
+            strokeWidth="14"
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={offset}
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#1EA66C]">
+            <Check className="h-4 w-4 text-white" aria-hidden="true" />
+          </span>
+          <span className="mt-1 text-4xl font-black text-[#0A1A2E] sm:text-5xl">{score}%</span>
+        </div>
+      </div>
+      <p className="mt-3 text-lg font-bold text-[#0A1A2E]">Fleet Health Score</p>
+    </div>
+  );
+}
+
+const FLEET_STATS: Array<{
+  icon: LucideIcon;
+  value: string;
+  label: string;
+  iconColor: string;
+  valueColor: string;
+}> = [
+  { icon: Truck, value: "48", label: "Active Vehicles", iconColor: "#2D7DE0", valueColor: "#0A1A2E" },
+  { icon: Wrench, value: "5", label: "In Shop", iconColor: "#5B6472", valueColor: "#0A1A2E" },
+  { icon: AlertTriangle, value: "2", label: "Critical Alerts", iconColor: "#E8720C", valueColor: "#E8720C" },
 ];
 
 function HeroFleetHealthCard() {
-  const counts: Array<[Readiness, string, number]> = [
-    ["ready", "Ready", 9],
-    ["monitor", "Monitor", 2],
-    ["service_soon", "Service Soon", 1],
-    ["stop", "Stop", 0],
-  ];
   return (
-    <div className={cn(cardClass, "overflow-hidden")}>
-      <div className="flex items-center justify-between border-b border-[#E2E6EC] bg-[#0A1A2E] px-4 py-3">
-        <div className="flex items-center gap-2">
-          <Activity className="h-4 w-4 text-[#abcaea]" aria-hidden="true" />
-          <p className={cn(monoClass, "text-xs font-bold uppercase tracking-wide text-white")}>Morning Fleet Health</p>
-        </div>
-        <span className={cn(monoClass, "rounded-full bg-[#abcaea]/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#abcaea]")}>
-          Sample · 12 reviewed
+    <div className={cn(cardClass, "p-5 sm:p-6")}>
+      <div className="mb-4 flex items-center justify-between">
+        <p className={cn(monoClass, "text-[11px] font-bold uppercase tracking-wider text-[#73777E]")}>Fleet Health</p>
+        <span className={cn(monoClass, "rounded-full bg-[#F1F4F9] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[#73777E]")}>
+          Sample
         </span>
       </div>
-      <div className="grid grid-cols-4 gap-2 p-3">
-        {counts.map(([r, label, n]) => (
-          <div key={r} className="rounded-md bg-[#F1F4F9] p-2 text-center">
-            <div className="text-xl font-black" style={{ color: READINESS_HEX[r] }}>{n}</div>
-            <div className="text-[10px] font-bold uppercase tracking-wide text-[#73777E]">{label}</div>
-          </div>
-        ))}
+      <div className="grid items-center gap-5 sm:grid-cols-2">
+        <ScoreGauge score={94} />
+        <div className="space-y-3">
+          {FLEET_STATS.map((s) => {
+            const Icon = s.icon;
+            return (
+              <div
+                key={s.label}
+                className="flex items-center gap-3 rounded-[10px] border border-[#E2E6EC] bg-white px-4 py-3 shadow-[0_8px_20px_-16px_rgba(10,26,46,0.5)]"
+              >
+                <Icon className="h-7 w-7 shrink-0" style={{ color: s.iconColor }} aria-hidden="true" />
+                <div>
+                  <div className="text-2xl font-black leading-none" style={{ color: s.valueColor }}>{s.value}</div>
+                  <div className="mt-1 text-xs font-semibold text-[#73777E]">{s.label}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
-      {/* PM-due line — the "what's due" (preventive) dimension. */}
-      <div className="flex items-start gap-2 border-t border-[#EEF1F5] bg-[#FBFCFE] px-4 py-2.5">
+      {/* Preventive dimension kept in view — the "what's due" line. */}
+      <div className="mt-4 flex items-start gap-2 border-t border-[#EEF1F5] pt-3">
         <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-[#2D7DE0]" aria-hidden="true" />
         <p className="text-xs leading-5 text-[#38465F]">
           <span className="font-bold text-[#0A1A2E]">PM due:</span> Unit 118 service in 400 km · Unit 402 overdue 3 days
         </p>
       </div>
-      <ul className="divide-y divide-[#EEF1F5]">
-        {HERO_VEHICLES.map((v) => (
-          <li
-            key={v.unit}
-            className="flex items-center justify-between gap-3 border-l-[3px] bg-white px-4 py-2.5"
-            style={{ borderLeftColor: READINESS_HEX[v.readiness] }}
-          >
-            <div className="min-w-0">
-              <div className="text-sm font-bold text-[#0A1A2E]">{v.unit}</div>
-              <div className="truncate text-xs text-[#73777E]">{v.reason}</div>
-            </div>
-            <ReadinessPill readiness={v.readiness} size="sm" />
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }
