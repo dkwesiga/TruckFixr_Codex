@@ -63,10 +63,14 @@ function RiskCheckButton({
     <Link href="/try-one-case">
       <Button
         onClick={() => trackEvent("try_one_case_clicked", { cta_location: location })}
-        className={cn("h-12 px-6 text-[15px] font-bold", redBtn, className)}
+        className={cn(
+          "min-h-12 h-auto whitespace-normal px-6 py-2.5 text-center text-[15px] font-bold leading-tight",
+          redBtn,
+          className
+        )}
       >
         {children}
-        <ArrowRight className="ml-2 h-4 w-4" />
+        <ArrowRight className="ml-2 h-4 w-4 shrink-0" />
       </Button>
     </Link>
   );
@@ -81,7 +85,7 @@ function FleetRiskReviewButton({ className, dark = false }: { className?: string
         scrollToSection("pilot");
       }}
       className={cn(
-        "h-12 px-6 text-[15px] font-bold",
+        "min-h-12 h-auto whitespace-normal px-6 py-2.5 text-center text-[15px] font-bold leading-tight",
         dark
           ? "border-white/40 text-white hover:bg-white hover:text-[#0A1A2E]"
           : "border-[#0A1A2E] text-[#0A1A2E] hover:bg-[#0A1A2E] hover:text-white",
