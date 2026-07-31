@@ -193,7 +193,7 @@ services:
       # `/` keeps the approved V2 homepage. Set to "true" to preview V3 at the URL,
       # and to promote it once approved; unset to roll back to V2 instantly.
       - key: VITE_HOMEPAGE_V3
-        value: "false"
+        value: "true"
       - key: VITE_SUPABASE_URL
         sync: false
       - key: VITE_SUPABASE_ANON_KEY
