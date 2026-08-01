@@ -35,8 +35,11 @@ const eyebrowClass = "text-[11px] font-bold uppercase tracking-[0.14em] text-[#D
 const redBtn = "bg-[#D81F2A] text-white hover:bg-[#A6121B]";
 const fieldClass = "border-[#C3C7CE] bg-white text-[#0A1A2E] placeholder:text-[#9AA3B0]";
 
-// Embeddable Calendly / Cal.com inline URL for the 25-minute review event.
-const SCHEDULER_URL = (import.meta.env.VITE_FLEET_REVIEW_SCHEDULER_URL as string | undefined)?.trim();
+// Embeddable Calendly / Cal.com inline URL for the review event. Defaults to the
+// founder's Calendly; override per-environment with VITE_FLEET_REVIEW_SCHEDULER_URL.
+const DEFAULT_SCHEDULER_URL = "https://calendly.com/dkwesga/30min";
+const SCHEDULER_URL =
+  (import.meta.env.VITE_FLEET_REVIEW_SCHEDULER_URL as string | undefined)?.trim() || DEFAULT_SCHEDULER_URL;
 // Optional hosted founder photo. Falls back to an initials avatar when unset.
 const FOUNDER_PHOTO_URL = (import.meta.env.VITE_FOUNDER_PHOTO_URL as string | undefined)?.trim();
 
