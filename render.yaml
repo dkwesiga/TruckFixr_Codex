@@ -195,9 +195,14 @@ services:
       - key: VITE_HOMEPAGE_V3
         value: "true"
       # Embeddable scheduler URL (Calendly / Cal.com inline embed) powering the
-      # landing-page "Book a Demo" section. Set per-environment; when unset the
-      # section falls back to a "Request a Demo" CTA.
-      - key: VITE_DEMO_SCHEDULER_URL
+      # /fleet-review booking page — the 25-minute founder-led Fleet Maintenance
+      # Review. Set per-environment; when unset qualified visitors see a
+      # "scheduling is being set up" fallback.
+      - key: VITE_FLEET_REVIEW_SCHEDULER_URL
+        sync: false
+      # Optional hosted founder photo for the /fleet-review page. When unset an
+      # initials avatar is shown.
+      - key: VITE_FOUNDER_PHOTO_URL
         sync: false
       - key: VITE_SUPABASE_URL
         sync: false
