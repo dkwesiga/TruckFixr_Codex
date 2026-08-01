@@ -6,6 +6,7 @@ import {
   CalendarClock,
   Check,
   ClipboardCheck,
+  Clock,
   Compass,
   Gauge,
   Radio,
@@ -14,6 +15,7 @@ import {
   ShieldCheck,
   Truck,
   TrendingUp,
+  Users,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
@@ -23,14 +25,11 @@ import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/analytics";
 import { useSeoMeta } from "@/lib/useSeoMeta";
 import { ReadinessPill, type Readiness } from "@/components/readiness/ReadinessPill";
-import {
-  PilotOffer,
-  TractionStrip,
-  getDefaultFitAnswers,
-} from "@/components/marketing/FleetReadinessLandingSections";
+import { TractionStrip } from "@/components/marketing/FleetReadinessLandingSections";
 
 // V3 landing — preventive (scheduled PM) + predictive (developing risk), condensed
 // to 5 focused sections. Shares V2's locked brand system — no new design system.
+// Sales-led motion: the dominant CTA is a live demo booking, not self-serve checkout.
 const sectionShell = "mx-auto w-full max-w-[1240px] px-4 sm:px-6 lg:px-8";
 const cardClass =
   "rounded-[10px] border border-[#C3C7CE] bg-white shadow-[0_18px_40px_-30px_rgba(10,26,46,0.4)]";
@@ -40,61 +39,72 @@ const monoClass = "font-['JetBrains_Mono']";
 const eyebrowClass = "text-[11px] font-bold uppercase tracking-[0.14em] text-[#D81F2A]";
 const redBtn = "bg-[#D81F2A] text-white hover:bg-[#A6121B]";
 
-const DEFAULT_ADDONS = [
-  "Driver photo/video reporting",
-  "Repair invoice upload",
-  "Weekly pilot review",
-];
+// Embeddable scheduler link (Calendly / Cal.com inline URL). Set in the frontend
+// environment as VITE_DEMO_SCHEDULER_URL. When unset, the demo section falls back
+// to a "request a demo" prompt so the page still degrades cleanly.
+const DEMO_SCHEDULER_URL = (import.meta.env.VITE_DEMO_SCHEDULER_URL as string | undefined)?.trim();
 
 function scrollToSection(id: string) {
   if (typeof document === "undefined") return;
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-function RiskCheckButton({
+// Primary CTA across the page — pushes toward a live, sales-led demo session.
+function BookDemoButton({
   location,
   className,
-  children = "Check One Vehicle's Maintenance Risk — Free",
+  children = "Book a Demo",
 }: {
   location: string;
   className?: string;
   children?: ReactNode;
 }) {
   return (
+    <Button
+      onClick={() => {
+        trackEvent("book_demo_clicked", { cta_location: location });
+        scrollToSection("demo");
+      }}
+      className={cn(
+        "min-h-12 h-auto whitespace-normal px-6 py-2.5 text-center text-[15px] font-bold leading-tight",
+        redBtn,
+        className
+      )}
+    >
+      {children}
+      <ArrowRight className="ml-2 h-4 w-4 shrink-0" />
+    </Button>
+  );
+}
+
+// Secondary, low-friction lead-in: try one real vehicle before committing to a call.
+function RiskCheckButton({
+  location,
+  className,
+  dark = false,
+  children = "Or check one vehicle free",
+}: {
+  location: string;
+  className?: string;
+  dark?: boolean;
+  children?: ReactNode;
+}) {
+  return (
     <Link href="/try-one-case">
       <Button
+        variant="outline"
         onClick={() => trackEvent("try_one_case_clicked", { cta_location: location })}
         className={cn(
           "min-h-12 h-auto whitespace-normal px-6 py-2.5 text-center text-[15px] font-bold leading-tight",
-          redBtn,
+          dark
+            ? "border-white/40 text-white hover:bg-white hover:text-[#0A1A2E]"
+            : "border-[#0A1A2E] text-[#0A1A2E] hover:bg-[#0A1A2E] hover:text-white",
           className
         )}
       >
         {children}
-        <ArrowRight className="ml-2 h-4 w-4 shrink-0" />
       </Button>
     </Link>
-  );
-}
-
-function FleetRiskReviewButton({ className, dark = false }: { className?: string; dark?: boolean }) {
-  return (
-    <Button
-      variant="outline"
-      onClick={() => {
-        trackEvent("fleet_risk_review_clicked", { cta_location: "landing" });
-        scrollToSection("pilot");
-      }}
-      className={cn(
-        "min-h-12 h-auto whitespace-normal px-6 py-2.5 text-center text-[15px] font-bold leading-tight",
-        dark
-          ? "border-white/40 text-white hover:bg-white hover:text-[#0A1A2E]"
-          : "border-[#0A1A2E] text-[#0A1A2E] hover:bg-[#0A1A2E] hover:text-white",
-        className
-      )}
-    >
-      Request a Fleet-Risk Review
-    </Button>
   );
 }
 
@@ -124,7 +134,7 @@ function Header() {
   const navItems: Array<[string, string]> = [
     ["Fleet Health", "daily"],
     ["Preventive Maintenance", "preventive"],
-    ["Pricing", "pricing"],
+    ["Book a Demo", "demo"],
   ];
   return (
     <div className="sticky top-0 z-50 border-b border-[#C3C7CE] bg-white/95 backdrop-blur">
@@ -138,7 +148,7 @@ function Header() {
           ))}
           <a href="/access" className="hover:text-[#0A1A2E]">Sign in</a>
         </nav>
-        <RiskCheckButton location="header" className="hidden h-10 min-h-0 px-4 py-0 text-sm sm:inline-flex" children="Check One Vehicle" />
+        <BookDemoButton location="header" className="hidden h-10 min-h-0 px-4 py-0 text-sm sm:inline-flex" />
       </div>
     </div>
   );
@@ -223,10 +233,13 @@ function Hero() {
             operating action.
           </p>
           <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center">
+            <BookDemoButton location="hero" />
             <RiskCheckButton location="hero" />
-            <FleetRiskReviewButton />
           </div>
-          <p className="mt-4 text-sm text-[#73777E]">No credit card. No full fleet setup. Start with one vehicle.</p>
+          <p className="mt-4 text-sm text-[#73777E]">
+            A 20-minute live demo with your fleet in mind — see the readiness picture, PM status and next actions before
+            you commit to anything.
+          </p>
         </div>
         <HeroFleetHealthCard />
       </div>
@@ -430,7 +443,7 @@ function PreventivePredictive() {
   );
 }
 
-// ── Section 4: Free vehicle risk check ───────────────────────────────────────
+// ── Section 4: Free vehicle risk check (secondary, low-friction lead-in) ──────
 const RISK_STEPS: Array<{ n: string; title: string; body: string }> = [
   { n: "1", title: "Identify the vehicle", body: "VIN where available, year / make / model, engine, mileage or engine hours, and current operating status." },
   { n: "2", title: "Add available evidence", body: "Driver symptom, inspection finding, warning light, fault code, dashboard photo, recent repair, or regen / derate info. No field is required." },
@@ -442,9 +455,9 @@ function VehicleRiskCheck() {
     <section className="bg-[#ECEFF4] py-16 sm:py-20">
       <div className={sectionShell}>
         <SectionHeading
-          eyebrow="Free vehicle risk check"
+          eyebrow="Not ready for a call yet?"
           title="Check one vehicle for emerging maintenance risk."
-          description="Use a current concern, a recurring issue, a recent repair, an inspection finding, or an older vehicle you're weighing for replacement — no account or card required."
+          description="Use a current concern, a recurring issue, a recent repair, an inspection finding, or an older vehicle you're weighing for replacement — no account or card required. It's the fastest way to see how TruckFixr thinks before you book a demo."
         />
         <div className="mt-8 grid gap-4 md:grid-cols-3">
           {RISK_STEPS.map((s) => (
@@ -455,31 +468,77 @@ function VehicleRiskCheck() {
             </div>
           ))}
         </div>
-        <div className="mt-8 flex flex-col items-start gap-3">
-          <RiskCheckButton location="risk_check_section" />
-          <p className="text-sm text-[#73777E]">
-            No credit card. No initial fleet setup. Create a fleet workspace after the result to save the case and get
-            ongoing fleet-health monitoring.
-          </p>
+        <div className="mt-8 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
+          <BookDemoButton location="risk_check_section" children="Book a Demo Instead" />
+          <RiskCheckButton location="risk_check_section" children="Check one vehicle free" />
         </div>
       </div>
     </section>
   );
 }
 
-// ── Section 5: Pricing, proof, review + close ────────────────────────────────
-const PRICE_TIERS: Array<{ name: string; price: string; note: string; highlight?: boolean }> = [
-  { name: "One-Vehicle Risk Check", price: "Free", note: "One real vehicle, no account or card." },
-  { name: "Assisted Fleet Pilot", price: "CAD $99", note: "One-time · 30 days, up to 5 vehicles.", highlight: true },
-  { name: "Ongoing Plans", price: "$19–$199/mo", note: "Owner-Operator $19 · Small Fleet $49 · Fleet Growth $99 · Fleet Pro $199." },
-  { name: "Larger Fleets", price: "Custom", note: "21+ vehicles or trailer-heavy operations." },
+// ── Section 5: Demo booking (embedded scheduler) + proof + FAQ + close ───────
+const DEMO_POINTS: Array<{ icon: LucideIcon; title: string; body: string }> = [
+  {
+    icon: Clock,
+    title: "20 minutes, live — no slides",
+    body: "A working session, not a pitch. Bring a vehicle or two and we walk through them with you in the real product.",
+  },
+  {
+    icon: Gauge,
+    title: "See your fleet's readiness picture",
+    body: "Readiness states, PM status, developing-risk signals and roadside triage — shown against scenarios that match your operation.",
+  },
+  {
+    icon: Users,
+    title: "Answers on rollout & pricing",
+    body: "Driver adoption, data you already have, what a rollout looks like, and pricing tailored to your fleet size.",
+  },
 ];
+
+function DemoScheduler() {
+  if (DEMO_SCHEDULER_URL) {
+    return (
+      <div className={cn(cardClass, "overflow-hidden p-0")}>
+        <iframe
+          src={DEMO_SCHEDULER_URL}
+          title="Book a TruckFixr demo"
+          loading="lazy"
+          className="h-[680px] w-full border-0 bg-white"
+        />
+      </div>
+    );
+  }
+  // Fallback when no scheduler URL is configured yet — keeps the CTA functional.
+  return (
+    <div className={cn(cardClass, "flex flex-col items-center justify-center gap-4 p-10 text-center")}>
+      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#FDECEC]">
+        <CalendarClock className="h-6 w-6 text-[#D81F2A]" aria-hidden="true" />
+      </span>
+      <h3 className={cn(displayClass, "text-2xl")}>Let&apos;s find a time</h3>
+      <p className="max-w-md text-sm leading-6 text-[#38465F]">
+        Tell us a little about your fleet and we&apos;ll set up a live 20-minute walkthrough. No commitment, no card.
+      </p>
+      <Link href="/try-one-case">
+        <Button
+          onClick={() => trackEvent("book_demo_clicked", { cta_location: "demo_fallback" })}
+          className={cn("h-11 px-6 font-bold", redBtn)}
+        >
+          Request a Demo
+          <ArrowRight className="ml-2 h-4 w-4" />
+        </Button>
+      </Link>
+    </div>
+  );
+}
+
 const FAQS: Array<{ q: string; a: string }> = [
+  { q: "What happens on the demo?", a: "A live 20-minute session where we walk through your fleet's readiness, PM status, developing-risk signals and roadside triage using scenarios that match your operation — then map out what a rollout would look like." },
+  { q: "How much does TruckFixr cost?", a: "Pricing scales with your fleet size and how you roll out. We'll walk you through the options on your demo so you only pay for what fits — there's no self-serve commitment before then." },
   { q: "Does TruckFixr track scheduled PM?", a: "Yes. It tracks preventive-maintenance intervals by mileage, engine hours, or date — whichever comes first — and surfaces work that is due soon or overdue." },
   { q: "Can it help when a driver is on the road?", a: "Yes. A driver can triage a warning light or fault code, answer a few safety questions, and get a preliminary operating recommendation. It is preliminary triage, not a replacement for inspection." },
   { q: "Does it replace a technician?", a: "No. It provides decision support and does not replace inspection, diagnosis, or a qualified technician, and does not provide roadworthiness certification." },
   { q: "Is telematics hardware required?", a: "No. A driver report, inspection, or warning light is enough to start. Automated telematics ingestion is on the roadmap." },
-  { q: "What happens after the free vehicle check?", a: "You get the assessment immediately, then can create a fleet workspace to save the case and add vehicles — or start the CAD $99 assisted pilot." },
 ];
 
 function CloseSection() {
@@ -489,49 +548,40 @@ function CloseSection() {
     mainEntity: FAQS.map((f) => ({ "@type": "Question", name: f.q, acceptedAnswer: { "@type": "Answer", text: f.a } })),
   };
   return (
-    <section id="pricing" className="bg-white py-16 sm:py-20">
+    <section id="demo" className="scroll-mt-20 bg-white py-16 sm:py-20">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }} />
       <div className={cn(sectionShell, "space-y-12")}>
-        {/* Pricing */}
+        {/* Demo booking */}
         <div>
-          <SectionHeading center eyebrow="Pricing" title="Start free. Grow when it earns its place." />
-          <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {PRICE_TIERS.map((t) => (
-              <div key={t.name} className={cn(cardClass, "p-5", t.highlight && "ring-2 ring-[#D81F2A]")}>
-                <p className="text-sm font-bold text-[#0A1A2E]">{t.name}</p>
-                <p className={cn(displayClass, "mt-2 text-2xl")}>{t.price}</p>
-                <p className="mt-2 text-xs leading-5 text-[#73777E]">{t.note}</p>
-              </div>
-            ))}
+          <SectionHeading
+            center
+            eyebrow="Book a demo"
+            title="See TruckFixr on your fleet in 20 minutes."
+            description="Pick a time that works. We'll run a live walkthrough against your real scenarios — and you'll leave knowing exactly what it would do for your operation."
+          />
+          <div className="mt-8 grid gap-6 lg:grid-cols-[0.85fr_1.15fr] lg:items-start">
+            <div className="grid gap-4">
+              {DEMO_POINTS.map((p) => {
+                const Icon = p.icon;
+                return (
+                  <div key={p.title} className={cn(cardClass, "flex gap-3 p-5")}>
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-[#0A1A2E]">
+                      <Icon className="h-5 w-5 text-white" aria-hidden="true" />
+                    </span>
+                    <div>
+                      <p className="text-sm font-bold text-[#0A1A2E]">{p.title}</p>
+                      <p className="mt-1 text-sm leading-6 text-[#38465F]">{p.body}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <DemoScheduler />
           </div>
-          <p className="mt-4 text-center text-xs text-[#73777E]">
-            The one-time CAD $99 Assisted Pilot is separate from the $99/mo Fleet Growth plan. A no-card 14-day trial is
-            also available.{" "}
-            <Link href="/pricing" className="font-semibold text-[#0A1A2E] underline">View full pricing</Link>.
-          </p>
         </div>
 
         {/* Supporters (qualitative proof) */}
         <TractionStrip />
-
-        {/* Fleet-risk review + pilot — the compact lead form. */}
-        <div id="pilot" className="scroll-mt-20">
-          <SectionHeading center eyebrow="Fleet-risk review & 30-day pilot" title="Request a review, or start the CAD $99 pilot." />
-          <div className="mt-6">
-            <PilotOffer fitAnswers={getDefaultFitAnswers()} selectedAddOns={DEFAULT_ADDONS} />
-          </div>
-          <div className="mt-6 text-center">
-            <Link href="/pilot-apply">
-              <Button
-                onClick={() => trackEvent("pilot_cta_clicked", { cta_location: "close_section" })}
-                className={cn("h-11 px-6 font-bold", redBtn)}
-              >
-                Start the CAD $99 Pilot
-                <ArrowRight className="ml-2 h-4 w-4" />
-              </Button>
-            </Link>
-          </div>
-        </div>
 
         {/* FAQ */}
         <div>
@@ -561,8 +611,8 @@ function FinalCta() {
           Know what needs attention—and what&apos;s due—before the next dispatch, roadside warning or breakdown.
         </h2>
         <div className="mt-7 flex flex-col items-center justify-center gap-3 sm:flex-row">
-          <RiskCheckButton location="final_cta" />
-          <FleetRiskReviewButton dark />
+          <BookDemoButton location="final_cta" />
+          <RiskCheckButton location="final_cta" dark />
         </div>
       </div>
     </section>
@@ -572,7 +622,7 @@ function FinalCta() {
 function StickyMobileCta() {
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[#C3C7CE] bg-white/95 p-3 backdrop-blur sm:hidden">
-      <RiskCheckButton location="sticky_mobile" className="h-12 min-h-0 w-full justify-center py-0" children="Check One Vehicle — Free" />
+      <BookDemoButton location="sticky_mobile" className="h-12 min-h-0 w-full justify-center py-0" children="Book a Demo" />
     </div>
   );
 }
@@ -581,7 +631,7 @@ export default function FleetReadinessLandingV3() {
   useSeoMeta({
     title: "TruckFixr Fleet AI | Preventive & Predictive Maintenance Intelligence for Commercial Fleets",
     description:
-      "Stay ahead of scheduled service and catch developing problems early. TruckFixr combines inspections, driver reports, fault information, PM schedules, repair history and confirmed outcomes into a clear risk level, PM status and recommended action for commercial fleets.",
+      "Book a live demo. See how TruckFixr combines inspections, driver reports, fault information, PM schedules, repair history and confirmed outcomes into a clear risk level, PM status and recommended action for commercial fleets.",
   });
 
   return (

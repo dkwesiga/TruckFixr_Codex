@@ -194,6 +194,11 @@ services:
       # and to promote it once approved; unset to roll back to V2 instantly.
       - key: VITE_HOMEPAGE_V3
         value: "true"
+      # Embeddable scheduler URL (Calendly / Cal.com inline embed) powering the
+      # landing-page "Book a Demo" section. Set per-environment; when unset the
+      # section falls back to a "Request a Demo" CTA.
+      - key: VITE_DEMO_SCHEDULER_URL
+        sync: false
       - key: VITE_SUPABASE_URL
         sync: false
       - key: VITE_SUPABASE_ANON_KEY
