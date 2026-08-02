@@ -18,6 +18,7 @@
     "verify:browser-smoke": "node scripts/verify/browser-smoke-lite.ts",
     "verify:browser-routes": "tsx scripts/verify/browser-smoke-routes.ts",
     "db:push": "drizzle-kit generate && drizzle-kit migrate",
+    "utm": "tsx scripts/marketing/utm.ts",
     "seed:fault-codes": "tsx scripts/seed-fault-code-references.ts",
     "seed:partner": "tsx scripts/seed-partner-mr-diesel.ts",
     "seed:demo": "tsx scripts/seed-demo-data.ts",
