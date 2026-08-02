@@ -4,6 +4,7 @@ patchedDependencies:
 overrides:
   '@smithy/config-resolver': 4.5.1
   '@trpc/server': 11.8.0
+  brace-expansion@2: 2.1.4
   dompurify: 3.4.3
   drizzle-orm: 0.45.2
   fast-xml-parser: 5.7.0
