@@ -90,82 +90,56 @@ export default function Privacy() {
         where required by law.
       </p>
 
-      <h2>Website analytics and cookies</h2>
+      <h2>Website analytics</h2>
       <p>
         On our <strong>public marketing website only</strong> — pages such as
         the homepage, pricing, resources, and the Fleet Maintenance Review
-        booking page — we use marketing analytics to understand how visitors
-        find and use the site, so we can improve it and measure whether it helps
-        fleets book a review. We use:
+        booking page — we use <strong>Google Analytics 4 (GA4)</strong> to
+        understand how visitors find and use the site, so we can improve it and
+        measure whether it helps fleets book a review. We look at aggregate
+        information such as pages viewed, referring source and campaign,
+        approximate location (country/region), device category, and whether a
+        visitor clicked a booking call-to-action or reached the calendar.
       </p>
-      <ul>
-        <li>
-          <strong>Google Analytics 4 (GA4):</strong> aggregate traffic and
-          behaviour, such as pages viewed, referring source and campaign,
-          approximate location (country/region), device category, and whether a
-          visitor clicked a booking call-to-action or reached the calendar.
-        </li>
-        <li>
-          <strong>Microsoft Clarity:</strong> aggregate usage and optional
-          session recordings and heatmaps that help us see where the site is
-          confusing. Clarity is configured to
-          <strong> mask all text and form inputs by default</strong>, so it
-          should not capture what you type.
-        </li>
-      </ul>
       <p>
-        These tools run <strong>only after you accept analytics</strong> and
-        only on our public website. They are{" "}
+        We run GA4 in a <strong>cookieless, privacy-preserving way</strong>: it
+        does <strong>not set advertising or analytics cookies</strong> and does
+        not store a tracking identifier on your device, IP addresses are
+        anonymized, and Google advertising features and Google Signals are
+        turned off. Because we don&apos;t store or read tracking information on
+        your device, we don&apos;t show an intrusive cookie banner. Analytics is{" "}
         <strong>never loaded on the signed-in TruckFixr application</strong>,
-        and we do not use them to collect fleet, vehicle, diagnostic, repair,
-        driver, or account information. We do not use these analytics to send
-        you advertising, and we keep Google advertising features and Google
-        Signals turned off.
+        and we do not use it to collect fleet, vehicle, diagnostic, repair,
+        driver, or account information, or to advertise to you.
       </p>
       <p>
-        <strong>Your choices.</strong> When you first visit, a banner lets you
-        Accept or Reject analytics, or manage preferences. Necessary site
-        features and booking work regardless of your choice. You can change or
-        withdraw your consent at any time using the{" "}
-        <strong>&ldquo;Cookie preferences&rdquo;</strong> link in the footer.
-        Withdrawing consent stops future tracking and clears the first-party
-        analytics and campaign-attribution data under our control on your
-        device; it cannot remove data already collected by these providers. Your
-        consent choice is remembered for up to 12 months, and we may ask again
-        sooner if our tracking or this notice materially changes.
+        <strong>Your choices.</strong> Analytics is optional and never required
+        to use the site or book a review. You can turn it off at any time using
+        the <strong>&ldquo;Do not track me&rdquo;</strong> control in the
+        footer, which stops analytics on your browser. If your browser sends a{" "}
+        <strong>Global Privacy Control (GPC)</strong> or{" "}
+        <strong>Do Not Track (DNT)</strong> signal, we automatically disable
+        analytics without you having to do anything.
       </p>
       <p>
-        <strong>Global Privacy Control.</strong> If your browser sends a Global
-        Privacy Control (GPC) signal, we automatically treat analytics as
-        rejected and keep it disabled while GPC is active.
-      </p>
-      <p>
-        <strong>Campaign attribution.</strong> With your consent, we store
-        non-identifying campaign parameters (such as <code>utm_source</code>,{" "}
-        <code>utm_medium</code>, and <code>utm_campaign</code>) for up to 90
-        days to understand which channels bring qualified visitors. We never
-        place personal information in these parameters.
+        <strong>Campaign attribution.</strong> When you arrive from a campaign
+        link, we read non-identifying campaign parameters (such as{" "}
+        <code>utm_source</code>, <code>utm_medium</code>, and{" "}
+        <code>utm_campaign</code>) for the current visit to understand which
+        channels bring visitors. We never place personal information in these
+        parameters and do not store them on your device.
       </p>
       <p>
         <strong>Retention.</strong> We aim to limit analytics retention — for
-        example, configuring GA4 to retain user-level and event data for no
-        longer than 14 months. Exact retention depends on provider settings,
-        which we verify in the providers&apos; dashboards. See the
-        providers&apos; own notices for details:{" "}
+        example, configuring GA4 to retain event data for no longer than 14
+        months. Exact retention depends on provider settings, which we verify in
+        Google&apos;s dashboard. See Google&apos;s own notice for details:{" "}
         <a
           href="https://policies.google.com/privacy"
           rel="noopener noreferrer"
           target="_blank"
         >
           Google Privacy Policy
-        </a>{" "}
-        and{" "}
-        <a
-          href="https://privacy.microsoft.com/privacystatement"
-          rel="noopener noreferrer"
-          target="_blank"
-        >
-          Microsoft Privacy Statement
         </a>
         .
       </p>

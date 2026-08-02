@@ -6,8 +6,8 @@
 > posts sanitized events to `/api/analytics/event`). The `VITE_POSTHOG_*` env vars
 > are dormant. This document is kept for historical reference only.
 >
-> For the **public-website marketing analytics** (Google Analytics 4 + Microsoft
-> Clarity, consent-gated, funnel + Calendly conversion tracking), see
+> For the **public-website marketing analytics** (cookieless Google Analytics 4,
+> banner-free, funnel + Calendly conversion tracking), see
 > [`docs/marketing-analytics/`](./docs/marketing-analytics/README.md). That is a
 > separate system and does **not** touch the authenticated product analytics
 > below.

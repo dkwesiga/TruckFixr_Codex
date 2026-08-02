@@ -21,7 +21,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/analytics";
 import { useSeoMeta } from "@/lib/useSeoMeta";
-import CookiePreferencesLink from "@/components/consent/CookiePreferencesLink";
+import AnalyticsOptOutLink from "@/components/analytics/AnalyticsOptOutLink";
 import {
   trackCalendlyOpened,
   trackMeetingScheduled,
@@ -797,7 +797,7 @@ export default function FleetReviewBooking() {
           <a href="/terms" className="hover:text-white">
             Terms
           </a>{" "}
-          · <CookiePreferencesLink />
+          · <AnalyticsOptOutLink />
         </div>
       </footer>
     </div>

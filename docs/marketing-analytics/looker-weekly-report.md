@@ -43,7 +43,7 @@ visitor→meeting rate. Include prior-week and 4-week-avg comparisons.
 - **Landing page**
 - **CTA location & wording** (`cta_location`, `cta_text`)
 - **Key section views** (`section_view` by `section_name`)
-- **First-touch vs most-recent-touch** attribution (`first_touch_*` / `recent_touch_*`)
+- **Session source/medium** attribution (GA4's cookieless default-channel grouping)
 
 ## Search Console panel
 
@@ -75,14 +75,12 @@ suggest where to focus, but require manual review before acting:
 - CTA clicks but low **Calendly opens** → friction in the qualification form.
 - Opens but low **meetings** → calendar availability / scheduling friction.
 
-> The recommendation is a prompt, not a decision. Review GA4 and relevant Clarity
-> recordings before changing anything.
+> The recommendation is a prompt, not a decision. Review GA4 before changing anything.
 
 ## Links (fill in)
 
 - GA4 report: `<paste GA4 report URL>`
 - Search Console performance: `<paste Search Console URL>`
-- Clarity dashboard / recordings: `<paste Clarity URL>`
 - Looker Studio dashboard: `<paste Looker URL>`
 
 ## Connector caveats

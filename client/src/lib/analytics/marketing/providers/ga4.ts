@@ -1,6 +1,12 @@
-// Google Analytics 4 provider (gtag). Loaded lazily and ONLY by the gated
-// orchestrator — never imported for its side effects. No-ops entirely without a
-// valid Measurement ID. Uses Google Consent Mode with advertising signals off.
+// Google Analytics 4 provider (gtag) — COOKIELESS mode. Loaded lazily and ONLY
+// by the gated orchestrator; never imported for its side effects. No-ops without
+// a valid Measurement ID.
+//
+// Cookieless/banner-free: analytics_storage is denied and client_storage is
+// "none", so GA4 sets NO cookies and stores NO client identifier on the device.
+// It sends cookieless pings (no persistent user id), IP is anonymized, and all
+// advertising signals are off. Because nothing is stored on or read from the
+// device, this does not require a cookie-consent banner.
 
 type GtagArgs = [string, ...unknown[]];
 
@@ -39,13 +45,13 @@ export function initGa4(measurementId: string | null): boolean {
       window.dataLayer!.push(arguments);
     };
 
-  // Consent Mode: analytics granted (we only reach here with consent), all
-  // advertising signals denied. No Google Signals, no ad personalization.
+  // Consent Mode: cookieless. Every storage category is denied — GA4 then runs
+  // without cookies and without a stored client id (cookieless pings).
   pushGtag("consent", "default", {
     ad_storage: "denied",
     ad_user_data: "denied",
     ad_personalization: "denied",
-    analytics_storage: "granted",
+    analytics_storage: "denied",
   });
 
   pushGtag("js", new Date());
@@ -53,6 +59,8 @@ export function initGa4(measurementId: string | null): boolean {
     anonymize_ip: true,
     allow_google_signals: false,
     allow_ad_personalization_signals: false,
+    // Belt-and-suspenders with analytics_storage:denied — no device storage.
+    client_storage: "none",
     // We drive page_view ourselves on SPA navigations.
     send_page_view: false,
   });

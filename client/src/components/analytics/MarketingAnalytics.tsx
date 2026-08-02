@@ -1,4 +1,4 @@
-// App-wide marketing-analytics driver. Mounted once inside ConsentProvider.
+// App-wide marketing-analytics driver. Mounted once, app-wide.
 //
 // Responsibilities:
 //  - Fire a page view on every client navigation (the module gates it).
@@ -11,10 +11,8 @@
 
 import { useEffect, useRef } from "react";
 import { useLocation } from "wouter";
-import { useConsent } from "@/lib/consent/useConsent";
 import { isPublicMarketingRoute } from "@/lib/publicRoutes";
 import {
-  onConsentChanged,
   trackPageView,
   trackQualifiedVisitor,
 } from "@/lib/analytics/marketing";
@@ -26,7 +24,6 @@ import {
 
 export default function MarketingAnalytics() {
   const [location] = useLocation();
-  const { status } = useConsent();
 
   // Page view + multi-page qualification on each public navigation.
   useEffect(() => {
@@ -36,11 +33,6 @@ export default function MarketingAnalytics() {
       if (qualifiesByPages(count)) trackQualifiedVisitor("multi_page");
     }
   }, [location]);
-
-  // Re-evaluate providers when the consent decision changes.
-  useEffect(() => {
-    onConsentChanged();
-  }, [status]);
 
   // Engaged-time qualification: accumulate visible time on public routes; fire
   // once the 30s threshold is crossed. Timers pause when the tab is hidden.

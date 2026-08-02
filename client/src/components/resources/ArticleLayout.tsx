@@ -2,7 +2,7 @@ import { type CSSProperties, type ReactNode } from "react";
 import { ArrowRight } from "lucide-react";
 import AppLogo from "@/components/AppLogo";
 import { Button } from "@/components/ui/button";
-import CookiePreferencesLink from "@/components/consent/CookiePreferencesLink";
+import AnalyticsOptOutLink from "@/components/analytics/AnalyticsOptOutLink";
 
 const colors = {
   fleetBlue: "#0B3C5D",
@@ -198,7 +198,7 @@ export default function ArticleLayout({
               </a>
             </span>
             <span aria-hidden="true">·</span>
-            <CookiePreferencesLink className="text-[#42474E] hover:text-[#F37021]" />
+            <AnalyticsOptOutLink className="text-[#42474E] hover:text-[#F37021]" />
           </p>
         </div>
       </footer>

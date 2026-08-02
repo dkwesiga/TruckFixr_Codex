@@ -6,32 +6,21 @@ import {
 } from "./config";
 
 describe("analytics config", () => {
-  it("accepts a valid GA4 id and Clarity id", () => {
-    const c = parseAnalyticsConfig({
-      ga4Id: "G-ABC123XYZ",
-      clarityId: "abcd1234",
-      isProdBuild: true,
-    });
+  it("accepts a valid GA4 id", () => {
+    const c = parseAnalyticsConfig({ ga4Id: "G-ABC123XYZ", isProdBuild: true });
     expect(c.ga4Id).toBe("G-ABC123XYZ");
-    expect(c.clarityId).toBe("abcd1234");
     expect(c.warnings).toHaveLength(0);
   });
 
-  it("disables providers with malformed ids and records a diagnostic warning", () => {
-    const c = parseAnalyticsConfig({
-      ga4Id: "UA-123",
-      clarityId: "!!",
-      isProdBuild: true,
-    });
+  it("disables GA4 with a malformed id and records a diagnostic warning", () => {
+    const c = parseAnalyticsConfig({ ga4Id: "UA-123", isProdBuild: true });
     expect(c.ga4Id).toBeNull();
-    expect(c.clarityId).toBeNull();
-    expect(c.warnings.length).toBe(2);
+    expect(c.warnings.length).toBe(1);
   });
 
-  it("treats absent ids as disabled (no warning)", () => {
+  it("treats an absent id as disabled (no warning)", () => {
     const c = parseAnalyticsConfig({ isProdBuild: true });
     expect(c.ga4Id).toBeNull();
-    expect(c.clarityId).toBeNull();
     expect(c.warnings).toHaveLength(0);
   });
 

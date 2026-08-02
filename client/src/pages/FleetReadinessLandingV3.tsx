@@ -24,7 +24,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/analytics";
 import { useSeoMeta } from "@/lib/useSeoMeta";
-import CookiePreferencesLink from "@/components/consent/CookiePreferencesLink";
+import AnalyticsOptOutLink from "@/components/analytics/AnalyticsOptOutLink";
 import { trackEvaluationCtaClick } from "@/lib/analytics/marketing";
 import SectionView from "@/components/analytics/SectionView";
 import {
@@ -932,7 +932,7 @@ export default function FleetReadinessLandingV3() {
           <a href="/pricing" className="hover:text-white">
             Pricing
           </a>{" "}
-          · <CookiePreferencesLink />
+          · <AnalyticsOptOutLink />
         </div>
       </footer>
       <StickyMobileCta />

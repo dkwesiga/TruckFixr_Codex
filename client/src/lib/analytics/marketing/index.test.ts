@@ -1,24 +1,20 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-// Integration test for the orchestrator. Consent, config, and providers are
-// mocked so we can exercise the gate + sanitization + dedupe end-to-end without
-// a browser or real network.
+// Integration test for the cookieless, banner-free orchestrator. Config,
+// providers, opt-out, and signals are mocked so we can exercise the gate +
+// sanitization + dedupe end-to-end without a browser or network.
 
-let consent = true;
 let production = true;
 let debug = false;
+let optedOut = false;
+let internal = false;
+let dnt = false;
 
 const ga4Track = vi.fn();
-const clarityTrack = vi.fn();
-
-vi.mock("@/lib/consent/consentStore", () => ({
-  hasAnalyticsConsent: () => consent,
-}));
 
 vi.mock("./config", () => ({
   loadAnalyticsConfig: () => ({
     ga4Id: "G-TEST123",
-    clarityId: "clarity123",
     debugRequested: debug,
     forceEnable: false,
     isProdBuild: production,
@@ -32,26 +28,21 @@ vi.mock("./providers/ga4", () => ({
   ga4Track: (...a: unknown[]) => ga4Track(...a),
   initGa4: () => true,
 }));
-vi.mock("./providers/clarity", () => ({
-  clarityTrack: (...a: unknown[]) => clarityTrack(...a),
-  initClarity: () => true,
-  resumeClarity: () => {},
-  stopClarity: () => {},
+vi.mock("./optOut", () => ({ isOptedOut: () => optedOut }));
+vi.mock("./privacySignals", () => ({ honoursDoNotTrack: () => dnt }));
+vi.mock("./internalOptOut", () => ({
+  isInternalTraffic: () => internal,
+  applyInternalOptOutFromUrl: () => internal,
 }));
 
-function stubWindow(pathSearch = "") {
+function stubWindow(search = "") {
   const store = new Map<string, string>();
   vi.stubGlobal("window", {
-    location: { hostname: "truckfixr.com", search: pathSearch },
-    localStorage: {
+    location: { hostname: "truckfixr.com", search },
+    sessionStorage: {
       getItem: (k: string) => store.get(k) ?? null,
       setItem: (k: string, v: string) => void store.set(k, v),
       removeItem: (k: string) => void store.delete(k),
-    },
-    sessionStorage: {
-      getItem: (k: string) => store.get(`s:${k}`) ?? null,
-      setItem: (k: string, v: string) => void store.set(`s:${k}`, v),
-      removeItem: (k: string) => void store.delete(`s:${k}`),
     },
   });
 }
@@ -63,39 +54,31 @@ async function load() {
 }
 
 beforeEach(() => {
-  consent = true;
   production = true;
   debug = false;
+  optedOut = false;
+  internal = false;
+  dnt = false;
   ga4Track.mockClear();
-  clarityTrack.mockClear();
   vi.resetModules();
   stubWindow();
 });
 afterEach(() => vi.unstubAllGlobals());
 
-describe("marketing analytics orchestrator", () => {
-  it("sends nothing before consent", async () => {
-    consent = false;
+describe("cookieless analytics orchestrator", () => {
+  it("sends a page view with sanitized page context + transient campaign params", async () => {
+    stubWindow("?utm_source=linkedin"); // query lives on window.location.search
     const a = await load();
-    a.trackPageView("/");
-    a.trackEvaluationCtaClick({
-      location: "hero",
-      text: "Book Your Fleet Review",
-    });
-    expect(ga4Track).not.toHaveBeenCalled();
-  });
-
-  it("sends a page view with sanitized page context in production with consent", async () => {
-    const a = await load();
-    a.trackPageView("/pricing?utm_source=linkedin");
+    a.trackPageView("/pricing");
     const call = ga4Track.mock.calls.find(c => c[0] === "public_page_view");
     expect(call).toBeTruthy();
     const params = call![1] as Record<string, unknown>;
-    expect(params.page_path).toBe("/pricing"); // query stripped
+    expect(params.page_path).toBe("/pricing");
     expect(params.page_type).toBe("pricing");
+    expect(params.utm_source).toBe("linkedin"); // transient campaign param attached
   });
 
-  it("tracks an evaluation CTA click with safe location + normalized text, and marks qualified", async () => {
+  it("tracks an evaluation CTA click and marks qualified", async () => {
     const a = await load();
     a.syncMarketingAnalytics("/");
     a.trackEvaluationCtaClick({
@@ -104,16 +87,12 @@ describe("marketing analytics orchestrator", () => {
     });
     const cta = ga4Track.mock.calls.find(c => c[0] === "evaluation_cta_click");
     expect(cta).toBeTruthy();
-    expect((cta![1] as Record<string, unknown>).cta_location).toBe("hero");
     expect((cta![1] as Record<string, unknown>).cta_text).toBe(
       "book_your_fleet_review"
     );
-    // high-intent → qualified_visitor also emitted
     expect(ga4Track.mock.calls.some(c => c[0] === "qualified_visitor")).toBe(
       true
     );
-    // conversions mirrored to Clarity as name-only events
-    expect(clarityTrack).toHaveBeenCalledWith("evaluation_cta_click");
   });
 
   it("deduplicates meeting_scheduled to once per visit", async () => {
@@ -121,23 +100,31 @@ describe("marketing analytics orchestrator", () => {
     a.syncMarketingAnalytics("/fleet-review");
     a.trackMeetingScheduled();
     a.trackMeetingScheduled();
-    a.trackMeetingScheduled();
-    const scheduled = ga4Track.mock.calls.filter(
-      c => c[0] === "meeting_scheduled"
-    );
-    expect(scheduled).toHaveLength(1);
+    expect(
+      ga4Track.mock.calls.filter(c => c[0] === "meeting_scheduled")
+    ).toHaveLength(1);
   });
 
-  it("debug mode logs and never contacts providers", async () => {
-    production = false;
-    debug = true;
-    const spy = vi.spyOn(console, "debug").mockImplementation(() => {});
+  it("sends nothing when the visitor has opted out", async () => {
+    optedOut = true;
+    const a = await load();
+    a.trackPageView("/");
+    a.trackEvaluationCtaClick({ location: "hero", text: "Book" });
+    expect(ga4Track).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing when GPC/DNT is present", async () => {
+    dnt = true;
     const a = await load();
     a.trackPageView("/");
     expect(ga4Track).not.toHaveBeenCalled();
-    expect(clarityTrack).not.toHaveBeenCalled();
-    expect(spy).toHaveBeenCalled();
-    spy.mockRestore();
+  });
+
+  it("sends nothing for internal traffic", async () => {
+    internal = true;
+    const a = await load();
+    a.trackPageView("/");
+    expect(ga4Track).not.toHaveBeenCalled();
   });
 
   it("never sends on an authenticated route", async () => {
@@ -146,7 +133,18 @@ describe("marketing analytics orchestrator", () => {
     expect(ga4Track).not.toHaveBeenCalled();
   });
 
-  it("does not throw if a provider throws (booking/navigation stay safe)", async () => {
+  it("debug mode logs and never contacts GA4", async () => {
+    production = false;
+    debug = true;
+    const spy = vi.spyOn(console, "debug").mockImplementation(() => {});
+    const a = await load();
+    a.trackPageView("/");
+    expect(ga4Track).not.toHaveBeenCalled();
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("does not throw if GA4 throws (booking/navigation stay safe)", async () => {
     ga4Track.mockImplementation(() => {
       throw new Error("blocked by adblock");
     });

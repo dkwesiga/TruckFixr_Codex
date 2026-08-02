@@ -52,8 +52,8 @@ pnpm utm --channel partner      --campaign mr_diesel --path /pricing
 
 ## How attribution uses these
 
-With consent, the first campaign a visitor arrives on is stored as **first-touch**
-(immutable for 90 days); each later campaign updates **recent-touch**. Both expire
-after 90 days and are attached to events as `first_touch_*` / `recent_touch_*` and
-`utm_*`. Before consent, UTMs are read only for the current page and never stored.
-See [README.md](./README.md#campaign-attribution).
+The site reads these UTM parameters from the current URL **in memory** and attaches
+them (`utm_source/medium/campaign/content`) to that visit's events — they are
+**never stored on the visitor's device**. Cross-session and first/last-touch
+attribution is handled by GA4's own server-side modelling. See
+[README.md](./README.md#campaign-attribution).

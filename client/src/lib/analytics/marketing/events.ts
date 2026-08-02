@@ -81,12 +81,6 @@ export const ALLOWED_PARAM_KEYS = [
   "utm_medium",
   "utm_campaign",
   "utm_content",
-  "first_touch_source",
-  "first_touch_medium",
-  "first_touch_campaign",
-  "recent_touch_source",
-  "recent_touch_medium",
-  "recent_touch_campaign",
   "qualifier",
   "engaged_seconds",
 ] as const;

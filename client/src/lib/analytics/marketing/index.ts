@@ -1,14 +1,14 @@
 // Central marketing-analytics module — the ONLY thing feature code calls.
 //
-// Feature code never touches gtag, Clarity, or window globals directly. It calls
-// the typed trackers here, and this module enforces every guard (consent,
-// production, public route, internal opt-out, debug), sanitizes parameters,
-// attaches campaign attribution + page context, deduplicates, and fails safe.
+// COOKIELESS, BANNER-FREE. Feature code never touches gtag or window globals
+// directly. It calls the typed trackers here, and this module enforces every
+// guard (production, public route, internal opt-out, visitor opt-out, GPC/DNT,
+// debug), sanitizes parameters, attaches non-persistent campaign params + page
+// context, deduplicates, and fails safe.
 //
 // Analytics failure must NEVER interrupt navigation, CTA clicks, or booking —
 // every public function is wrapped so it cannot throw into caller code.
 
-import { hasAnalyticsConsent } from "@/lib/consent/consentStore";
 import { isPublicMarketingRoute } from "@/lib/publicRoutes";
 import {
   isDebugMode,
@@ -32,7 +32,7 @@ import {
   type SectionName,
 } from "./events";
 import { resolvePageType, sanitizePagePath, isLandingPath } from "./page";
-import { captureAttribution } from "./attribution";
+import { readCampaignParams } from "./campaign";
 import {
   firstTimeThisPageView,
   firstTimeThisSession,
@@ -42,17 +42,13 @@ import {
   applyInternalOptOutFromUrl,
   isInternalTraffic,
 } from "./internalOptOut";
+import { isOptedOut } from "./optOut";
+import { honoursDoNotTrack } from "./privacySignals";
 import { ga4Track, initGa4 } from "./providers/ga4";
-import {
-  clarityTrack,
-  initClarity,
-  resumeClarity,
-  stopClarity,
-} from "./providers/clarity";
 
 let config: AnalyticsConfig | null = null;
 let currentPath = "/";
-let attributionParams: Record<string, string> = {};
+let campaignParams: Record<string, string> = {};
 let warnedThisSession = false;
 
 function getConfig(): AnalyticsConfig {
@@ -72,10 +68,11 @@ function gateInputs(path: string): GateInputs {
   const cfg = getConfig();
   const host = hostname();
   return {
-    hasConsent: hasAnalyticsConsent(),
     isProduction: isProductionEnvironment(cfg, host),
     isPublicRoute: isPublicMarketingRoute(path),
     isInternal: isInternalTraffic(),
+    isOptedOut: isOptedOut(),
+    respectSignal: honoursDoNotTrack(),
     isDebug: isDebugMode(cfg, host),
   };
 }
@@ -116,28 +113,19 @@ function emit(
     const safe = sanitizeParams({
       page_path: sanitizePagePath(currentPath),
       page_type: resolvePageType(currentPath),
-      ...attributionParams,
+      ...campaignParams,
       ...params,
     });
 
     if (mode === "debug") {
-      // Debug mode: log a sanitized event; NEVER contact GA4/Clarity.
+      // Debug mode: log a sanitized event; NEVER contact GA4.
       // eslint-disable-next-line no-console
       console.debug(`[marketing-analytics] ${name}`, safe);
       return;
     }
 
-    // mode === "send"
+    // mode === "send" (cookieless GA4)
     ga4Track(name, safe);
-    // Mirror key conversions to Clarity as a name-only custom event (no params).
-    if (
-      name === "evaluation_cta_click" ||
-      name === "calendly_opened" ||
-      name === "meeting_scheduled" ||
-      name === "qualified_visitor"
-    ) {
-      clarityTrack(name);
-    }
   } catch {
     /* analytics must never break the app */
   }
@@ -145,8 +133,9 @@ function emit(
 
 /**
  * Initialize/sync analytics for the current route. Call on app mount and on
- * every client navigation. Applies the internal opt-out toggle, (de)initializes
- * providers per the gate, captures attribution, and resets per-page dedupe.
+ * every client navigation. Applies the internal opt-out toggle, initializes GA4
+ * (cookieless) per the gate, reads current-page campaign params, and resets
+ * per-page dedupe.
  */
 export function syncMarketingAnalytics(path: string): void {
   try {
@@ -159,21 +148,13 @@ export function syncMarketingAnalytics(path: string): void {
 
     const inputs = gateInputs(currentPath);
 
-    // Capture campaign attribution (persists only with consent).
-    attributionParams = captureAttribution({
-      search: currentSearch(),
-      hasConsent: inputs.hasConsent,
-      now: Date.now(),
-    });
+    // Read current-page UTMs in memory only — never persisted to the device.
+    campaignParams = inputs.isPublicRoute
+      ? readCampaignParams(currentSearch())
+      : {};
 
     if (canInitializeProviders(inputs)) {
       initGa4(getConfig().ga4Id);
-      initClarity(getConfig().clarityId);
-      resumeClarity();
-    } else if (!inputs.isPublicRoute) {
-      // Left the public site (or lost eligibility): make sure Clarity is not
-      // recording into an authenticated/non-public route.
-      stopClarity();
     }
 
     if (previousPath !== currentPath) {
@@ -184,8 +165,8 @@ export function syncMarketingAnalytics(path: string): void {
   }
 }
 
-/** Re-evaluate providers after a consent change (accept/reject/withdraw). */
-export function onConsentChanged(): void {
+/** Re-evaluate after an opt-out change (visitor toggled the footer control). */
+export function onOptOutChanged(): void {
   syncMarketingAnalytics(currentPath);
 }
 
@@ -263,6 +244,6 @@ export function __getCurrentPathForTests(): string {
 export function __resetModuleForTests(): void {
   config = null;
   currentPath = "/";
-  attributionParams = {};
+  campaignParams = {};
   warnedThisSession = false;
 }
