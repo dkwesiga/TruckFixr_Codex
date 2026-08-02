@@ -37,7 +37,7 @@ const fieldClass = "border-[#C3C7CE] bg-white text-[#0A1A2E] placeholder:text-[#
 
 // Embeddable Calendly / Cal.com inline URL for the review event. Defaults to the
 // founder's Calendly; override per-environment with VITE_FLEET_REVIEW_SCHEDULER_URL.
-const DEFAULT_SCHEDULER_URL = "https://calendly.com/dkwesga/30min";
+const DEFAULT_SCHEDULER_URL = "https://calendly.com/dkwesga/25-min-meeting";
 const SCHEDULER_URL =
   (import.meta.env.VITE_FLEET_REVIEW_SCHEDULER_URL as string | undefined)?.trim() || DEFAULT_SCHEDULER_URL;
 // Optional hosted founder photo. Falls back to an initials avatar when unset.
