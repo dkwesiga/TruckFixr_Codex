@@ -19,6 +19,9 @@ const FleetReadinessLandingV2 = lazyWithChunkRecovery(
 const FleetReadinessLandingV3 = lazyWithChunkRecovery(
   () => import("./pages/FleetReadinessLandingV3")
 );
+const FleetReviewBooking = lazyWithChunkRecovery(
+  () => import("./pages/FleetReviewBooking")
+);
 const VerifiedInspection = lazyWithChunkRecovery(
   () => import("./pages/VerifiedInspection")
 );
@@ -249,6 +252,8 @@ function Router() {
             while `/` stays on the approved homepage. Promote by flipping
             VITE_HOMEPAGE_V3. */}
         <Route path={"/landing-v3"} component={FleetReadinessLandingV3} />
+        {/* Primary conversion path: founder-led Fleet Maintenance Review. */}
+        <Route path={"/fleet-review"} component={FleetReviewBooking} />
         {TRY_ONE_CASE_ENABLED ? (
           <Route path={"/try-one-case"} component={TryOneCase} />
         ) : null}

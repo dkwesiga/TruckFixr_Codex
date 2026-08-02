@@ -194,6 +194,16 @@ services:
       # and to promote it once approved; unset to roll back to V2 instantly.
       - key: VITE_HOMEPAGE_V3
         value: "true"
+      # Embeddable scheduler URL (Calendly / Cal.com inline embed) powering the
+      # /fleet-review booking page — the founder-led Fleet Maintenance Review.
+      # Defaults to the founder's Calendly in code; override here to point at a
+      # dedicated review event.
+      - key: VITE_FLEET_REVIEW_SCHEDULER_URL
+        value: "https://calendly.com/dkwesga/25-min-meeting"
+      # Optional hosted founder photo for the /fleet-review page. When unset an
+      # initials avatar is shown.
+      - key: VITE_FOUNDER_PHOTO_URL
+        sync: false
       - key: VITE_SUPABASE_URL
         sync: false
       - key: VITE_SUPABASE_ANON_KEY
