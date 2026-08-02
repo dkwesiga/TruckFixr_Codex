@@ -2,6 +2,7 @@ import { type CSSProperties, type ReactNode } from "react";
 import { ArrowRight } from "lucide-react";
 import AppLogo from "@/components/AppLogo";
 import { Button } from "@/components/ui/button";
+import CookiePreferencesLink from "@/components/consent/CookiePreferencesLink";
 
 const colors = {
   fleetBlue: "#0B3C5D",
@@ -125,7 +126,7 @@ export default function ArticleLayout({
                   Official references
                 </h2>
                 <ul className="mt-4 space-y-2">
-                  {references.map((ref) => (
+                  {references.map(ref => (
                     <li key={ref.href} className="text-base leading-7">
                       <a
                         href={ref.href}
@@ -149,9 +150,10 @@ export default function ArticleLayout({
               See how TruckFixr supports faster maintenance decisions
             </h2>
             <p className="max-w-2xl text-sm leading-7 text-[#42474E]">
-              TruckFixr helps small and mid-sized fleets organize driver-reported
-              issues, inspections, fault codes, compliance dates, and repair
-              history so maintenance does not become urgent at the last minute.
+              TruckFixr helps small and mid-sized fleets organize
+              driver-reported issues, inspections, fault codes, compliance
+              dates, and repair history so maintenance does not become urgent at
+              the last minute.
             </p>
             <div className="flex flex-col gap-3 sm:flex-row">
               <Button
@@ -185,11 +187,18 @@ export default function ArticleLayout({
               TruckFixr Fleet AI
             </span>
           </div>
-          <p>
-            Contact:{" "}
-            <a href="mailto:info@truckfixr.com" className="hover:text-[#F37021]">
-              info@truckfixr.com
-            </a>
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span>
+              Contact:{" "}
+              <a
+                href="mailto:info@truckfixr.com"
+                className="hover:text-[#F37021]"
+              >
+                info@truckfixr.com
+              </a>
+            </span>
+            <span aria-hidden="true">·</span>
+            <CookiePreferencesLink className="text-[#42474E] hover:text-[#F37021]" />
           </p>
         </div>
       </footer>
