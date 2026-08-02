@@ -25,6 +25,8 @@ import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/analytics";
 import { useSeoMeta } from "@/lib/useSeoMeta";
 import CookiePreferencesLink from "@/components/consent/CookiePreferencesLink";
+import { trackEvaluationCtaClick } from "@/lib/analytics/marketing";
+import SectionView from "@/components/analytics/SectionView";
 import {
   ReadinessPill,
   type Readiness,
@@ -66,9 +68,17 @@ function FleetReviewButton({
   return (
     <Link href="/fleet-review">
       <Button
-        onClick={() =>
-          trackEvent("fleet_review_cta_clicked", { cta_location: location })
-        }
+        onClick={() => {
+          trackEvent("fleet_review_cta_clicked", { cta_location: location });
+          trackEvaluationCtaClick({
+            location,
+            text:
+              typeof children === "string"
+                ? children
+                : "Book Your Fleet Review",
+            linkType: "internal",
+          });
+        }}
         className={cn(
           "min-h-12 h-auto whitespace-normal px-6 py-2.5 text-center text-[15px] font-bold leading-tight",
           redBtn,
@@ -893,13 +903,21 @@ export default function FleetReadinessLandingV3() {
     <div className="min-h-screen bg-[#F6F8FB] pb-16 font-['IBM_Plex_Sans'] text-[#0A1A2E] sm:pb-0">
       <Header />
       <Hero />
-      <ProblemSection />
-      <ReviewValueSection />
+      <SectionView section="problem">
+        <ProblemSection />
+      </SectionView>
+      <SectionView section="validation">
+        <ReviewValueSection />
+      </SectionView>
       <WhoItsForSection />
-      <HowItWorksSection />
+      <SectionView section="workflow">
+        <HowItWorksSection />
+      </SectionView>
       <WhyTruckFixrSection />
       <CloseSection />
-      <FinalCta />
+      <SectionView section="final_cta">
+        <FinalCta />
+      </SectionView>
       <footer className="bg-[#00101E] py-8 text-center text-xs text-[#8A98AE]">
         <div className={sectionShell}>
           TruckFixr Fleet AI ·{" "}

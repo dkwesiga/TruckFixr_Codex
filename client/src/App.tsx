@@ -5,6 +5,7 @@ import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import InstallAppPrompt from "./components/InstallAppPrompt";
 import ConsentManager from "./components/consent/ConsentManager";
+import MarketingAnalytics from "./components/analytics/MarketingAnalytics";
 import { ConsentProvider } from "./lib/consent/useConsent";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { lazyWithChunkRecovery } from "./lib/chunkRecovery";
@@ -335,6 +336,7 @@ function App() {
             <Router />
             <InstallAppPrompt />
             <ConsentManager />
+            <MarketingAnalytics />
           </ConsentProvider>
         </TooltipProvider>
       </ThemeProvider>

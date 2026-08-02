@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "wouter";
 import {
   ArrowLeft,
@@ -22,6 +22,10 @@ import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/analytics";
 import { useSeoMeta } from "@/lib/useSeoMeta";
 import CookiePreferencesLink from "@/components/consent/CookiePreferencesLink";
+import {
+  trackCalendlyOpened,
+  trackMeetingScheduled,
+} from "@/lib/analytics/marketing";
 
 // Founder-led Fleet Maintenance Review booking page. The homepage's single
 // conversion path lands here. A short qualification form gates an embedded
@@ -561,6 +565,35 @@ function BookStage({ form }: { form: FormState }) {
       return SCHEDULER_URL;
     }
   }, [form]);
+
+  // Conversion tracking. Reaching this stage means a qualified visitor opened
+  // the calendar; a Calendly `event_scheduled` postMessage means a confirmed
+  // booking. Both are deduped once-per-visit inside the analytics module, so a
+  // reopen or replayed message cannot double-count. No PII is read from the
+  // message payload — we only react to the event type.
+  useEffect(() => {
+    if (!src) return;
+    trackCalendlyOpened();
+
+    const onMessage = (event: MessageEvent) => {
+      try {
+        if (
+          typeof event.origin !== "string" ||
+          !/(^|\.)calendly\.com$/.test(new URL(event.origin).hostname)
+        ) {
+          return;
+        }
+        const data = event.data as { event?: string } | undefined;
+        if (data && data.event === "calendly.event_scheduled") {
+          trackMeetingScheduled();
+        }
+      } catch {
+        /* ignore malformed messages */
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [src]);
 
   return (
     <div className="space-y-4">
