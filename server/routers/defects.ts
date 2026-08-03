@@ -6,7 +6,7 @@ import {
   mapDiagnosticRiskToAction,
   mapDiagnosticRiskToUrgency,
 } from "../services/tadisCore";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, or } from "drizzle-orm";
 import { getDb } from "../db";
 import {
   defects,
@@ -353,6 +353,53 @@ export const defectsRouter = router({
         managerReviewRequired,
         provisionalDriverGuidance,
       };
+    }),
+
+  // Driver-scoped feed of the issues this driver reported (manual reports and
+  // AI-triage-filed issues), newest first. Powers the driver dashboard "Recent
+  // activity" feed alongside submitted inspections. Distinct from listByVehicle
+  // (single vehicle) and listByFleet (manager view).
+  listMyRecent: protectedProcedure
+    .input(z.object({ limit: z.number().int().positive().max(25).default(10) }))
+    .query(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) return [];
+
+      const rows = await db
+        .select({
+          id: defects.id,
+          vehicleId: defects.vehicleId,
+          title: defects.title,
+          category: defects.category,
+          severity: defects.severity,
+          status: defects.status,
+          sourceType: defects.sourceType,
+          aiConfidenceScore: defects.aiConfidenceScore,
+          createdAt: defects.createdAt,
+        })
+        .from(defects)
+        .where(eq(defects.driverId, ctx.user.id))
+        .orderBy(desc(defects.createdAt))
+        .limit(input.limit);
+
+      const vehicleIds = Array.from(new Set(rows.map((row) => String(row.vehicleId))));
+      const vehicleRows =
+        vehicleIds.length > 0
+          ? await db
+              .select()
+              .from(vehicles)
+              .where(or(...vehicleIds.map((vehicleId) => sql`CAST(${vehicles.id} AS text) = ${vehicleId}`)))
+          : [];
+      const vehicleMap = new Map(vehicleRows.map((vehicle) => [String(vehicle.id), vehicle]));
+
+      return rows.map((row) => {
+        const vehicle = vehicleMap.get(String(row.vehicleId));
+        return {
+          ...row,
+          vehicleLabel:
+            vehicle?.unitNumber || vehicle?.licensePlate || vehicle?.vin || String(row.vehicleId),
+        };
+      });
     }),
 
   create: protectedProcedure
@@ -870,13 +917,6 @@ export const defectsRouter = router({
   runTriage: protectedProcedure
     .input(z.object({ defectId: z.number() }))
     .mutation(async ({ input, ctx }) => {
-      if (ctx.user.role !== "owner" && ctx.user.role !== "manager") {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: "Only managers can run AI triage",
-        });
-      }
-
       const db = await getDb();
       if (!db) {
         throw new TRPCError({
@@ -895,12 +935,26 @@ export const defectsRouter = router({
         throw new TRPCError({ code: "NOT_FOUND", message: "Defect not found" });
       }
 
-      const hasAccess = await verifyFleetAccess(defect.fleetId, ctx.user.id, ctx.user.role);
-      if (!hasAccess) {
+      // Managers/owners can triage any defect in a fleet they can access. The
+      // reporting driver can also triage their own filed issue — this powers the
+      // driver "Report a Problem" flow, which files the issue and then runs AI
+      // triage on it in one action.
+      const isManager = ctx.user.role === "owner" || ctx.user.role === "manager";
+      const isReportingDriver = defect.driverId === ctx.user.id;
+      if (!isManager && !isReportingDriver) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "You do not have access to this defect",
+          message: "You do not have access to run AI triage for this issue",
         });
+      }
+      if (isManager) {
+        const hasAccess = await verifyFleetAccess(defect.fleetId, ctx.user.id, ctx.user.role);
+        if (!hasAccess) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "You do not have access to this defect",
+          });
+        }
       }
 
       const [vehicle] = await db

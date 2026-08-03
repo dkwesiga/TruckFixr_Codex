@@ -1134,12 +1134,25 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-3 sm:grid-cols-3">
-              <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-red-700">Open defects</p>
-                <p className="mt-2 text-2xl font-semibold text-red-950">
-                  {verifiedHealth?.openDefects.length ?? 0}
-                </p>
-              </div>
+              {(verifiedHealth?.openDefects.length ?? 0) > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => scrollToSection("manager-open-defects-panel")}
+                  className="rounded-2xl border border-red-100 bg-red-50 px-4 py-4 text-left transition-colors hover:border-red-300 hover:bg-red-100/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                >
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-red-700">Open defects</p>
+                  <p className="mt-2 text-2xl font-semibold text-red-950">
+                    {verifiedHealth?.openDefects.length ?? 0}
+                  </p>
+                </button>
+              ) : (
+                <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-red-700">Open defects</p>
+                  <p className="mt-2 text-2xl font-semibold text-red-950">
+                    {verifiedHealth?.openDefects.length ?? 0}
+                  </p>
+                </div>
+              )}
               <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-4">
                 <p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-700">Missed inspections</p>
                 <p className="mt-2 text-2xl font-semibold text-amber-950">
@@ -1292,14 +1305,24 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
           </Card>
           <Card className="metric-card border-0">
             <CardHeader className="pb-3">
-              <CardDescription>Action shortcuts</CardDescription>
+              <CardDescription>Needs manager action</CardDescription>
               <CardTitle className="text-3xl font-semibold text-slate-950">
-                Live
+                {managerActionItems.length}
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-0 text-sm text-slate-600">
-              Profile, maintenance queue, truck details, and add vehicle actions
-              now respond.
+              <p>Driver diagnoses and issues awaiting your follow-up.</p>
+              <Button
+                variant="link"
+                className="mt-2 h-auto p-0 text-sm font-medium text-blue-700"
+                onClick={() =>
+                  managerActionItems[0]?.defectId
+                    ? navigate(`/defect/${managerActionItems[0].defectId}`)
+                    : scrollToSection("manager-fleet-operations")
+                }
+              >
+                Review action queue
+              </Button>
             </CardContent>
           </Card>
         </section>
@@ -1344,12 +1367,24 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
           <Card className="metric-card border-0">
             <CardHeader className="pb-3">
               <CardDescription>Open defects</CardDescription>
-              <CardTitle className="text-3xl font-semibold text-slate-950">
-                {verifiedHealth?.openDefects.length ?? 0}
-              </CardTitle>
+              {(verifiedHealth?.openDefects.length ?? 0) > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => scrollToSection("manager-open-defects-panel")}
+                  className="text-left text-3xl font-semibold text-blue-700 underline-offset-4 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
+                  {verifiedHealth?.openDefects.length ?? 0}
+                </button>
+              ) : (
+                <CardTitle className="text-3xl font-semibold text-slate-950">
+                  {verifiedHealth?.openDefects.length ?? 0}
+                </CardTitle>
+              )}
             </CardHeader>
             <CardContent className="pt-0 text-sm text-slate-600">
-              Known issues remain visible until resolved.
+              {(verifiedHealth?.openDefects.length ?? 0) > 0
+                ? "Tap the count to review open defects."
+                : "Known issues remain visible until resolved."}
             </CardContent>
           </Card>
           <Card className="metric-card border-0">

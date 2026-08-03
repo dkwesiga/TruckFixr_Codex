@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import QuickStartBanner from "@/components/quickStart/QuickStartBanner";
+import SafetyNotice from "@/components/SafetyNotice";
 import VehicleAccessRequestDialog from "@/components/VehicleAccessRequestDialog";
 import {
   useOwnerOperatorReturnToOwner,
@@ -32,6 +33,26 @@ import { toast } from "sonner";
 
 type DriverVehicle = DriverVehicleRecord & {
   linkedPoweredVehicleId?: string | number | null;
+};
+
+type ActivityEntry = {
+  key: string;
+  kind: "inspection" | "issue" | "triage";
+  timestamp: number;
+  title: string;
+  subtitle: string;
+  href: string;
+  severity?: string | null;
+};
+
+type TriageResult = {
+  most_likely_cause?: string;
+  severity?: string;
+  confidence_score?: number;
+  recommended_action?: string;
+  driver_message?: string;
+  safety_warning?: string | null;
+  suggested_next_steps?: string[] | null;
 };
 
 
@@ -63,6 +84,12 @@ function formatReportTimestamp(value: unknown) {
 
 function isTrailerAsset(assetType?: string | null) {
   return Boolean(assetType?.toLowerCase().includes("trailer"));
+}
+
+function formatVinLastSix(vin?: string | null) {
+  const value = String(vin ?? "").trim();
+  if (!value) return "Not available";
+  return value.length <= 6 ? value : `…${value.slice(-6)}`;
 }
 
 function isDemoDriverEmail(email?: string | null) {
@@ -163,6 +190,11 @@ function DriverDashboardContent() {
   );
   const [handledLaunchIntent, setHandledLaunchIntent] = useState<string | null>(null);
   const [isIssueDialogOpen, setIsIssueDialogOpen] = useState(false);
+  // "Report a Problem" is a single AI-first flow: form -> (online) triaging ->
+  // result, or a manual/offline file when there is no connection.
+  const [reportPhase, setReportPhase] = useState<"form" | "triaging" | "result">("form");
+  const [triageResult, setTriageResult] = useState<TriageResult | null>(null);
+  const [filedDefectId, setFiledDefectId] = useState<number | null>(null);
   const [issueForm, setIssueForm] = useState({
     title: "",
     category: "driver_reported_issue",
@@ -192,7 +224,12 @@ function DriverDashboardContent() {
     { limit: 5 },
     { staleTime: 30_000, enabled: Boolean(user?.id) }
   );
+  const myReportedIssuesQuery = trpc.defects.listMyRecent.useQuery(
+    { limit: 8 },
+    { staleTime: 30_000, enabled: Boolean(user?.id) }
+  );
   const reportIssueMutation = trpc.defects.reportIssue.useMutation();
+  const runTriageMutation = trpc.defects.runTriage.useMutation();
   const vehicles = useMemo<DriverVehicle[]>(() => {
     const rows = vehiclesQuery.data ?? [];
     return rows.map((vehicle) => ({
@@ -224,6 +261,39 @@ function DriverDashboardContent() {
         ).replaceAll("_", " ")}`,
       }
     : null;
+  const reportedIssues = myReportedIssuesQuery.data ?? [];
+  const activityFeed = useMemo<ActivityEntry[]>(() => {
+    const toTime = (value: unknown) => {
+      if (!value) return 0;
+      const date = value instanceof Date ? value : new Date(String(value));
+      return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+    };
+
+    const inspectionEntries: ActivityEntry[] = inspectionReports.map((report) => ({
+      key: `inspection-${report.id}`,
+      kind: "inspection",
+      timestamp: toTime(report.submittedAt),
+      title: "DVIR inspection report",
+      subtitle: `${report.vehicleLabel} | Integrity ${report.integrityScore ?? "N/A"}`,
+      href: `/inspection-report/${report.id}`,
+    }));
+
+    const issueEntries: ActivityEntry[] = reportedIssues.map((issue) => {
+      const fromTriage =
+        issue.sourceType === "ai_triage" || issue.aiConfidenceScore != null;
+      return {
+        key: `issue-${issue.id}`,
+        kind: fromTriage ? "triage" : "issue",
+        timestamp: toTime(issue.createdAt),
+        title: issue.title,
+        subtitle: `${issue.vehicleLabel} | ${String(issue.status ?? "open").replaceAll("_", " ")}`,
+        href: `/defect/${issue.id}`,
+        severity: issue.severity ?? null,
+      };
+    });
+
+    return [...inspectionEntries, ...issueEntries].sort((a, b) => b.timestamp - a.timestamp);
+  }, [inspectionReports, reportedIssues]);
   const pendingDrafts = useMemo(
     () =>
       vehicles
@@ -467,26 +537,6 @@ function DriverDashboardContent() {
     startInspection(activeVehicle);
   }, [activeVehicle, handledLaunchIntent, launchIntent]);
 
-  const startDiagnosis = (vehicle: DriverVehicle) => {
-    trackEvent("driver_diagnosis_started", { source: "driver_dashboard", vehicle_id: vehicle.id, vehicle_label: vehicle.label });
-    setActiveVehicleId(vehicle.id);
-    saveLastDriverVehicleContext({
-      id: vehicle.id,
-      fleetId: vehicle.fleetId,
-      label: vehicle.label,
-      relationshipSummary: vehicle.relationshipSummary ?? null,
-      vin: vehicle.vin,
-      licensePlate: vehicle.licensePlate,
-      make: vehicle.make,
-      model: vehicle.model,
-      year: vehicle.year,
-      engineMake: vehicle.engineMake,
-      mileage: vehicle.mileage,
-      status: vehicle.status,
-    });
-    window.location.href = `/diagnosis?vehicle=${encodeURIComponent(String(vehicle.id))}&fleet=${encodeURIComponent(String(vehicle.fleetId))}&label=${encodeURIComponent(vehicle.label)}&vin=${encodeURIComponent(vehicle.vin)}`;
-  };
-
   const openIssueReport = (vehicle: DriverVehicle) => {
     setActiveVehicleId(vehicle.id);
     setIssueForm({
@@ -496,6 +546,9 @@ function DriverDashboardContent() {
       description: "",
       photoUrls: [],
     });
+    setReportPhase("form");
+    setTriageResult(null);
+    setFiledDefectId(null);
     setIsIssueDialogOpen(true);
   };
 
@@ -576,8 +629,30 @@ function DriverDashboardContent() {
         defect_id: result.defectId,
       });
     }
-    setIsIssueDialogOpen(false);
+
+    setFiledDefectId(result.defectId);
     void activeDefectsQuery.refetch();
+    void myReportedIssuesQuery.refetch();
+
+    // AI-first: the issue is now filed for the manager; run AI triage on it and
+    // show the result inline. Triage is best-effort — a failure never loses the
+    // already-filed report.
+    setReportPhase("triaging");
+    try {
+      const triageResponse = await runTriageMutation.mutateAsync({ defectId: result.defectId });
+      setTriageResult((triageResponse.triage ?? null) as TriageResult | null);
+      trackEvent("driver_report_triage_completed", {
+        vehicle_id: activeVehicle.id,
+        defect_id: result.defectId,
+        confidence: triageResponse.triage?.confidence_score,
+        recommended_action: triageResponse.triage?.recommended_action,
+      });
+    } catch {
+      setTriageResult(null);
+      toast.info("Issue reported to your manager. AI triage could not run right now.");
+    }
+    setReportPhase("result");
+    void myReportedIssuesQuery.refetch();
   };
 
   if (resolvedFleetId > 0 && !fleetQuery.isLoading && !driverModeEnabled) {
@@ -703,6 +778,7 @@ function DriverDashboardContent() {
       </header>
 
       <main className="mx-auto max-w-7xl space-y-8 px-4 py-8 pb-28 pt-16 sm:px-6 sm:pt-20 lg:px-8 lg:pb-8">
+        <SafetyNotice variant="strip" className="rounded-2xl border" />
         <QuickStartBanner role={user?.role} />
 
         {!hasVehicles ? (
@@ -772,31 +848,54 @@ function DriverDashboardContent() {
                     ) : null}
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                    {[
-                        ["Plate", activeVehicle.licensePlate],
-                        ["Type", activeVehicle.assetType?.replaceAll("_", " ") || "Asset"],
-                        ["Distance", formatDistanceKm(activeVehicle.mileage)],
-                      ["Last inspection", latestInspection?.detail.split(" - ")[0] ?? "Not available"],
-                      ["Open defects", activeOpenDefects.length ? String(activeOpenDefects.length) : "None"],
-                      ["VIN", activeVehicle.vin],
-                    ].map(([label, value]) => (
-                      <div key={label} className="rounded-2xl border border-[var(--fleet-outline)] bg-white px-4 py-4 shadow-[var(--fleet-shadow)]">
-                        <p className="text-xs uppercase tracking-[0.16em] text-[var(--fleet-muted)]">{label}</p>
-                        <p className="mt-2 truncate text-sm font-semibold text-[var(--fleet-ink)]">{value}</p>
-                      </div>
-                    ))}
+                    {(
+                      [
+                        { label: "Plate", value: activeVehicle.licensePlate },
+                        { label: "Type", value: activeVehicle.assetType?.replaceAll("_", " ") || "Asset" },
+                        { label: "Distance", value: formatDistanceKm(activeVehicle.mileage) },
+                        { label: "Last inspection", value: latestInspection?.detail.split(" - ")[0] ?? "Not available" },
+                        {
+                          label: "Open defects",
+                          value: activeOpenDefects.length ? String(activeOpenDefects.length) : "None",
+                          href: activeOpenDefects.length ? `/truck/${activeVehicle.id}` : undefined,
+                        },
+                        { label: "VIN", value: formatVinLastSix(activeVehicle.vin), title: activeVehicle.vin },
+                      ] as Array<{ label: string; value: string; href?: string; title?: string }>
+                    ).map(({ label, value, href, title }) => {
+                      const tileClasses =
+                        "rounded-2xl border border-[var(--fleet-outline)] bg-white px-4 py-4 shadow-[var(--fleet-shadow)]";
+                      const body = (
+                        <>
+                          <p className="text-xs uppercase tracking-[0.16em] text-[var(--fleet-muted)]">{label}</p>
+                          <p className="mt-2 truncate text-sm font-semibold text-[var(--fleet-ink)]" title={title || value}>{value}</p>
+                        </>
+                      );
+                      return href ? (
+                        <button
+                          key={label}
+                          type="button"
+                          onClick={() => navigate(href)}
+                          className={`${tileClasses} text-left transition-colors hover:border-blue-300 hover:bg-blue-50/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500`}
+                        >
+                          {body}
+                        </button>
+                      ) : (
+                        <div key={label} className={tileClasses}>
+                          {body}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
                 <div className="grid w-full gap-3 sm:grid-cols-3 lg:w-[320px] lg:grid-cols-1">
                   {canStartCombinedInspection ? (
-                    <Button className="fleet-primary-btn h-12 rounded-2xl" onClick={startCombinedInspection}>
-                      <Truck className="h-4 w-4" />
-                      Start Linked Truck + Trailer
+                    <Button className="fleet-primary-btn h-12 rounded-2xl whitespace-normal text-center leading-tight" onClick={startCombinedInspection}>
+                      <Truck className="h-4 w-4 shrink-0" />
+                      Start Truck + Trailer
                     </Button>
                   ) : null}
                   <Button className="fleet-primary-btn h-12 rounded-2xl" onClick={() => startInspection(activeVehicle)}><SearchCode className="h-4 w-4" />{pendingDraftForActiveVehicle ? "Resume Inspection" : "Start Inspection"}</Button>
-                  <Button variant="outline" className="h-12 rounded-2xl border-[var(--fleet-outline)] bg-white" onClick={() => openIssueReport(activeVehicle)}><Wrench className="h-4 w-4" />Report Issue</Button>
-                  <Button variant="outline" className="h-12 rounded-2xl border-[var(--fleet-outline)] bg-white" onClick={() => startDiagnosis(activeVehicle)} disabled={!isOnline}><Stethoscope className="h-4 w-4" />Use AI Triage</Button>
+                  <Button variant="outline" className="h-12 rounded-2xl border-[var(--fleet-outline)] bg-white" onClick={() => openIssueReport(activeVehicle)}><Wrench className="h-4 w-4" />Report a Problem</Button>
                   <Button variant="outline" className="h-12 rounded-2xl border-[var(--fleet-outline)] bg-white" onClick={() => navigate("/driver#recent-reports")}><FileText className="h-4 w-4" />View Recent Reports</Button>
                   <VehicleAccessRequestDialog
                     fleetId={resolvedFleetId}
@@ -917,10 +1016,9 @@ function DriverDashboardContent() {
                       <div className="rounded-2xl bg-slate-50 px-3 py-3"><p className="text-xs uppercase tracking-[0.16em] text-slate-400">Distance</p><p className="mt-2 text-sm font-semibold text-slate-950">{formatDistanceKm(vehicle.mileage)}</p></div>
                       <div className="rounded-2xl bg-slate-50 px-3 py-3"><p className="text-xs uppercase tracking-[0.16em] text-slate-400">Readiness</p><p className="mt-2 text-sm font-semibold text-slate-950">{vehicle.status === "Operational" ? "Ready" : "Check before trip"}</p></div>
                     </div>
-                    <div className="mt-5 grid grid-cols-3 gap-2">
+                    <div className="mt-5 grid grid-cols-2 gap-2">
                       <Button className="fleet-primary-btn flex-1 rounded-2xl" onClick={() => startInspection(vehicle)}>Inspect</Button>
-                      <Button variant="outline" className="flex-1 rounded-2xl border-slate-200 bg-white" onClick={() => openIssueReport(vehicle)}>Issue</Button>
-                      <Button variant="outline" className="flex-1 rounded-2xl border-slate-200 bg-white" onClick={() => startDiagnosis(vehicle)} disabled={!isOnline}>AI</Button>
+                      <Button variant="outline" className="flex-1 rounded-2xl border-slate-200 bg-white" onClick={() => openIssueReport(vehicle)}>Report a Problem</Button>
                     </div>
                   </div>
                 );
@@ -933,38 +1031,59 @@ function DriverDashboardContent() {
               <CardDescription className="text-sm text-slate-600">Review what happened recently before starting your next task.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 px-7 py-6">
-              {inspectionReports.length === 0 ? (
+              {activityFeed.length === 0 ? (
                 <div className="rounded-[22px] border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                  No submitted DVIR reports yet. Completed daily inspections will appear here.
+                  No activity yet. Completed inspections, reported issues, and AI triage results will appear here.
                 </div>
               ) : null}
-              {inspectionReports.map((report) => (
-                <div key={report.id} className="rounded-[22px] border border-slate-200 bg-white p-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex items-start gap-3">
-                      <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100">
-                        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              {activityFeed.map((entry) => {
+                const meta =
+                  entry.kind === "inspection"
+                    ? { Icon: CheckCircle2, iconClass: "text-emerald-600", badge: "Inspection" }
+                    : entry.kind === "triage"
+                      ? { Icon: Stethoscope, iconClass: "text-blue-600", badge: "AI triage" }
+                      : { Icon: Wrench, iconClass: "text-amber-600", badge: "Reported issue" };
+                const isCritical = entry.severity === "critical" || entry.severity === "high";
+                return (
+                  <div key={entry.key} className="rounded-[22px] border border-slate-200 bg-white p-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-start gap-3">
+                        <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100">
+                          <meta.Icon className={`h-4 w-4 ${meta.iconClass}`} />
+                        </div>
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-semibold text-slate-950">{entry.title}</p>
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ${
+                              entry.kind === "inspection"
+                                ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+                                : entry.kind === "triage"
+                                  ? "bg-blue-50 text-blue-700 ring-blue-200"
+                                  : isCritical
+                                    ? "bg-red-50 text-red-700 ring-red-200"
+                                    : "bg-amber-50 text-amber-700 ring-amber-200"
+                            }`}>
+                              {meta.badge}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-sm text-slate-600">
+                            {entry.subtitle} | {entry.timestamp ? formatReportTimestamp(new Date(entry.timestamp)) : "Recently"}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-semibold text-slate-950">DVIR inspection report</p>
-                        <p className="mt-1 text-sm text-slate-600">
-                          {report.vehicleLabel} | {formatReportTimestamp(report.submittedAt)} | Integrity{" "}
-                          {report.integrityScore ?? "N/A"}
-                        </p>
-                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-full border-slate-200 bg-white"
+                        onClick={() => navigate(entry.href)}
+                      >
+                        <Eye className="h-4 w-4" />
+                        View
+                      </Button>
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="rounded-full border-slate-200 bg-white"
-                      onClick={() => navigate(`/inspection-report/${report.id}`)}
-                    >
-                      <Eye className="h-4 w-4" />
-                      View Report
-                    </Button>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </CardContent>
           </Card>
         </section>
@@ -972,15 +1091,21 @@ function DriverDashboardContent() {
         <Dialog open={isIssueDialogOpen} onOpenChange={setIsIssueDialogOpen}>
           <DialogContent className="rounded-[24px] border-slate-200 sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>Report Issue</DialogTitle>
+              <DialogTitle>Report a Problem</DialogTitle>
               <DialogDescription>
-                Send a structured issue report for {activeVehicle?.label ?? "this asset"}. Photos are optional unless this is found during an inspection.
+                {reportPhase === "result"
+                  ? "Your issue is filed for your manager. Here is what TruckFixr AI found."
+                  : reportPhase === "triaging"
+                    ? "Running AI triage on your report..."
+                    : `Describe the problem with ${activeVehicle?.label ?? "this asset"}. TruckFixr AI will help diagnose it and send a manager-ready report.`}
               </DialogDescription>
             </DialogHeader>
+            {reportPhase === "form" ? (
             <div className="space-y-4">
+              <SafetyNotice variant="inline" />
               {!isOnline ? (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                  Offline reports are saved locally. AI triage requires internet connection.
+                  You are offline. Your report is saved and sent to your manager automatically when you reconnect. AI triage runs once you are back online.
                 </div>
               ) : null}
               <div>
@@ -1071,11 +1196,73 @@ function DriverDashboardContent() {
                 </div>
               ) : null}
             </div>
+            ) : reportPhase === "triaging" ? (
+              <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
+                <Stethoscope className="h-8 w-8 animate-pulse text-blue-600" />
+                <p className="text-sm font-medium text-slate-900">Analyzing your report…</p>
+                <p className="text-sm text-slate-600">Your issue is already filed for your manager.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-start gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+                  <CheckCircle2 className="mt-0.5 h-4 w-4" />
+                  Issue reported to your manager.
+                </div>
+                {triageResult ? (
+                  <>
+                    {triageResult.safety_warning ? (
+                      <div className="flex items-start gap-2 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                        <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                        {triageResult.safety_warning}
+                      </div>
+                    ) : null}
+                    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                      <p className="text-xs uppercase tracking-[0.16em] text-slate-400">Most likely cause</p>
+                      <p className="mt-1 text-sm font-semibold text-slate-900">
+                        {triageResult.most_likely_cause ?? "Needs further inspection"}
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                        {triageResult.recommended_action ? (
+                          <span className="rounded-full bg-blue-50 px-2.5 py-1 font-medium text-blue-700 ring-1 ring-blue-200">
+                            {String(triageResult.recommended_action).replaceAll("_", " ")}
+                          </span>
+                        ) : null}
+                        {typeof triageResult.confidence_score === "number" ? (
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 font-medium text-slate-700 ring-1 ring-slate-200">
+                            Confidence {triageResult.confidence_score}%
+                          </span>
+                        ) : null}
+                      </div>
+                      {triageResult.driver_message ? (
+                        <p className="mt-3 text-sm leading-6 text-slate-700">{triageResult.driver_message}</p>
+                      ) : null}
+                    </div>
+                  </>
+                ) : (
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                    AI triage did not run this time, but your issue is filed and your manager can run triage from their dashboard.
+                  </div>
+                )}
+              </div>
+            )}
             <DialogFooter>
-              <Button variant="outline" onClick={() => setIsIssueDialogOpen(false)}>Cancel</Button>
-              <Button className="fleet-primary-btn" disabled={!issueForm.title.trim() || reportIssueMutation.isPending} onClick={() => void submitIssueReport()}>
-                {reportIssueMutation.isPending ? "Submitting..." : isOnline ? "Submit Issue" : "Save Locally"}
-              </Button>
+              {reportPhase === "form" ? (
+                <>
+                  <Button variant="outline" onClick={() => setIsIssueDialogOpen(false)}>Cancel</Button>
+                  <Button className="fleet-primary-btn" disabled={!issueForm.title.trim() || reportIssueMutation.isPending} onClick={() => void submitIssueReport()}>
+                    {reportIssueMutation.isPending ? "Reporting..." : isOnline ? "Report & run AI triage" : "Save & report offline"}
+                  </Button>
+                </>
+              ) : reportPhase === "triaging" ? (
+                <Button className="fleet-primary-btn" disabled>Working…</Button>
+              ) : (
+                <>
+                  {filedDefectId ? (
+                    <Button variant="outline" onClick={() => navigate(`/defect/${filedDefectId}`)}>View issue details</Button>
+                  ) : null}
+                  <Button className="fleet-primary-btn" onClick={() => setIsIssueDialogOpen(false)}>Done</Button>
+                </>
+              )}
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -1103,7 +1290,7 @@ function DriverDashboardContent() {
               className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl bg-[#E32636] text-xs font-bold text-white shadow-sm hover:bg-[#BC1E2C] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#E32636] focus-visible:ring-offset-2"
             >
               <Wrench className="h-5 w-5" />
-              Report Issue
+              Report a Problem
             </button>
             <button
               type="button"
