@@ -40,6 +40,7 @@ import {
 } from "../../../shared/inspection";
 import { getInspectionOdometerRevisionMessage } from "../../../shared/inspectionOdometer";
 import { toast } from "sonner";
+import SafetyNotice from "@/components/SafetyNotice";
 import { AlertCircle, Camera, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Download, MapPin, TriangleAlert, Truck, Upload, XCircle } from "lucide-react";
 import {
   AlertDialog,
@@ -1190,6 +1191,7 @@ function DriverInspectionContent() {
       </header>
 
       <main className="mx-auto max-w-4xl space-y-4 px-4 py-4 pb-24 sm:space-y-6 sm:px-6 sm:py-6 sm:pb-28">
+        <SafetyNotice variant="inline" />
         {!isOnline ? (
           <Card className="rounded-3xl border-amber-200 bg-amber-50">
             <CardContent className="flex items-start gap-3 p-5 text-sm text-amber-900">

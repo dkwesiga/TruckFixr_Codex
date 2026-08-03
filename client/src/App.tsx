@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import InstallAppPrompt from "./components/InstallAppPrompt";
+import MarketingAnalytics from "./components/analytics/MarketingAnalytics";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { lazyWithChunkRecovery } from "./lib/chunkRecovery";
 import { useAuthContext } from "./hooks/useAuthContext";
@@ -148,8 +149,7 @@ const PUBLIC_LAUNCH_APPROVED =
 // Preview flag for the V3 landing (preventive + predictive). When set, `/` serves
 // V3 so it can be previewed at the URL while V2 stays the approved public default.
 // Flip this to "true" to promote V3 once approved; unset to roll back to V2.
-const HOMEPAGE_V3_ENABLED =
-  import.meta.env.VITE_HOMEPAGE_V3 === "true";
+const HOMEPAGE_V3_ENABLED = import.meta.env.VITE_HOMEPAGE_V3 === "true";
 const HomePage = HOMEPAGE_V3_ENABLED
   ? FleetReadinessLandingV3
   : PUBLIC_LAUNCH_APPROVED
@@ -180,7 +180,9 @@ function DashboardRedirect() {
       setLocation("/admin/metrics");
       return;
     }
-    setLocation(user.role === "manager" || user.role === "owner" ? "/manager" : "/driver");
+    setLocation(
+      user.role === "manager" || user.role === "owner" ? "/manager" : "/driver"
+    );
   }, [isLoading, setLocation, user]);
 
   return <RouteFallback />;
@@ -330,6 +332,7 @@ function App() {
           <Toaster />
           <Router />
           <InstallAppPrompt />
+          <MarketingAnalytics />
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

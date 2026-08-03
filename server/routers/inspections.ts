@@ -325,15 +325,22 @@ function buildDvirPayload(input: {
         }))
       : [];
   const issueItems = checklistResponses.filter((item: any) => item.result === "issue_found");
-  const resolvedSheetType =
-    inspectionSheetTypeSchema.safeParse(results?.inspectionSheetType).success
-      ? (results.inspectionSheetType as InspectionSheetType)
-      : resolveInspectionSheetType({
-          assetType: input.vehicle?.assetType,
-          vehicleType: input.vehicle?.vehicleType,
-          model: input.vehicle?.model,
-          isTrailer: input.vehicle?.isTrailer,
-        }) ?? "tractor";
+  // The vehicle record is the source of truth for what the asset actually is,
+  // so its classification wins. Older/mis-recorded inspections sometimes stored
+  // a stale `inspectionSheetType` in results, which is why some tractor reports
+  // (e.g. #27) rendered the generic layout instead of the full Ontario tractor
+  // format like #53. We only fall back to the stored value when the vehicle
+  // cannot be classified from its own fields.
+  const vehicleResolvedSheetType = resolveInspectionSheetType({
+    assetType: input.vehicle?.assetType,
+    vehicleType: input.vehicle?.vehicleType,
+    model: input.vehicle?.model,
+    isTrailer: input.vehicle?.isTrailer,
+  });
+  const storedSheetType = inspectionSheetTypeSchema.safeParse(results?.inspectionSheetType).success
+    ? (results.inspectionSheetType as InspectionSheetType)
+    : null;
+  const resolvedSheetType = vehicleResolvedSheetType ?? storedSheetType ?? "tractor";
   const groupedRows = checklistResponses.map((item: any) => {
     const mapped = dvirCategoryCodeMap[item.category] ?? dvirCategoryCodeMap.other;
     return {

@@ -16,6 +16,7 @@ import { trpc } from "@/lib/trpc";
 import { getVehicleDisplayLabel } from "@/lib/vehicleDisplay";
 import { isOwnerOperatorEnabled } from "@/lib/ownerOperator";
 import { getDemoDiagnosisCase } from "../../../shared/demoAssets";
+import SafetyNotice from "@/components/SafetyNotice";
 import { toast } from "sonner";
 import { AlertTriangle, ChevronLeft, CheckCircle2, Sparkles, Stethoscope, Truck, Wrench } from "lucide-react";
 
@@ -585,6 +586,7 @@ function DriverDiagnosisContent() {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+        <SafetyNotice variant="inline" className="lg:col-span-2" />
         <Card className="fleet-panel shadow-none">
           <CardHeader>
             <CardTitle>Diagnostic Intake</CardTitle>

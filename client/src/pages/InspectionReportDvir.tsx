@@ -274,6 +274,16 @@ function InspectionReportDvirContent() {
               </>
             ) : null}
           </div>
+          <div>
+            <span className="font-bold">Make: </span>
+            <span className="border-b border-black px-2">{valueOrLine(report.vehicle.make)}</span>
+            <span className="ml-3 font-bold">Model: </span>
+            <span className="border-b border-black px-2">{valueOrLine(report.vehicle.model)}</span>
+          </div>
+          <div className="text-right">
+            <span className="font-bold">Year: </span>
+            <span className="border-b border-black px-2">{valueOrLine(report.vehicle.year)}</span>
+          </div>
         </section>
 
         {/* Overall result */}
