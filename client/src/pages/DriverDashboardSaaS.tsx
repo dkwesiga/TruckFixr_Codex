@@ -341,6 +341,14 @@ function DriverDashboardContent() {
   const assignedTrailer = linkedInspectionPair?.trailer ?? null;
   const canStartCombinedInspection = Boolean(linkedInspectionPair);
 
+  const scrollToRecentReports = () => {
+    const reports = document.getElementById("recent-reports");
+    if (reports) {
+      reports.scrollIntoView({ behavior: "smooth", block: "start" });
+      window.history.replaceState(null, "", "/driver#recent-reports");
+    }
+  };
+
   useEffect(() => {
     if (!vehicles.length) {
       setActiveVehicleId(0);
@@ -909,11 +917,11 @@ function DriverDashboardContent() {
                       ] as Array<{ label: string; value: string; href?: string; title?: string }>
                     ).map(({ label, value, href, title }) => {
                       const tileClasses =
-                        "rounded-2xl border border-[var(--fleet-outline)] bg-white px-4 py-5 shadow-[var(--fleet-shadow)]";
+                        "min-w-0 rounded-2xl border border-[var(--fleet-outline)] bg-white px-4 py-5 shadow-[var(--fleet-shadow)]";
                       const body = (
                         <>
-                          <p className="text-xs uppercase tracking-[0.16em] text-[var(--fleet-muted)]">{label}</p>
-                          <p className="mt-3 text-sm font-semibold text-[var(--fleet-ink)]" title={title || value}>{value}</p>
+                          <p className="break-words text-[11px] uppercase leading-4 tracking-[0.12em] text-[var(--fleet-muted)]">{label}</p>
+                          <p className="mt-3 break-words text-sm font-semibold text-[var(--fleet-ink)]" title={title || value}>{value}</p>
                         </>
                       );
                       return href ? (
@@ -940,9 +948,9 @@ function DriverDashboardContent() {
                       Start Truck + Trailer
                     </Button>
                   ) : null}
-                  <Button className="fleet-primary-btn h-12 rounded-2xl" onClick={() => startInspection(activeVehicle)}><SearchCode className="h-4 w-4" />{pendingDraftForActiveVehicle ? "Resume Inspection" : "Start Inspection"}</Button>
+                  {!canStartCombinedInspection ? (<Button className="fleet-primary-btn h-12 rounded-2xl" onClick={() => startInspection(activeVehicle)}><SearchCode className="h-4 w-4" />{pendingDraftForActiveVehicle ? "Resume Inspection" : "Start Inspection"}</Button>) : null}
                   <Button variant="outline" className="h-12 rounded-2xl border-[var(--fleet-outline)] bg-white" onClick={() => openIssueReport(activeVehicle)}><Wrench className="h-4 w-4" />Report a Problem</Button>
-                  <Button variant="outline" className="h-12 rounded-2xl border-[var(--fleet-outline)] bg-white" onClick={() => navigate("/driver#recent-reports")}><FileText className="h-4 w-4" />View Recent Reports</Button>
+                  <Button variant="outline" className="h-12 rounded-2xl border-[var(--fleet-outline)] bg-white" onClick={scrollToRecentReports}><FileText className="h-4 w-4" />View Recent Reports</Button>
                   <VehicleAccessRequestDialog
                     fleetId={resolvedFleetId}
                     triggerLabel="Request Another Vehicle"
@@ -1185,13 +1193,12 @@ function DriverDashboardContent() {
                     value={issueForm.category}
                     onChange={(event) => setIssueForm((current) => ({ ...current, category: event.target.value }))}
                   >
-                    <option value="brakes">Brakes</option>
-                    <option value="steering">Steering</option>
-                    <option value="tires">Tires</option>
-                    <option value="lights">Lights</option>
-                    <option value="coupling">Coupling</option>
-                    <option value="fluid_leaks">Fluid leaks</option>
-                    <option value="driver_reported_issue">Other</option>
+                    <option value="powertrain">Powertrain</option>
+                    <option value="chassis_suspension">Chassis &amp; suspension</option>
+                    <option value="braking">Braking</option>
+                    <option value="steering_axle">Steering &amp; Axle</option>
+                    <option value="electrical_electronic">Electrical/electronic</option>
+                    <option value="exhaust_emissions">Exhaust &amp; Emissions</option>
                   </select>
                 </div>
                 <div>
@@ -1387,7 +1394,7 @@ function DriverDashboardContent() {
             </button>
             <button
               type="button"
-              onClick={() => navigate("/driver#recent-reports")}
+              onClick={scrollToRecentReports}
               className="flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl text-xs font-semibold text-[var(--fleet-ink)] hover:bg-[var(--fleet-surface)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fleet-ink)]"
             >
               <FileText className="h-5 w-5" />

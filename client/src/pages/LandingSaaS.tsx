@@ -960,7 +960,7 @@ export default function LandingSaaS() {
             </Button>
             <Button
               asChild
-              className="rounded-full bg-[#E32636] px-3 font-['Manrope'] text-xs font-bold text-white hover:bg-[#BC1E2C] sm:px-5 sm:text-sm"
+              className="hidden rounded-full bg-[#E32636] px-3 font-['Manrope'] text-xs font-bold text-white hover:bg-[#BC1E2C] sm:inline-flex sm:px-5 sm:text-sm"
             >
               <a href={ROUTES.getStarted} onClick={() => handleCta("get_started_clicked", "nav")}>Get Started</a>
             </Button>
