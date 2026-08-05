@@ -529,8 +529,12 @@ export const defectsRouter = router({
         });
       }
 
-      const hasAccess = await verifyFleetAccess(defect.fleetId, ctx.user.id, ctx.user.role);
-      if (!hasAccess && defect.driverId !== ctx.user.id) {
+      const hasAccess = await canViewVehicle({
+        user: ctx.user,
+        vehicleId: defect.vehicleId,
+        fleetId: defect.fleetId,
+      });
+      if (!hasAccess) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "You do not have access to this defect",

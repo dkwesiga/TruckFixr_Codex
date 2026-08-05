@@ -945,7 +945,7 @@ function DriverDashboardContent() {
                   {canStartCombinedInspection ? (
                     <Button className="fleet-primary-btn h-12 rounded-2xl whitespace-normal text-center leading-tight" onClick={startCombinedInspection}>
                       <Truck className="h-4 w-4 shrink-0" />
-                      Start Truck + Trailer
+                      Start Inspection
                     </Button>
                   ) : null}
                   {!canStartCombinedInspection ? (<Button className="fleet-primary-btn h-12 rounded-2xl" onClick={() => startInspection(activeVehicle)}><SearchCode className="h-4 w-4" />{pendingDraftForActiveVehicle ? "Resume Inspection" : "Start Inspection"}</Button>) : null}
