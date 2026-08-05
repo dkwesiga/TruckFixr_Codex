@@ -966,7 +966,11 @@ function parseSimpleDiagnosisResponse(rawText: string) {
     const parseAttempts = dedupeStrings([candidate, removeTrailingCommas(candidate)]);
     for (const attempt of parseAttempts) {
       try {
-        const parsed = simpleDiagnosisSchema.parse(JSON.parse(attempt));
+        const rawParsed = JSON.parse(attempt) as Record<string, unknown>;
+        const parsed = simpleDiagnosisSchema.parse({
+          ...rawParsed,
+          confidence_score: toBoundedScore(rawParsed.confidence_score, 0),
+        });
         if (parsed.confidence_score >= 85) {
           parsed.clarifying_question = null;
         } else if (!parsed.clarifying_question) {
@@ -1140,6 +1144,7 @@ function buildSimpleCategoryPrompt(request: Record<string, unknown>) {
     "Cats: critical_engine_internal, engine_performance, oil_lubrication_system, cooling_system, aftertreatment_dpf_def_scr, electrical_battery_alternator, starting_charging, air_brake_system, fuel_system, transmission_driveline, hydraulics_pto, suspension_steering, trailer_lighting, abs_wheel_end, tires_wheels, unknown_triage.",
     "risk: low|medium|high|critical. If unsure primary_category=unknown_triage.",
     "Oil/coolant contamination => critical_engine_internal, critical.",
+    "classification_confidence must be an integer from 0 to 100 (a percentage, e.g. 95 for 95% confident). Never use a 0-1 decimal.",
     `Shape: ${JSON.stringify(template)}`,
     safePromptStringify(request),
   ].join("\n");
@@ -1159,9 +1164,11 @@ function buildSimpleDiagnosisPrompt(request: Record<string, unknown>) {
   return [
     "Diagnose this current issue only. JSON only.",
     "No history, cases, invoices, company data, or raw records.",
+    "confidence_score must be an integer from 0 to 100 (a percentage, e.g. 95 for 95% confident). Never use a 0-1 decimal.",
     "If confidence <85 ask one specific clarifying_question directly tied to the reported symptom/fault code. If >=85 use null.",
     "Do not ask about unrelated systems, old maintenance history, or generic checks unless they directly separate the top likely cause from the nearest competing cause.",
     "driver_action enum: keep_running_monitor, drive_to_shop, stop_and_inspect_on_site, stop_and_tow, derate_and_drive_short_distance, do_not_operate_until_repaired.",
+    "Keep shop_next_steps to 1-2 short items and safety_note under 20 words so the full JSON fits the token budget.",
     `Shape: ${JSON.stringify(template)}`,
     safePromptStringify(request),
   ].join("\n");
@@ -1560,7 +1567,7 @@ async function invokeSimpleDiagnosisWithModel(
   config: DiagnosticRuntimeConfig,
   providerPlan: DiagnosticProviderPlan,
   model: string,
-  maxTokens = 120
+  maxTokens = 380
 ) {
   return invokeWithOrchestration({
     preferredProvider: providerPlan.preferredProvider,
@@ -2278,7 +2285,7 @@ export async function diagnoseDiagnosticIssueWithLlm(
       continue;
     }
     const attemptsForModel = 2;
-    let maxTokens = 120;
+    let maxTokens = 380;
 
     for (let attemptIndex = 0; attemptIndex < attemptsForModel; attemptIndex += 1) {
       try {
