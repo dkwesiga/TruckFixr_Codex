@@ -909,11 +909,11 @@ function DriverDashboardContent() {
                       ] as Array<{ label: string; value: string; href?: string; title?: string }>
                     ).map(({ label, value, href, title }) => {
                       const tileClasses =
-                        "rounded-2xl border border-[var(--fleet-outline)] bg-white px-4 py-4 shadow-[var(--fleet-shadow)]";
+                        "rounded-2xl border border-[var(--fleet-outline)] bg-white px-4 py-5 shadow-[var(--fleet-shadow)]";
                       const body = (
                         <>
                           <p className="text-xs uppercase tracking-[0.16em] text-[var(--fleet-muted)]">{label}</p>
-                          <p className="mt-2 truncate text-sm font-semibold text-[var(--fleet-ink)]" title={title || value}>{value}</p>
+                          <p className="mt-3 text-sm font-semibold text-[var(--fleet-ink)]" title={title || value}>{value}</p>
                         </>
                       );
                       return href ? (
