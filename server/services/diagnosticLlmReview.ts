@@ -1150,6 +1150,18 @@ function buildSimpleCategoryPrompt(request: Record<string, unknown>) {
   ].join("\n");
 }
 
+// Complaint categories where a single vague symptom (e.g. "won't start") maps
+// to genuinely different repair paths depending on details the driver almost
+// never volunteers unprompted. Without forcing the model to check for that
+// detail first, it tends to report high confidence on the most statistically
+// common cause even though the report doesn't yet rule out the alternatives.
+const AMBIGUOUS_DIAGNOSIS_DISCRIMINATORS: Record<string, string> = {
+  starting_charging:
+    "This is a starting/charging complaint. Only use confidence >=85 if the report already states whether the engine cranks (turns over) or not, and whether there is clicking, a single click, or total silence when the key is turned - that split points to different systems (battery/connections vs. starter vs. ignition/fuel). If that detail is missing, confidence must be <85 and clarifying_question must ask exactly that.",
+  electrical_battery_alternator:
+    "This is an electrical/battery/alternator complaint. Only use confidence >=85 if the report already states whether the issue is intermittent or constant, and whether it happens with the engine running or off. If that detail is missing, confidence must be <85 and clarifying_question must ask exactly that.",
+};
+
 function buildSimpleDiagnosisPrompt(request: Record<string, unknown>) {
   const template = {
     top_likely_cause: "",
@@ -1161,11 +1173,17 @@ function buildSimpleDiagnosisPrompt(request: Record<string, unknown>) {
     should_escalate_to_mechanic: true,
   };
 
+  const classifierInfo = (request as { classifier?: { primary_category?: string } }).classifier;
+  const discriminator = classifierInfo?.primary_category
+    ? AMBIGUOUS_DIAGNOSIS_DISCRIMINATORS[classifierInfo.primary_category]
+    : undefined;
+
   return [
     "Diagnose this current issue only. JSON only.",
     "No history, cases, invoices, company data, or raw records.",
     "confidence_score must be an integer from 0 to 100 (a percentage, e.g. 95 for 95% confident). Never use a 0-1 decimal.",
     "If confidence <85 ask one specific clarifying_question directly tied to the reported symptom/fault code. If >=85 use null.",
+    ...(discriminator ? [discriminator] : []),
     "Do not ask about unrelated systems, old maintenance history, or generic checks unless they directly separate the top likely cause from the nearest competing cause.",
     "driver_action enum: keep_running_monitor, drive_to_shop, stop_and_inspect_on_site, stop_and_tow, derate_and_drive_short_distance, do_not_operate_until_repaired.",
     "Keep shop_next_steps to 1-2 short items and safety_note under 20 words so the full JSON fits the token budget.",
