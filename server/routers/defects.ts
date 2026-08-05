@@ -1041,6 +1041,153 @@ export const defectsRouter = router({
       return { success: true, triage: { ...triage, id: triageRecord.id } };
     }),
 
+  // Enhanced triage: driver answers clarifying questions to build confidence.
+  // Re-runs AI triage with driver answers, returns final diagnosis when
+  // confidence >= 85%. If still low, asks more questions. Always routes to
+  // manager for review before final action.
+  submitClarifyingAnswers: protectedProcedure
+    .input(
+      z.object({
+        defectId: z.number(),
+        answers: z.array(
+          z.object({
+            question: z.string(),
+            answer: z.string().trim().min(1),
+          })
+        ),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Database not available",
+        });
+      }
+
+      const [defect] = await db
+        .select()
+        .from(defects)
+        .where(eq(defects.id, input.defectId))
+        .limit(1);
+
+      if (!defect) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Defect not found" });
+      }
+
+      // Only the reporting driver can submit clarifying answers
+      if (defect.driverId !== ctx.user.id) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You can only answer clarifying questions for your own report",
+        });
+      }
+
+      const [vehicle] = await db
+        .select()
+        .from(vehicles)
+        .where(sql`CAST(${vehicles.id} AS text) = ${String(defect.vehicleId)}`)
+        .limit(1);
+
+      const symptoms = Array.isArray(defect.symptoms)
+        ? (defect.symptoms as string[])
+        : undefined;
+      const faultCodes = Array.isArray(defect.faultCodes)
+        ? (defect.faultCodes as string[])
+        : undefined;
+
+      // Build enhanced driver notes with clarifying answers
+      const answerText = input.answers
+        .map((a) => `Q: ${a.question}\nA: ${a.answer}`)
+        .join("\n\n");
+      const enhancedNotes =
+        (defect.description || "") +
+        (answerText ? `\n\nAdditional details from driver follow-up:\n${answerText}` : "");
+
+      // Re-run triage with enhanced context
+      const triage = await runDefectTriage({
+        vehicleId: defect.vehicleId,
+        vehicle: {
+          id: vehicle?.id ?? defect.vehicleId,
+          vin: vehicle?.vin,
+          make: vehicle?.make,
+          model: vehicle?.model,
+          year: vehicle?.year,
+        },
+        defectDescription: defect.description || defect.title,
+        category: defect.category,
+        severity: defect.severity ?? "medium",
+        symptoms,
+        faultCodes,
+        driverNotes: enhancedNotes,
+      });
+
+      const now = new Date();
+      const [triageRecord] = await db
+        .insert(aiTriageRecords)
+        .values({
+          fleetId: defect.fleetId,
+          vehicleId: defect.vehicleId,
+          inspectionId: defect.inspectionId ?? null,
+          defectId: defect.id,
+          mostLikelyCause: triage.most_likely_cause,
+          severity: triage.severity,
+          confidenceScore: triage.confidence_score,
+          recommendedAction: triage.recommended_action,
+          driverMessage: triage.driver_message,
+          managerSummary: triage.manager_summary,
+          clarifyingQuestions: triage.clarifying_questions,
+          safetyWarning: triage.safety_warning,
+          suggestedNextSteps: triage.suggested_next_steps,
+          rawResult: triage.raw,
+        })
+        .returning();
+
+      // Update defect with latest triage results
+      await db
+        .update(defects)
+        .set({
+          aiRecommendation: triage.recommended_action,
+          aiConfidenceScore: triage.confidence_score,
+          aiSummary: triage.manager_summary,
+          updatedAt: now,
+        })
+        .where(eq(defects.id, defect.id));
+
+      // If confidence >= 85%, create manager alert for review + approval
+      if (triage.confidence_score >= 85) {
+        const fleetManagers = await db
+          .select()
+          .from(defectActions)
+          .where(eq(defectActions.defectId, defect.id))
+          .limit(1);
+
+        // Create in-app alert for managers to review this issue
+        await db.insert(inAppAlerts).values({
+          fleetId: defect.fleetId,
+          title: `Driver Follow-up: ${defect.title}`,
+          message: `Driver answered follow-up questions. TruckFixr confidence is now ${triage.confidence_score}%. Recommends: ${triage.recommended_action}. Review and approve before action.`,
+          category: "defect_update",
+          relatedDefectId: defect.id,
+          severity:
+            defect.severity === "critical"
+              ? "critical"
+              : defect.severity === "high"
+                ? "high"
+                : "medium",
+          createdAt: now,
+        });
+      }
+
+      return {
+        success: true,
+        triage: { ...triage, id: triageRecord.id },
+        confidenceMetTarget: triage.confidence_score >= 85,
+        stillNeedsManagerReview: true,
+      };
+    }),
+
   // Manager decision using the V1.0 decision vocabulary. Maps each decision to
   // the existing defect status workflow + operational state, records the
   // decision, and re-evaluates early warnings.

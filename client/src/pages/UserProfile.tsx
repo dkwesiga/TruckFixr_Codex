@@ -20,7 +20,7 @@ import {
   TRUCKFIXR_PLANS,
   type PlanKey,
 } from "../../../shared/truckfixrPricing";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, ChevronLeft } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 
 export default function UserProfile() {
@@ -434,8 +434,29 @@ export default function UserProfile() {
     );
   }
 
+  const [, navigate] = useLocation();
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4">
+      <div className="mx-auto max-w-5xl">
+        <Button
+          variant="ghost"
+          onClick={() => {
+            // Navigate back to appropriate dashboard based on user role
+            if (user?.role === "driver") {
+              navigate("/driver");
+            } else if (user?.role === "manager" || user?.role === "owner") {
+              navigate("/manager");
+            } else {
+              navigate("/");
+            }
+          }}
+          className="mb-4 rounded-xl text-slate-600 hover:bg-slate-200/50"
+        >
+          <ChevronLeft className="mr-1 h-4 w-4" />
+          Back to Dashboard
+        </Button>
+      </div>
       <div className="mx-auto flex max-w-5xl flex-col gap-6 py-8 lg:flex-row lg:items-start">
         <Card className="w-full lg:max-w-md">
           {step === "profile" ? (

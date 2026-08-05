@@ -14,6 +14,7 @@ import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import QuickStartBanner from "@/components/quickStart/QuickStartBanner";
 import SafetyNotice from "@/components/SafetyNotice";
 import VehicleAccessRequestDialog from "@/components/VehicleAccessRequestDialog";
+import IssueClarifyingQuestionsWizard from "@/components/IssueClarifyingQuestionsWizard";
 import {
   useOwnerOperatorReturnToOwner,
 } from "@/hooks/useOwnerOperatorModeNavigation";
@@ -192,7 +193,8 @@ function DriverDashboardContent() {
   const [isIssueDialogOpen, setIsIssueDialogOpen] = useState(false);
   // "Report a Problem" is a single AI-first flow: form -> (online) triaging ->
   // result, or a manual/offline file when there is no connection.
-  const [reportPhase, setReportPhase] = useState<"form" | "triaging" | "result">("form");
+  const [reportPhase, setReportPhase] = useState<"form" | "clarifying_questions" | "triaging" | "result">("form");
+  const [clarifyingQuestions, setClarifyingQuestions] = useState<Array<{ question: string }>>([]);
   const [triageResult, setTriageResult] = useState<TriageResult | null>(null);
   const [filedDefectId, setFiledDefectId] = useState<number | null>(null);
   const [issueForm, setIssueForm] = useState({
@@ -230,6 +232,7 @@ function DriverDashboardContent() {
   );
   const reportIssueMutation = trpc.defects.reportIssue.useMutation();
   const runTriageMutation = trpc.defects.runTriage.useMutation();
+  const submitClarifyingAnswersMutation = trpc.defects.submitClarifyingAnswers.useMutation();
   const vehicles = useMemo<DriverVehicle[]>(() => {
     const rows = vehiclesQuery.data ?? [];
     return rows.map((vehicle) => ({
@@ -634,25 +637,60 @@ function DriverDashboardContent() {
     void activeDefectsQuery.refetch();
     void myReportedIssuesQuery.refetch();
 
-    // AI-first: the issue is now filed for the manager; run AI triage on it and
-    // show the result inline. Triage is best-effort — a failure never loses the
-    // already-filed report.
+    // AI-first: the issue is now filed for the manager; run AI triage on it.
+    // If confidence is low, show clarifying questions. Otherwise show the result.
     setReportPhase("triaging");
     try {
       const triageResponse = await runTriageMutation.mutateAsync({ defectId: result.defectId });
-      setTriageResult((triageResponse.triage ?? null) as TriageResult | null);
+      const triage = triageResponse.triage ?? null;
+      setTriageResult((triage) as TriageResult | null);
+
+      // Check if we need clarifying questions
+      if (triage && triage.clarifying_questions && triage.clarifying_questions.length > 0 && triage.confidence_score < 85) {
+        setClarifyingQuestions(triage.clarifying_questions.map(q => ({ question: q })));
+        setReportPhase("clarifying_questions");
+      } else {
+        setReportPhase("result");
+      }
+
       trackEvent("driver_report_triage_completed", {
         vehicle_id: activeVehicle.id,
         defect_id: result.defectId,
-        confidence: triageResponse.triage?.confidence_score,
-        recommended_action: triageResponse.triage?.recommended_action,
+        confidence: triage?.confidence_score,
+        recommended_action: triage?.recommended_action,
       });
     } catch {
       setTriageResult(null);
       toast.info("Issue reported to your manager. AI triage could not run right now.");
+      setReportPhase("result");
     }
-    setReportPhase("result");
     void myReportedIssuesQuery.refetch();
+  };
+
+  const handleSubmitClarifyingAnswers = async (
+    answers: Array<{ question: string; answer: string }>
+  ) => {
+    if (!filedDefectId) return;
+
+    setReportPhase("triaging");
+    try {
+      const response = await submitClarifyingAnswersMutation.mutateAsync({
+        defectId: filedDefectId,
+        answers,
+      });
+
+      setTriageResult((response.triage ?? null) as TriageResult | null);
+      trackEvent("driver_clarifying_answers_submitted", {
+        defect_id: filedDefectId,
+        confidence: response.triage?.confidence_score,
+        confidence_met_target: response.confidenceMetTarget,
+      });
+
+      setReportPhase("result");
+    } catch (error) {
+      toast.error("Failed to process your answers. Please try again.");
+      setReportPhase("clarifying_questions");
+    }
   };
 
   if (resolvedFleetId > 0 && !fleetQuery.isLoading && !driverModeEnabled) {
@@ -1095,12 +1133,24 @@ function DriverDashboardContent() {
               <DialogDescription>
                 {reportPhase === "result"
                   ? "Your issue is filed for your manager. Here is what TruckFixr AI found."
-                  : reportPhase === "triaging"
-                    ? "Running AI triage on your report..."
-                    : `Describe the problem with ${activeVehicle?.label ?? "this asset"}. TruckFixr AI will help diagnose it and send a manager-ready report.`}
+                  : reportPhase === "clarifying_questions"
+                    ? "Answer a few quick questions to help TruckFixr build confidence in the diagnosis."
+                    : reportPhase === "triaging"
+                      ? "Running AI triage on your report..."
+                      : `Describe the problem with ${activeVehicle?.label ?? "this asset"}. TruckFixr AI will help diagnose it and send a manager-ready report.`}
               </DialogDescription>
             </DialogHeader>
-            {reportPhase === "form" ? (
+            {reportPhase === "clarifying_questions" ? (
+              <IssueClarifyingQuestionsWizard
+                questions={clarifyingQuestions}
+                isSubmitting={submitClarifyingAnswersMutation.isPending}
+                onSubmit={handleSubmitClarifyingAnswers}
+                onCancel={() => {
+                  setReportPhase("result");
+                  setTriageResult(null);
+                }}
+              />
+            ) : reportPhase === "form" ? (
             <div className="space-y-4">
               <SafetyNotice variant="inline" />
               {!isOnline ? (
@@ -1168,18 +1218,53 @@ function DriverDashboardContent() {
               </div>
               <div>
                 <Label htmlFor="issue-photos">Photos</Label>
-                <Input
-                  id="issue-photos"
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  multiple
-                  className="mt-2"
-                  onChange={(event) => void handleIssuePhotos(event.target.files)}
-                />
+                <div className="mt-2 flex gap-2">
+                  <Input
+                    id="issue-photos"
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    multiple
+                    className="flex-1"
+                    onChange={(event) => void handleIssuePhotos(event.target.files)}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="rounded-xl border-slate-200"
+                    onClick={() => {
+                      const input = document.getElementById("issue-camera") as HTMLInputElement;
+                      input?.click();
+                    }}
+                  >
+                    <Camera className="h-4 w-4" />
+                  </Button>
+                  <Input
+                    id="issue-camera"
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={(event) => void handleIssuePhotos(event.target.files)}
+                  />
+                </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {issueForm.photoUrls.map((photoUrl, index) => (
-                    <img key={`${photoUrl.slice(0, 24)}-${index}`} src={photoUrl} alt={`Issue evidence ${index + 1}`} className="h-16 w-16 rounded-xl border border-slate-200 object-cover" />
+                    <div key={`${photoUrl.slice(0, 24)}-${index}`} className="relative">
+                      <img src={photoUrl} alt={`Issue evidence ${index + 1}`} className="h-16 w-16 rounded-xl border border-slate-200 object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIssueForm((current) => ({
+                            ...current,
+                            photoUrls: current.photoUrls.filter((_, i) => i !== index),
+                          }));
+                        }}
+                        className="absolute -right-2 -top-2 rounded-full bg-red-500 text-white hover:bg-red-600 w-5 h-5 flex items-center justify-center text-xs"
+                      >
+                        ×
+                      </button>
+                    </div>
                   ))}
                   {issueForm.photoUrls.length === 0 ? (
                     <div className="flex items-center gap-2 text-sm text-slate-500">

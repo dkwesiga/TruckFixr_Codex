@@ -1012,6 +1012,11 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
       <main className="mx-auto max-w-7xl space-y-6 px-4 py-8 pb-28 sm:px-6 lg:px-8 lg:pb-8">
         <QuickStartBanner role={user?.role} />
 
+        {/* Morning Fleet Summary — primary daily engagement */}
+        <section>
+          {resolvedFleetId != null ? <MorningFleetSummary fleetId={resolvedFleetId} /> : null}
+        </section>
+
         {isOwnerView ? (
           <section aria-label="Fleet health summary" className="space-y-4">
             <div className="flex items-end justify-between gap-4">
@@ -1736,10 +1741,6 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
               </div>
             </CardContent>
           </Card>
-        </section>
-
-        <section className="hidden lg:block">
-          {resolvedFleetId != null ? <MorningFleetSummary fleetId={resolvedFleetId} /> : null}
         </section>
 
         <section id="manager-fleet-operations" className="grid scroll-mt-4 gap-6 xl:grid-cols-[1.35fr_0.65fr]">
