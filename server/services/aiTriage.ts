@@ -117,22 +117,33 @@ export async function runDefectTriage(input: RunTriageInput): Promise<TriageResu
       raw: analysis,
     };
   } catch (error) {
-    console.warn("[AiTriage] AI triage failed; returning conservative triage:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorType = errorMessage.includes("not_configured") ? "AI_PROVIDER_NOT_CONFIGURED"
+                    : errorMessage.includes("timeout") ? "AI_PROVIDER_TIMEOUT"
+                    : errorMessage.includes("rate_limit") ? "AI_PROVIDER_RATE_LIMIT"
+                    : "AI_TRIAGE_FAILED";
+
+    console.error(`[AiTriage] ${errorType}: ${errorMessage}`, {
+      vehicleId: input.vehicleId,
+      defectDescription: input.defectDescription,
+      severity: input.severity,
+    });
+
     return {
       most_likely_cause: input.defectDescription,
       severity: input.severity,
       confidence_score: 0,
       recommended_action: isCritical ? "do_not_operate" : "book_repair",
       driver_message: isCritical
-        ? "Do not operate this vehicle until the defect is reviewed."
-        : "Defect submitted. Manager review is required because AI triage was unavailable.",
-      manager_summary: "AI triage was unavailable. Review the driver defect report manually.",
+        ? "Do not operate this vehicle until the defect is reviewed by a qualified technician."
+        : "Defect submitted. Manager will review your report manually since automated AI diagnosis is temporarily unavailable.",
+      manager_summary: `AI triage unavailable (${errorType}). Manual review required. Error: ${errorMessage.slice(0, 100)}`,
       clarifying_questions: isCritical
         ? []
         : ["Can the driver confirm when this issue started and whether it is getting worse?"],
-      safety_warning: isCritical ? "Critical defect reported." : SAFETY_DISCLAIMER,
-      suggested_next_steps: ["Manager review required"],
-      raw: { error: error instanceof Error ? error.message : String(error) },
+      safety_warning: isCritical ? "Critical defect reported. Immediate review required." : SAFETY_DISCLAIMER,
+      suggested_next_steps: ["Manager review required", "Check AI provider configuration if persistent"],
+      raw: { error: errorMessage, errorType },
     };
   }
 }
