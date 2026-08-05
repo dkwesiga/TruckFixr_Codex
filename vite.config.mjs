@@ -316,8 +316,8 @@ export default defineConfig({
   },
   optimizeDeps: {
     noDiscovery: true,
-    include: ["react", "react/jsx-runtime", "react-dom", "react-dom/client", "wouter"],
-    needsInterop: ["react-dom", "react-dom/client"],
+    include: ["react", "react/jsx-runtime", "react-dom", "react-dom/client", "wouter", "use-sync-external-store", "@radix-ui/react-use-is-hydrated"],
+    needsInterop: ["react-dom", "react-dom/client", "use-sync-external-store", "@radix-ui/react-use-is-hydrated"],
   },
   server: {
     host: true,

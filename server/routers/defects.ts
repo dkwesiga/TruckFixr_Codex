@@ -1166,10 +1166,10 @@ export const defectsRouter = router({
         // Create in-app alert for managers to review this issue
         await db.insert(inAppAlerts).values({
           fleetId: defect.fleetId,
+          defectId: defect.id,
           title: `Driver Follow-up: ${defect.title}`,
           message: `Driver answered follow-up questions. TruckFixr confidence is now ${triage.confidence_score}%. Recommends: ${triage.recommended_action}. Review and approve before action.`,
-          category: "defect_update",
-          relatedDefectId: defect.id,
+          alertType: "defect_update",
           severity:
             defect.severity === "critical"
               ? "critical"
