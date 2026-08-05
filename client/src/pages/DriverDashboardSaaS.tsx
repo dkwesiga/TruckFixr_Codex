@@ -851,11 +851,11 @@ function DriverDashboardContent() {
               </div>
             </Card>
             <Card className="metric-card border-0">
-              <CardHeader className="pb-3">
+              <CardHeader className="pb-4">
                 <CardDescription className="text-sm text-slate-500">Pending requests</CardDescription>
-                <CardTitle className="text-3xl font-semibold text-slate-950">{pendingRequests.filter((item) => item.status === "pending").length}</CardTitle>
+                <CardTitle className="mt-2 text-3xl font-semibold text-slate-950">{pendingRequests.filter((item) => item.status === "pending").length}</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2 pt-0 text-sm text-slate-600">
+              <CardContent className="space-y-2 pt-1 text-sm text-slate-600">
                 {(pendingRequests.slice(0, 3) ?? []).map((request) => (
                   <div key={request.id} className="rounded-2xl bg-[var(--fleet-surface)] px-4 py-3">
                     <p className="font-medium text-[var(--fleet-ink)]">
@@ -1001,11 +1001,11 @@ function DriverDashboardContent() {
           <div className="space-y-6">
             {pilotAccess?.status === "active" ? (
               <Card className="metric-card border-0">
-                <CardHeader className="pb-3">
+                <CardHeader className="pb-4">
                   <CardDescription className="text-sm text-slate-500">Pilot Access</CardDescription>
-                  <CardTitle className="text-2xl font-semibold text-slate-950">Pilot Access Active</CardTitle>
+                  <CardTitle className="mt-2 text-2xl font-semibold text-slate-950">Pilot Access Active</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-2 pt-0 text-sm text-slate-600">
+                <CardContent className="space-y-2 pt-1 text-sm text-slate-600">
                   <p>Expires {new Date(pilotAccess.expiresAt).toLocaleDateString()}</p>
                   <p>Vehicles used: {pilotAccess.vehiclesUsed} / {pilotAccess.maxVehicles}</p>
                   <p>Users enabled: {pilotAccess.usersUsed} / {pilotAccess.maxUsers}</p>
@@ -1016,12 +1016,12 @@ function DriverDashboardContent() {
               </Card>
             ) : null}
             <Card className="metric-card border-0">
-              <CardHeader className="pb-3"><CardDescription className="text-sm text-slate-500">Assigned vehicles</CardDescription><CardTitle className="text-3xl font-semibold text-slate-950">{vehicles.length}</CardTitle></CardHeader>
-              <CardContent className="pt-0 text-sm text-slate-600">Only vehicles and trailers assigned to you appear here.</CardContent>
+              <CardHeader className="pb-4"><CardDescription className="text-sm text-slate-500">Assigned vehicles</CardDescription><CardTitle className="mt-2 text-3xl font-semibold text-slate-950">{vehicles.length}</CardTitle></CardHeader>
+              <CardContent className="pt-1 text-sm text-slate-600">Only vehicles and trailers assigned to you appear here.</CardContent>
             </Card>
             <Card className="metric-card border-0">
-              <CardHeader className="pb-3"><CardDescription className="text-sm text-slate-500">Today&apos;s readiness</CardDescription><CardTitle className="text-3xl font-semibold text-slate-950">{readinessLabel}</CardTitle></CardHeader>
-              <CardContent className="pt-0 text-sm text-slate-600">{activeVehicle.status === "Operational" ? "Truck looks ready for the daily inspection workflow." : "Resolve flagged concerns before heading out."}</CardContent>
+              <CardHeader className="pb-4"><CardDescription className="text-sm text-slate-500">Today&apos;s readiness</CardDescription><CardTitle className="mt-2 text-3xl font-semibold text-slate-950">{readinessLabel}</CardTitle></CardHeader>
+              <CardContent className="pt-1 text-sm text-slate-600">{activeVehicle.status === "Operational" ? "Truck looks ready for the daily inspection workflow." : "Resolve flagged concerns before heading out."}</CardContent>
             </Card>
           </div>
         </section>
