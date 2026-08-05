@@ -645,9 +645,17 @@ function DriverDashboardContent() {
       const triage = triageResponse.triage ?? null;
       setTriageResult((triage) as TriageResult | null);
 
-      // Check if we need clarifying questions
-      if (triage && triage.clarifying_questions && triage.clarifying_questions.length > 0 && triage.confidence_score < 85) {
+      // Check if we need clarifying questions (confidence < 85%)
+      // Show questions even if they come from fallback/default
+      const hasQuestions = triage?.clarifying_questions && triage.clarifying_questions.length > 0;
+      if (triage && triage.confidence_score < 85 && hasQuestions) {
         setClarifyingQuestions(triage.clarifying_questions.map(q => ({ question: q })));
+        setReportPhase("clarifying_questions");
+      } else if (triage && triage.confidence_score < 85 && !hasQuestions) {
+        // Low confidence but no questions — provide default question
+        setClarifyingQuestions([
+          { question: "Can you provide more details about when this issue started and whether it's getting worse?" }
+        ]);
         setReportPhase("clarifying_questions");
       } else {
         setReportPhase("result");
