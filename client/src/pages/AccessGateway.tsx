@@ -41,13 +41,13 @@ export default function AccessGateway() {
   return (
     <main className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#eef3f8_100%)] px-4 py-8 sm:px-6 lg:py-12">
       <div className="mx-auto max-w-6xl">
-        <header className="mb-8 flex items-center justify-between gap-4">
-          <button type="button" onClick={() => setLocation("/")} className="flex items-center">
-            <AppLogo variant="full" imageClassName="h-10 w-auto" />
+        <header className="mb-8 flex items-center justify-between gap-3 sm:gap-4">
+          <button type="button" onClick={() => setLocation("/")} className="flex items-center flex-shrink-0">
+            <AppLogo variant="full" imageClassName="h-8 w-auto sm:h-10" />
           </button>
           <Button
             type="button"
-            className="rounded-full bg-[#E32636] px-5 font-bold text-white hover:bg-[#BC1E2C]"
+            className="rounded-full bg-[#E32636] px-3 sm:px-5 py-2 sm:py-2.5 font-bold text-xs sm:text-sm text-white hover:bg-[#BC1E2C] whitespace-nowrap flex-shrink-0 min-h-10 sm:min-h-11"
             onClick={() => setLocation("/auth/email")}
           >
             Sign In
