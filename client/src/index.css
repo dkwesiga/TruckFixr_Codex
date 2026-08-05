@@ -361,3 +361,116 @@
     line-height: 1.45 !important;
   }
 }
+
+/* ── TruckFixr design tokens (Claude Design "colors_and_type") ──────────
+   Additive token set used by the redesigned Manager Dashboard and future
+   pages. Fonts are already self-hosted above via @fontsource — this block
+   only adds colors/spacing/type-scale tokens and the .tfx-* utility classes.
+*/
+:root {
+  --brand-navy: #00263f;
+  --brand-navy-deep: #001a2c;
+  --brand-navy-ink: #0a1a2e;
+  --brand-red: #d81f2a;
+  --brand-red-deep: #a6121b;
+  --brand-red-bright: #ff3340;
+
+  --steel-950: #050b14;
+  --steel-900: #0e1726;
+  --steel-800: #182336;
+  --steel-700: #25324a;
+  --steel-600: #38465f;
+  --steel-500: #5a6981;
+  --steel-400: #8a98ae;
+  --steel-300: #b6c0d0;
+  --steel-200: #d6dce6;
+  --steel-100: #eceff4;
+  --steel-50: #f6f8fb;
+
+  --status-critical: #d81f2a;
+  --status-warning: #f2a516;
+  --status-ok: #1ea66c;
+  --status-info: #2d7de0;
+  --status-idle: #5a6981;
+
+  --tfx-bg-app: var(--steel-50);
+  --tfx-bg-surface: #ffffff;
+  --tfx-bg-sunken: var(--steel-100);
+  --tfx-fg-1: var(--brand-navy);
+  --tfx-fg-2: var(--steel-700);
+  --tfx-fg-3: var(--steel-500);
+  --tfx-fg-link: var(--brand-red);
+
+  --tfx-border-1: var(--steel-200);
+  --tfx-border-2: var(--steel-300);
+
+  --tfx-shadow-sm: 0 1px 2px rgba(10, 26, 46, 0.06), 0 1px 1px rgba(10, 26, 46, 0.04);
+  --tfx-shadow-md: 0 4px 12px rgba(10, 26, 46, 0.08), 0 2px 4px rgba(10, 26, 46, 0.04);
+
+  --r-1: 2px;
+  --r-2: 4px;
+  --r-3: 6px;
+  --r-4: 10px;
+  --r-5: 14px;
+
+  --fs-h3: 22px;
+  --fs-h4: 18px;
+  --fs-body: 15px;
+  --fs-body-sm: 13px;
+  --fs-caption: 12px;
+  --fs-micro: 11px;
+
+  --tracking-display: -0.01em;
+  --tracking-eyebrow: 0.14em;
+}
+
+[data-theme="dark"] {
+  --tfx-bg-app: var(--steel-950);
+  --tfx-bg-surface: var(--steel-900);
+  --tfx-bg-sunken: var(--steel-950);
+  --tfx-fg-1: var(--steel-50);
+  --tfx-fg-2: var(--steel-300);
+  --tfx-fg-3: var(--steel-400);
+  --tfx-fg-link: var(--brand-red-bright);
+  --tfx-border-1: var(--steel-800);
+  --tfx-border-2: var(--steel-700);
+}
+
+.tfx-display {
+  font-family: "Barlow Condensed", "Oswald", "Arial Narrow", sans-serif;
+  font-weight: 800;
+  font-style: italic;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-display);
+  line-height: 1.05;
+  color: var(--tfx-fg-1);
+}
+
+.tfx-h3,
+.tfx-h4 {
+  font-family: "Barlow Condensed", "Oswald", "Arial Narrow", sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--tfx-fg-1);
+  line-height: 1.2;
+  margin: 0;
+}
+.tfx-h3 {
+  font-size: var(--fs-h3);
+}
+.tfx-h4 {
+  font-size: var(--fs-h4);
+}
+
+.tfx-eyebrow {
+  font-weight: 600;
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-eyebrow);
+  color: var(--brand-red);
+}
+
+.tfx-mono {
+  font-family: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}

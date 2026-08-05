@@ -61,13 +61,11 @@ import { NotificationBell } from "@/components/NotificationBell";
 import {
   AlertTriangle,
   BookOpenCheck,
-  Camera,
   CarFront,
   ChevronRight,
   Clock3,
   LayoutDashboard,
   LogOut,
-  MapPin,
   Menu,
   Plus,
   Search,
@@ -689,6 +687,39 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
     };
   }, [vehiclesQuery.data, drivers, user?.id, managerActionItems.length]);
 
+  // KPI row for the redesigned dashboard header — derived from data already
+  // fetched above (verifiedHealth, vehiclesQuery, drivers), no extra queries.
+  const fleetKpis = useMemo(() => {
+    const healthVehicles = verifiedHealth?.vehicles ?? [];
+    const fleetHealthPct = healthVehicles.length
+      ? Math.round(
+          (healthVehicles.filter(v => v.status === "safe").length / healthVehicles.length) * 100
+        )
+      : 100;
+    const totalVehicles = vehiclesQuery.data?.length ?? 0;
+    const activeVehicles = (vehiclesQuery.data ?? []).filter(
+      vehicle => vehicle.status !== "maintenance" && vehicle.status !== "retired"
+    ).length;
+    const openDefects = verifiedHealth?.openDefects ?? [];
+    const severityCounts = {
+      critical: openDefects.filter(d => d.severity === "critical").length,
+      high: openDefects.filter(d => d.severity === "high").length,
+      medium: openDefects.filter(d => d.severity === "medium" || d.severity === "moderate").length,
+      low: openDefects.filter(
+        d => !["critical", "high", "medium", "moderate"].includes(d.severity ?? "")
+      ).length,
+    };
+    return {
+      fleetHealthPct,
+      totalVehicles,
+      activeVehicles,
+      pendingInspections: verifiedHealth?.today.missedInspections ?? 0,
+      openDefectsTotal: openDefects.length,
+      severityCounts,
+      integrityScore: verifiedHealth?.averages.fleetIntegrityScore ?? 100,
+    };
+  }, [verifiedHealth, vehiclesQuery.data]);
+
   const isOwnerView = user?.role === "owner" && !isOwnerOperator;
 
   const openAddVehicleDialog = () => {
@@ -916,95 +947,111 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
         </DropdownMenu>
       </div>
 
-      <header className="border-b border-[var(--fleet-outline)] bg-white/95 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
-          <div className="flex items-start gap-4">
-            <AppLogo imageClassName="h-10" frameClassName="p-1.5" href="/manager" />
+      <header>
+        {/* Top app bar */}
+        <div
+          className="flex items-center gap-4 px-4 py-3 sm:px-6 lg:px-8"
+          style={{ background: "var(--brand-navy-deep)" }}
+        >
+          <AppLogo
+            imageClassName="h-6"
+            frameClassName="rounded-lg bg-white px-3 py-1.5"
+            href="/manager"
+          />
+          <div className="hidden flex-1 max-w-[480px] sm:block">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--steel-400)]" />
+              <Input
+                value={search}
+                onChange={event => setSearch(event.target.value)}
+                placeholder="Search trucks, plates, drivers, issues"
+                className="h-9 rounded-md border-[var(--steel-700)] bg-[var(--steel-900)] pl-9 text-[var(--steel-50)] placeholder:text-[var(--steel-400)] shadow-none"
+              />
+            </div>
+          </div>
+          <div className="flex-1" />
+          <Button
+            variant="outline"
+            className="hidden rounded-md border-[var(--steel-700)] bg-transparent text-[var(--steel-200)] hover:bg-[var(--steel-800)] hover:text-white sm:inline-flex"
+            onClick={() => window.print()}
+          >
+            Export morning brief
+          </Button>
+        </div>
+
+        {/* Page header band */}
+        <div className="border-b border-[var(--fleet-outline)] bg-white">
+          <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-6 sm:px-6 lg:flex-row lg:items-end lg:justify-between lg:px-8">
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <p className="section-label">Manager dashboard</p>
+                <p className="tfx-eyebrow">Manager dashboard</p>
                 {isOwnerOperator ? (
                   <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-700 ring-1 ring-slate-200">
                     Owner Mode
                   </span>
                 ) : null}
               </div>
-              <h1 className="fleet-page-title mt-2 text-3xl font-semibold tracking-tight">
+              <h1 className="tfx-display mt-1 text-4xl">
                 Fleet operations center
               </h1>
-              <p className="mt-2 text-sm text-[var(--fleet-muted)]">
-                Review new reports, prioritize urgent vehicles, and assign the next action.
+              <p className="mt-2 max-w-xl text-sm text-[var(--fleet-muted)]">
+                Prioritize urgent vehicles and assign the next action across your fleet.
               </p>
             </div>
-          </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="relative min-w-[240px]">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--fleet-muted)]" />
-              <Input
-                value={search}
-                onChange={event => setSearch(event.target.value)}
-                placeholder="Search trucks, plates, drivers, issues"
-                className="h-10 rounded-full border-[var(--fleet-outline)] bg-white pl-9 shadow-sm"
-              />
+            <div className="flex flex-wrap items-center gap-3">
+              {isOwnerOperator ? (
+                <Button
+                  variant="outline"
+                  className="rounded-full border-[var(--fleet-outline)] bg-white"
+                  onClick={() => goToDriverMode()}
+                >
+                  Switch to Driver Mode
+                </Button>
+              ) : null}
+              <Dialog
+                open={isAddVehicleOpen}
+                onOpenChange={open => {
+                  setIsAddVehicleOpen(open);
+                  if (open) {
+                    setVehicleCaptureInitialStep("entry");
+                  } else {
+                    resetVehicleDialog();
+                  }
+                }}
+              >
+                <Button
+                  className="rounded-md px-5 font-semibold text-white shadow-none hover:opacity-90"
+                  style={{ background: "var(--brand-red)" }}
+                  disabled={resolvedFleetId == null && isFleetContextLoading}
+                  onClick={openAddVehicleDialog}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add vehicle
+                </Button>
+                <DialogContent className="max-h-[calc(100svh-1rem)] w-[calc(100vw-1rem)] overflow-hidden rounded-[28px] border-[var(--fleet-outline)] p-0 sm:max-h-[calc(100svh-2rem)] sm:max-w-2xl">
+                  <VehicleCaptureFlow
+                    fleetId={resolvedFleetId ?? 0}
+                    source="vehicles"
+                    initialStep={vehicleCaptureInitialStep}
+                    saveButtonLabel="Save vehicle"
+                    onCancel={() => {
+                      setIsAddVehicleOpen(false);
+                      resetVehicleDialog();
+                    }}
+                    onSaveDraft={handleAddVehicle}
+                    renderReviewExtras={() => (
+                      <div className="space-y-4">
+                      </div>
+                    )}
+                    onSaved={() => {
+                      setIsAddVehicleOpen(false);
+                      resetVehicleDialog();
+                    }}
+                  />
+                </DialogContent>
+              </Dialog>
             </div>
-            <Button
-              variant="outline"
-              className="rounded-full border-[var(--fleet-outline)] bg-white"
-              onClick={() => window.print()}
-            >
-              Export morning brief
-            </Button>
-            {isOwnerOperator ? (
-              <Button
-                variant="outline"
-                className="rounded-full border-[var(--fleet-outline)] bg-white"
-                onClick={() => goToDriverMode()}
-              >
-                Switch to Driver Mode
-              </Button>
-            ) : null}
-            <Dialog
-              open={isAddVehicleOpen}
-              onOpenChange={open => {
-                setIsAddVehicleOpen(open);
-                if (open) {
-                  setVehicleCaptureInitialStep("entry");
-                } else {
-                  resetVehicleDialog();
-                }
-              }}
-            >
-              <Button
-                className="fleet-primary-btn rounded-full"
-                disabled={resolvedFleetId == null && isFleetContextLoading}
-                onClick={openAddVehicleDialog}
-              >
-                <Plus className="mr-2 h-4 w-4" />
-                Add vehicle
-              </Button>
-              <DialogContent className="max-h-[calc(100svh-1rem)] w-[calc(100vw-1rem)] overflow-hidden rounded-[28px] border-[var(--fleet-outline)] p-0 sm:max-h-[calc(100svh-2rem)] sm:max-w-2xl">
-                <VehicleCaptureFlow
-                  fleetId={resolvedFleetId ?? 0}
-                  source="vehicles"
-                  initialStep={vehicleCaptureInitialStep}
-                  saveButtonLabel="Save vehicle"
-                  onCancel={() => {
-                    setIsAddVehicleOpen(false);
-                    resetVehicleDialog();
-                  }}
-                  onSaveDraft={handleAddVehicle}
-                  renderReviewExtras={() => (
-                    <div className="space-y-4">
-                    </div>
-                  )}
-                  onSaved={() => {
-                    setIsAddVehicleOpen(false);
-                    resetVehicleDialog();
-                  }}
-                />
-              </DialogContent>
-            </Dialog>
           </div>
         </div>
       </header>
@@ -1082,15 +1129,6 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
           </section>
         ) : null}
 
-        <div className="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-r-xl shadow-sm">
-          <div className="flex items-center gap-3">
-            <AlertTriangle className="h-5 w-5 text-amber-600" />
-            <p className="text-sm text-amber-800">
-              Safety notice: Do not use TruckFixr while driving. If you are driving, pull over safely before 
-              entering symptoms, reading results, or following diagnostic instructions.
-            </p>
-          </div>
-        </div>
 
         <section className="space-y-4 lg:hidden">
           <Card className="saas-card border-0">
@@ -1248,8 +1286,8 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
           </Accordion>
         </section>
 
-        <section className="hidden gap-4 lg:grid lg:grid-cols-3">
-          {pilotAccess?.status === "active" ? (
+        {pilotAccess?.status === "active" ? (
+          <section className="hidden lg:block">
             <Card className="metric-card border-0">
               <CardHeader className="pb-3">
                 <CardDescription>Pilot Access</CardDescription>
@@ -1278,248 +1316,307 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
                 </Button>
               </CardContent>
             </Card>
-          ) : null}
-          <Card className="metric-card border-0">
-            <CardHeader className="pb-3">
-              <CardDescription>Vehicles in fleet</CardDescription>
-              <CardTitle className="text-3xl font-semibold text-slate-950">
-                {vehiclesQuery.data?.length ?? 0}
-              </CardTitle>
-            <Button 
-              variant="link" 
-              className="p-0 h-auto text-blue-600" 
-              onClick={() => handleOpenAssign()}
+          </section>
+        ) : null}
+
+        {/* KPI row */}
+        <section id="manager-open-defects" className="hidden gap-4 lg:grid lg:grid-cols-5">
+          <div
+            className="rounded-[var(--r-4)] p-5"
+            style={{ background: "var(--tfx-bg-surface)", border: "1px solid var(--tfx-border-1)", boxShadow: "var(--tfx-shadow-sm)" }}
+          >
+            <p className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--tfx-fg-3)]">Fleet health</p>
+            <p
+              className="tfx-display mt-1 text-4xl"
+              style={{
+                color:
+                  fleetKpis.fleetHealthPct >= 90
+                    ? "var(--status-ok)"
+                    : fleetKpis.fleetHealthPct >= 70
+                      ? "var(--status-warning)"
+                      : "var(--status-critical)",
+              }}
             >
-              Assign Vehicle / Trailer
-            </Button>
-            </CardHeader>
-            <CardContent className="pt-0 text-sm text-slate-600">
-              Live fleet list with driver assignment.
-            </CardContent>
-          </Card>
-          <Card className="metric-card border-0">
-            <CardHeader className="pb-3">
-              <CardDescription>Linked drivers</CardDescription>
-              <CardTitle className="text-3xl font-semibold text-slate-950">
-                {drivers.length}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 text-sm text-slate-600">
-              Drivers available to assign to vehicles.
-            </CardContent>
-          </Card>
-          <Card className="metric-card border-0">
-            <CardHeader className="pb-3">
-              <CardDescription>Needs manager action</CardDescription>
-              <CardTitle className="text-3xl font-semibold text-slate-950">
-                {managerActionItems.length}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 text-sm text-slate-600">
-              <p>Driver diagnoses and issues awaiting your follow-up.</p>
-              <Button
-                variant="link"
-                className="mt-2 h-auto p-0 text-sm font-medium text-blue-700"
-                onClick={() =>
-                  managerActionItems[0]?.defectId
-                    ? navigate(`/defect/${managerActionItems[0].defectId}`)
-                    : scrollToSection("manager-fleet-operations")
-                }
-              >
-                Review action queue
-              </Button>
-            </CardContent>
-          </Card>
+              {fleetKpis.fleetHealthPct}%
+            </p>
+            <p className="mt-1.5 text-xs text-[var(--tfx-fg-3)]">Based on today's verified inspections</p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => scrollToSection("manager-fleet-operations")}
+            className="rounded-[var(--r-4)] p-5 text-left"
+            style={{ background: "var(--tfx-bg-surface)", border: "1px solid var(--tfx-border-1)", boxShadow: "var(--tfx-shadow-sm)" }}
+          >
+            <p className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--tfx-fg-3)]">Trucks active</p>
+            <p className="tfx-display mt-1 text-4xl">
+              {fleetKpis.activeVehicles}
+              <span className="ml-1 text-xl font-semibold not-italic text-[var(--tfx-fg-3)]">
+                {" "}/ {fleetKpis.totalVehicles}
+              </span>
+            </p>
+            <p className="mt-1.5 text-xs text-[var(--tfx-fg-3)]">
+              {Math.max(0, fleetKpis.totalVehicles - fleetKpis.activeVehicles)} in maintenance
+            </p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const firstReport = inspectionReportsQuery.data?.[0];
+              if (firstReport) {
+                navigate(`/inspection-report/${firstReport.id}`);
+                return;
+              }
+              toast.info("No DVIR inspection reports are available yet.");
+            }}
+            className="rounded-[var(--r-4)] p-5 text-left"
+            style={{ background: "var(--tfx-bg-surface)", border: "1px solid var(--tfx-border-1)", boxShadow: "var(--tfx-shadow-sm)" }}
+          >
+            <p className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--tfx-fg-3)]">Pending inspections</p>
+            <p className="tfx-display mt-1 text-4xl">{fleetKpis.pendingInspections}</p>
+            <p className="mt-1.5 text-xs font-semibold" style={{ color: fleetKpis.pendingInspections > 0 ? "var(--status-warning)" : "var(--tfx-fg-3)" }}>
+              {fleetKpis.pendingInspections > 0 ? "Due today" : "All caught up"}
+            </p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => scrollToSection("manager-open-defects-panel")}
+            className="rounded-[var(--r-4)] p-5 text-left"
+            style={{ background: "var(--tfx-bg-surface)", border: "1px solid var(--tfx-border-1)", boxShadow: "var(--tfx-shadow-sm)" }}
+          >
+            <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-[0.04em] text-[var(--tfx-fg-3)]">
+              <span>Open defects</span>
+              <span className="text-[var(--tfx-fg-1)]">{fleetKpis.openDefectsTotal}</span>
+            </div>
+            <div className="mt-3.5 flex h-1.5 gap-0.5 overflow-hidden rounded-full">
+              <div className="flex-1" style={{ background: "var(--status-critical)", flexGrow: Math.max(1, fleetKpis.severityCounts.critical) }} />
+              <div className="flex-1" style={{ background: "var(--status-warning)", flexGrow: Math.max(1, fleetKpis.severityCounts.high) }} />
+              <div className="flex-1" style={{ background: "var(--steel-400)", flexGrow: Math.max(1, fleetKpis.severityCounts.medium + fleetKpis.severityCounts.low) }} />
+            </div>
+            <div className="mt-2 flex justify-between text-[11px] text-[var(--tfx-fg-3)]">
+              <span><span className="font-bold" style={{ color: "var(--status-critical)" }}>{fleetKpis.severityCounts.critical}</span> crit</span>
+              <span><span className="font-bold" style={{ color: "var(--status-warning)" }}>{fleetKpis.severityCounts.high}</span> high</span>
+              <span><span className="font-bold text-[var(--steel-500)]">{fleetKpis.severityCounts.medium}</span> med</span>
+              <span><span className="font-bold" style={{ color: "var(--status-ok)" }}>{fleetKpis.severityCounts.low}</span> low</span>
+            </div>
+          </button>
+
+          <div
+            className="rounded-[var(--r-4)] p-5"
+            style={{ background: "var(--tfx-bg-surface)", border: "1px solid var(--tfx-border-1)", boxShadow: "var(--tfx-shadow-sm)" }}
+          >
+            <p className="text-xs font-semibold uppercase tracking-[0.04em] text-[var(--tfx-fg-3)]">Integrity score</p>
+            <p className="tfx-display mt-1 text-4xl" style={{ color: "var(--status-ok)" }}>
+              {fleetKpis.integrityScore}
+            </p>
+            <p className="mt-1.5 text-xs text-[var(--tfx-fg-3)]">Avg. verified inspection</p>
+          </div>
         </section>
 
-        <section id="manager-open-defects" className="hidden gap-4 lg:grid lg:grid-cols-4">
-          <Card className="metric-card border-0">
-            <CardHeader className="pb-3">
-              <CardDescription>Inspected today</CardDescription>
-              <CardTitle className="text-3xl font-semibold text-slate-950">
-                {verifiedHealth?.today.inspectedVehicles ?? 0}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 text-sm text-slate-600">
-              <p>{verifiedHealth?.today.completionRate ?? 0}% completion rate.</p>
-              <Button
-                variant="link"
-                className="mt-2 h-auto p-0 text-sm font-medium text-blue-700"
-                onClick={() => {
-                  const firstReport = inspectionReportsQuery.data?.[0];
-                  if (firstReport) {
-                    navigate(`/inspection-report/${firstReport.id}`);
-                    return;
-                  }
-                  toast.info("No DVIR inspection reports are available yet.");
-                }}
+        {/* Needs manager action */}
+        <section
+          className="hidden rounded-[var(--r-4)] p-5 lg:block"
+          style={{
+            background: "var(--tfx-bg-surface)",
+            border: "1px solid var(--tfx-border-1)",
+            borderTop: "2px solid var(--brand-red)",
+            boxShadow: "var(--tfx-shadow-sm)",
+          }}
+        >
+          <div className="mb-3.5 flex items-center justify-between">
+            <h2 className="tfx-h3">Needs manager action</h2>
+            <button
+              type="button"
+              onClick={() => scrollToSection("manager-fleet-operations")}
+              className="text-sm font-semibold"
+              style={{ color: "var(--tfx-fg-link)" }}
+            >
+              Review action queue &rarr;
+            </button>
+          </div>
+          {managerActionItems.length === 0 ? (
+            <p className="text-sm text-[var(--tfx-fg-3)]">
+              No diagnosis summaries are waiting on manager follow-up right now.
+            </p>
+          ) : (
+            managerActionItems.slice(0, 4).map(item => (
+              <div
+                key={item.id}
+                className="flex items-center gap-3.5 py-3"
+                style={{ borderTop: "1px solid var(--tfx-border-1)" }}
               >
-                View inspection reports
-              </Button>
-            </CardContent>
-          </Card>
-          <Card className="metric-card border-0">
-            <CardHeader className="pb-3">
-              <CardDescription>Missed inspections</CardDescription>
-              <CardTitle className="text-3xl font-semibold text-slate-950">
-                {verifiedHealth?.today.missedInspections ?? 0}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 text-sm text-slate-600">
-              Vehicles not inspected today.
-            </CardContent>
-          </Card>
-          <Card className="metric-card border-0">
-            <CardHeader className="pb-3">
-              <CardDescription>Open defects</CardDescription>
-              {(verifiedHealth?.openDefects.length ?? 0) > 0 ? (
+                <span
+                  className={`w-16 flex-shrink-0 rounded-full px-2.5 py-1 text-center text-[10px] font-bold uppercase tracking-[0.06em] ring-1 ${badgeClasses(item.riskLevel === "high" ? "Critical" : item.riskLevel === "medium" ? "High" : "Low")}`}
+                >
+                  {item.riskLevel === "high" ? "Critical" : item.riskLevel === "medium" ? "High" : "Medium"}
+                </span>
+                <div className="tfx-mono w-24 flex-shrink-0 text-sm font-semibold text-[var(--tfx-fg-1)]">
+                  {item.truckLabel}
+                </div>
+                <div className="flex-1 truncate text-sm text-[var(--tfx-fg-2)]">
+                  {item.possibleCause || item.summary}
+                </div>
                 <button
                   type="button"
-                  onClick={() => scrollToSection("manager-open-defects-panel")}
-                  className="text-left text-3xl font-semibold text-blue-700 underline-offset-4 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  className="flex-shrink-0 text-sm font-semibold"
+                  style={{ color: "var(--tfx-fg-link)" }}
+                  disabled={!item.defectId}
+                  onClick={() => item.defectId && navigate(`/defect/${item.defectId}`)}
                 >
-                  {verifiedHealth?.openDefects.length ?? 0}
+                  Review defect
                 </button>
-              ) : (
-                <CardTitle className="text-3xl font-semibold text-slate-950">
-                  {verifiedHealth?.openDefects.length ?? 0}
-                </CardTitle>
-              )}
-            </CardHeader>
-            <CardContent className="pt-0 text-sm text-slate-600">
-              {(verifiedHealth?.openDefects.length ?? 0) > 0
-                ? "Tap the count to review open defects."
-                : "Known issues remain visible until resolved."}
-            </CardContent>
-          </Card>
-          <Card className="metric-card border-0">
-            <CardHeader className="pb-3">
-              <CardDescription>Integrity score</CardDescription>
-              <CardTitle className="text-3xl font-semibold text-slate-950">
-                {verifiedHealth?.averages.fleetIntegrityScore ?? 100}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 text-sm text-slate-600">
-              Average verified inspection score.
-            </CardContent>
-          </Card>
+              </div>
+            ))
+          )}
         </section>
 
-        <section className="hidden lg:block">
-          <Card className="saas-card">
-            <CardHeader>
-              <CardTitle className="text-slate-950">DVIR inspection reports</CardTitle>
-              <CardDescription>
-                Completed verified daily inspections are saved here for manager review and driver records.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {inspectionReportsQuery.isLoading ? (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
-                  Loading inspection reports...
-                </div>
-              ) : null}
-              {!inspectionReportsQuery.isLoading && (inspectionReportsQuery.data ?? []).length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
-                  No DVIR inspection reports have been submitted yet.
-                </div>
-              ) : null}
-              {(inspectionReportsQuery.data ?? []).map((report) => (
+        <section className="hidden gap-5 lg:grid lg:grid-cols-[2fr_1fr] lg:items-start">
+          {/* DVIR inspection reports table */}
+          <div
+            className="overflow-x-auto rounded-[var(--r-4)]"
+            style={{ background: "var(--tfx-bg-surface)", border: "1px solid var(--tfx-border-1)", boxShadow: "var(--tfx-shadow-sm)" }}
+          >
+            <div className="border-b px-5 pb-3.5 pt-4.5" style={{ borderColor: "var(--tfx-border-1)" }}>
+              <h2 className="tfx-h3">DVIR inspection reports</h2>
+              <p className="mt-1 text-sm text-[var(--tfx-fg-3)]">Verified daily inspections, most recent first.</p>
+            </div>
+            <div
+              className="grid min-w-[600px] grid-cols-[80px_minmax(90px,1fr)_110px_120px_60px_60px] gap-2 px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.04em] text-[var(--tfx-fg-3)]"
+              style={{ background: "var(--tfx-bg-sunken)" }}
+            >
+              <div>Unit</div>
+              <div>Driver</div>
+              <div>Timestamp</div>
+              <div>Status</div>
+              <div className="text-right">Integrity</div>
+              <div />
+            </div>
+            {inspectionReportsQuery.isLoading ? (
+              <div className="px-4 py-4 text-sm text-[var(--tfx-fg-3)]">Loading inspection reports...</div>
+            ) : null}
+            {!inspectionReportsQuery.isLoading && (inspectionReportsQuery.data ?? []).length === 0 ? (
+              <div className="px-4 py-4 text-sm text-[var(--tfx-fg-3)]">No DVIR inspection reports have been submitted yet.</div>
+            ) : null}
+            {(inspectionReportsQuery.data ?? []).map(report => {
+              const result = String(report.overallVehicleResult ?? "submitted");
+              const statusLabel = result === "no_defect" ? "No defect" : result.replaceAll("_", " ");
+              const statusClasses =
+                result === "not_safe_to_operate"
+                  ? "bg-red-50 text-red-700"
+                  : result === "no_defect"
+                    ? "bg-emerald-50 text-emerald-700"
+                    : "bg-amber-50 text-amber-800";
+              return (
                 <div
                   key={report.id}
-                  className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-4 sm:flex-row sm:items-center sm:justify-between"
+                  className="grid min-w-[600px] grid-cols-[80px_minmax(90px,1fr)_110px_120px_60px_60px] items-center gap-2 px-4 py-3"
+                  style={{ borderTop: "1px solid var(--tfx-border-1)" }}
                 >
-                  <div>
-                    <p className="font-semibold text-slate-950">{report.vehicleLabel}</p>
-                    <p className="mt-1 text-sm text-slate-600">
-                      Driver: {report.driverName} | {formatReportTimestamp(report.submittedAt)}
-                    </p>
-                    <p className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-400">
-                      {String(report.overallVehicleResult ?? "submitted").replaceAll("_", " ")} | Integrity{" "}
-                      {report.integrityScore ?? "N/A"}
-                    </p>
-                  </div>
-                  <Button
-                    variant="outline"
-                    className="rounded-full bg-white"
+                  <div className="tfx-mono truncate text-sm font-bold text-[var(--tfx-fg-1)]">{report.vehicleLabel}</div>
+                  <div className="truncate text-sm text-[var(--tfx-fg-2)]">{report.driverName}</div>
+                  <div className="tfx-mono text-xs text-[var(--tfx-fg-3)]">{formatReportTimestamp(report.submittedAt)}</div>
+                  <span className={`w-fit justify-self-start rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-[0.05em] ${statusClasses}`}>
+                    {statusLabel}
+                  </span>
+                  <div className="tfx-mono text-right text-sm font-bold text-[var(--tfx-fg-1)]">{report.integrityScore ?? "N/A"}</div>
+                  <button
+                    type="button"
+                    className="justify-self-end rounded-md px-2.5 py-1.5 text-xs font-semibold"
+                    style={{ border: "1px solid var(--tfx-border-2)", color: "var(--tfx-fg-2)" }}
                     onClick={() => navigate(`/inspection-report/${report.id}`)}
                   >
-                    View DVIR report
-                  </Button>
+                    View
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Sidebar */}
+          <div className="flex flex-col gap-4">
+            <div
+              className="rounded-[var(--r-4)] p-4.5"
+              style={{ background: "var(--tfx-bg-surface)", border: "1px solid var(--tfx-border-1)", boxShadow: "var(--tfx-shadow-sm)" }}
+            >
+              <h3 className="tfx-h4 mb-3">Fleet snapshot</h3>
+              {[
+                { label: "Vehicles in fleet", value: vehiclesQuery.data?.length ?? 0 },
+                { label: "Linked drivers", value: drivers.length },
+                {
+                  label: "Inspected today",
+                  value: `${verifiedHealth?.today.inspectedVehicles ?? 0} / ${vehiclesQuery.data?.length ?? 0}`,
+                },
+                { label: "Missed inspections", value: verifiedHealth?.today.missedInspections ?? 0 },
+              ].map(item => (
+                <div
+                  key={item.label}
+                  className="flex items-baseline justify-between py-2"
+                  style={{ borderTop: "1px solid var(--tfx-border-1)" }}
+                >
+                  <span className="text-sm text-[var(--tfx-fg-2)]">{item.label}</span>
+                  <span className="tfx-mono text-base font-bold text-[var(--tfx-fg-1)]">{item.value}</span>
                 </div>
               ))}
-            </CardContent>
-          </Card>
-        </section>
+              <Button
+                variant="outline"
+                className="mt-3 w-full rounded-xl"
+                onClick={() => handleOpenAssign()}
+              >
+                Assign Vehicle / Trailer
+              </Button>
+            </div>
 
-        <section className="hidden gap-6 xl:grid-cols-[1.15fr_0.85fr] lg:grid">
-          <Card className="saas-card">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-slate-950">
-                <ShieldCheck className="h-5 w-5 text-emerald-600" />
+            <div
+              className="rounded-[var(--r-4)] p-4.5"
+              style={{ background: "var(--tfx-bg-surface)", border: "1px solid var(--tfx-border-1)", boxShadow: "var(--tfx-shadow-sm)" }}
+            >
+              <h3 className="tfx-h4 flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-emerald-600" />
                 Daily vehicle health
-              </CardTitle>
-              <CardDescription>
-                Verified daily status combines inspection completion, open
-                defects, photo proof, location proof, and flags.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
+              </h3>
+              <p className="mb-3 mt-0.5 text-xs text-[var(--tfx-fg-3)]">
+                Completion, defects, photo &amp; location proof combined.
+              </p>
               {(verifiedHealth?.vehicles ?? []).length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
-                  No verified inspections yet today.
-                </div>
+                <p className="text-sm text-[var(--tfx-fg-3)]">No verified inspections yet today.</p>
               ) : (
-                verifiedHealth?.vehicles.map(vehicle => (
-                  <div
-                    key={vehicle.vehicleId}
-                    className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4"
-                  >
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <p className="font-semibold text-slate-950">
-                          {vehicle.unit}
-                        </p>
-                        <p className="mt-1 text-sm text-slate-600">
-                          {vehicle.openDefects} open defects | Integrity{" "}
-                          {vehicle.integrityScore ?? "N/A"}
-                        </p>
-                        <p className="mt-2 text-sm text-slate-700">
-                          Driver:{" "}
-                          <span className="font-medium text-slate-900">
-                            {vehicle.assignedDriverName ?? "No driver assigned"}
-                          </span>
-                        </p>
-                      </div>
-                      <div className="flex flex-col items-start gap-2 sm:items-end">
+                verifiedHealth?.vehicles.slice(0, 4).map(vehicle => (
+                  <div key={vehicle.vehicleId} className="py-3" style={{ borderTop: "1px solid var(--tfx-border-1)" }}>
+                    <div className="flex items-center justify-between">
+                      <span className="tfx-mono text-sm font-bold text-[var(--tfx-fg-1)]">{vehicle.unit}</span>
+                      {vehicle.status === "critical" ? (
                         <span
-                          className={`w-fit rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${
-                            vehicle.status === "safe"
-                              ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
-                              : vehicle.status === "attention"
-                                ? "bg-amber-50 text-amber-700 ring-amber-200"
-                                : vehicle.status === "critical"
-                                  ? "bg-red-50 text-red-700 ring-red-200"
-                                  : "bg-slate-100 text-slate-700 ring-slate-200"
-                          }`}
+                          className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em]"
+                          style={{ background: "rgba(216,31,42,0.1)", color: "var(--brand-red)" }}
                         >
-                          {vehicle.status.replace("_", " ")}
+                          Critical
                         </span>
-                      </div>
+                      ) : null}
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-600">
-                      <span className="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 ring-1 ring-slate-200">
-                        <MapPin className="h-3.5 w-3.5" />
-                        Location{" "}
-                        {vehicle.locationProofCaptured ? "captured" : "missing"}
+                    <p className="mt-1 text-xs text-[var(--tfx-fg-3)]">
+                      {vehicle.openDefects} open defects &middot; Integrity {vehicle.integrityScore ?? "N/A"} &middot;{" "}
+                      {vehicle.assignedDriverName ?? "No driver assigned"}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <span
+                        className="rounded-[var(--r-1)] px-2 py-1 text-[11px]"
+                        style={{ background: "var(--tfx-bg-sunken)", border: "1px solid var(--tfx-border-1)", color: "var(--tfx-fg-3)" }}
+                      >
+                        Location {vehicle.locationProofCaptured ? "captured" : "missing"}
                       </span>
-                      <span className="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-1 ring-1 ring-slate-200">
-                        <Camera className="h-3.5 w-3.5" />
-                        Photo proof{" "}
-                        {vehicle.photoProofSubmitted ? "submitted" : "missing"}
+                      <span
+                        className="rounded-[var(--r-1)] px-2 py-1 text-[11px]"
+                        style={{ background: "var(--tfx-bg-sunken)", border: "1px solid var(--tfx-border-1)", color: "var(--tfx-fg-3)" }}
+                      >
+                        Photo {vehicle.photoProofSubmitted ? "submitted" : "missing"}
                       </span>
                       {vehicle.latestAiRecommendation ? (
-                        <span className="rounded-full bg-white px-2.5 py-1 ring-1 ring-slate-200">
+                        <span
+                          className="rounded-[var(--r-1)] px-2 py-1 text-[11px]"
+                          style={{ background: "var(--tfx-bg-sunken)", border: "1px solid var(--tfx-border-1)", color: "var(--tfx-fg-3)" }}
+                        >
                           AI: {vehicle.latestAiRecommendation}
                         </span>
                       ) : null}
@@ -1527,45 +1624,32 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
                   </div>
                 ))
               )}
-            </CardContent>
-          </Card>
+            </div>
 
-          <Card className="saas-card">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-slate-950">
-                <AlertTriangle className="h-5 w-5 text-amber-600" />
-                Inspection integrity alerts
-              </CardTitle>
-              <CardDescription>
-                Fast inspections, skipped proof, missing photos, and missing
-                location proof.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
+            <div
+              className="rounded-[var(--r-4)] p-4.5"
+              style={{ background: "var(--tfx-bg-surface)", border: "1px solid var(--tfx-border-1)", boxShadow: "var(--tfx-shadow-sm)" }}
+            >
+              <h3 className="tfx-h4 mb-3">Inspection integrity alerts</h3>
               {(verifiedHealth?.integrityAlerts ?? []).length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
-                  No integrity alerts are waiting for review.
-                </div>
+                <p className="text-sm text-[var(--tfx-fg-3)]">No integrity alerts are waiting for review.</p>
               ) : (
-                verifiedHealth?.integrityAlerts.slice(0, 8).map(alert => (
+                verifiedHealth?.integrityAlerts.slice(0, 4).map(alert => (
                   <div
                     key={alert.id}
-                    className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4"
+                    className="flex items-start gap-2.5 py-2.5"
+                    style={{ borderTop: "1px solid var(--tfx-border-1)" }}
                   >
-                    <p className="font-semibold text-slate-950">
-                      {alert.flagType.replaceAll("_", " ")}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-600">
-                      {alert.message}
-                    </p>
-                    <p className="mt-2 text-xs uppercase tracking-[0.14em] text-slate-400">
-                      {alert.severity}
-                    </p>
+                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" style={{ color: "var(--status-warning)" }} />
+                    <div>
+                      <p className="text-sm font-bold text-[var(--tfx-fg-1)]">{alert.flagType.replaceAll("_", " ")}</p>
+                      <p className="mt-0.5 text-xs text-[var(--tfx-fg-3)]">{alert.message}</p>
+                    </div>
                   </div>
                 ))
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </section>
 
         <section>
@@ -2544,6 +2628,17 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
             )}
           </DialogContent>
         </Dialog>
+
+        <div
+          className="flex items-center justify-center gap-2.5 rounded-[var(--r-4)] px-4 py-3"
+          style={{ background: "var(--tfx-bg-sunken)", border: "1px solid var(--tfx-border-1)" }}
+        >
+          <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" style={{ color: "var(--tfx-fg-3)" }} />
+          <p className="text-center text-xs text-[var(--tfx-fg-3)]">
+            Safety notice: do not use TruckFixr while driving. Pull over safely before reading results or
+            following diagnostic instructions.
+          </p>
+        </div>
       </main>
 
       {/* Mobile-only quick actions: exception-based entry points kept within
