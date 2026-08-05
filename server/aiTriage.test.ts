@@ -92,7 +92,7 @@ describe("runDefectTriage", () => {
     });
     expect(result.confidence_score).toBe(0);
     expect(result.recommended_action).toBe("book_repair");
-    expect(result.manager_summary).toContain("AI triage was unavailable");
+    expect(result.manager_summary).toContain("AI triage unavailable");
   });
 
   it("fallback forces do_not_operate for critical severity", async () => {
