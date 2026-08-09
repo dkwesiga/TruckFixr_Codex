@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from "react";
+import { useState, type ChangeEvent, type FormEvent } from "react";
 import { Link } from "wouter";
-import { AlertOctagon, ArrowRight, Check, Loader2, ShieldAlert } from "lucide-react";
+import { AlertOctagon, ArrowRight, Check, ImagePlus, Loader2, ShieldAlert } from "lucide-react";
 import AppLogo from "@/components/AppLogo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,18 +60,25 @@ interface Preliminary {
   label: string;
   recommendation: string;
 }
+interface LikelyCause {
+  label: string;
+  confidenceBand: "low" | "medium" | "high";
+  supportingEvidence: string[];
+  status: "hypothesis";
+}
 interface DecisionCard {
   readiness: Readiness;
   readinessLabel: string;
   operatingAction: string;
   recommendation: string;
   evidenceReviewed: string[];
+  possibleCauses: LikelyCause[] | null;
   possibleCausesSuppressed: boolean;
   humanReviewStatus: string;
   safetyGuidance: string | null;
 }
 
-type Phase = "intake" | "questions" | "critical" | "preliminary" | "contact" | "decision";
+type Phase = "intake" | "questions" | "critical" | "preliminary" | "contact" | "verify" | "decision";
 
 function SafetyCard({ guidance }: { guidance: string }) {
   return (
@@ -146,9 +153,24 @@ export default function TryOneCase() {
   const [trapField, setTrapField] = useState(""); // honeypot
   const [contactError, setContactError] = useState<string | null>(null);
 
+  // Verification (OTP) fields.
+  const [maskedDestination, setMaskedDestination] = useState("");
+  const [verificationCode, setVerificationCode] = useState("");
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+  const [resendMessage, setResendMessage] = useState<string | null>(null);
+
   const startMutation = trpc.guestCases.start.useMutation();
   const answerMutation = trpc.guestCases.answerQuestion.useMutation();
   const contactMutation = trpc.guestCases.submitContact.useMutation();
+  const verifyMutation = trpc.guestCases.verifyContact.useMutation();
+  const resendCodeMutation = trpc.guestCases.resendVerification.useMutation();
+  const reviewCheckoutMutation = trpc.technicianReviews.startCheckout.useMutation();
+  const [reviewCheckoutError, setReviewCheckoutError] = useState<string | null>(null);
+
+  // Evidence photos (optional, image-only for now).
+  const uploadPhotoMutation = trpc.guestCases.uploadEvidencePhoto.useMutation();
+  const [photos, setPhotos] = useState<Array<{ id: number; url: string }>>([]);
+  const [photoError, setPhotoError] = useState<string | null>(null);
 
   function applyStep(res: {
     criticalTriggered: boolean;
@@ -257,12 +279,86 @@ export default function TryOneCase() {
         disclaimerVersion: GUEST_RESULT_DISCLAIMER_VERSION,
         trapField,
       });
+      setMaskedDestination(res.maskedDestination);
+      setPhase("verify");
+      trackEvent("verification_code_sent", {});
+    } catch (err) {
+      setContactError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+    }
+  }
+
+  async function handleVerifySubmit(e: FormEvent) {
+    e.preventDefault();
+    setVerifyError(null);
+    if (!publicToken) return;
+    try {
+      const res = await verifyMutation.mutateAsync({ publicToken, code: verificationCode.trim() });
       setDecision(res.decision as DecisionCard);
       setFreeCaseLimitReached(res.freeCaseLimitReached);
       setPhase("decision");
       trackEvent("decision_card_viewed", { readiness: (res.decision as DecisionCard).readiness });
     } catch (err) {
-      setContactError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      setVerifyError(err instanceof Error ? err.message : "That code didn't work. Please try again.");
+    }
+  }
+
+  async function handleResendCode() {
+    setVerifyError(null);
+    setResendMessage(null);
+    if (!publicToken) return;
+    try {
+      const res = await resendCodeMutation.mutateAsync({ publicToken });
+      setMaskedDestination(res.maskedDestination);
+      setResendMessage("A new code is on its way.");
+    } catch (err) {
+      setVerifyError(err instanceof Error ? err.message : "Couldn't resend a code. Please try again.");
+    }
+  }
+
+  async function handlePhotoSelect(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file
+    if (!file || !publicToken) return;
+    setPhotoError(null);
+    if (photos.length >= 5) {
+      setPhotoError("You can attach up to 5 photos.");
+      return;
+    }
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setPhotoError("Please choose a JPEG, PNG, or WebP photo.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setPhotoError("That photo is too large (max 5MB).");
+      return;
+    }
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      const res = await uploadPhotoMutation.mutateAsync({ publicToken, dataUrl });
+      setPhotos((prev) => [...prev, { id: res.id, url: res.url }]);
+    } catch (err) {
+      setPhotoError(err instanceof Error ? err.message : "Couldn't upload that photo. Please try again.");
+    }
+  }
+
+  async function handleStartReviewCheckout() {
+    if (!publicToken) return;
+    setReviewCheckoutError(null);
+    try {
+      const res = await reviewCheckoutMutation.mutateAsync({ publicToken });
+      trackEvent("technician_review_checkout_started", {});
+      if (res.checkoutUrl) {
+        window.location.href = res.checkoutUrl;
+      }
+    } catch (err) {
+      setReviewCheckoutError(
+        err instanceof Error ? err.message : "Couldn't start checkout. Please try again."
+      );
     }
   }
 
@@ -466,6 +562,47 @@ export default function TryOneCase() {
             <div className="rounded-md bg-[#F1F4F9] p-3 text-sm text-[#38465F]">
               Add one contact method to see the full decision card — reasoning, what to check next, and how to share it.
             </div>
+
+            <div className="space-y-2 border-t border-[#E2E6EC] pt-4">
+              <Label htmlFor="evidencePhoto">Add photos (optional)</Label>
+              <p className="text-xs text-[#73777E]">
+                A photo helps a technician later — dashboard lights, leaks, or the affected area. Up to 5, JPEG/PNG/WebP.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {photos.map((p) => (
+                  <img
+                    key={p.id}
+                    src={p.url}
+                    alt="Uploaded evidence"
+                    className="h-14 w-14 rounded-md border border-[#E2E6EC] object-cover"
+                  />
+                ))}
+                {photos.length < 5 && (
+                  <label
+                    htmlFor="evidencePhoto"
+                    className="flex h-14 w-14 cursor-pointer items-center justify-center rounded-md border border-dashed border-[#C3C7CE] text-[#73777E] hover:border-[#38465F] hover:text-[#38465F]"
+                  >
+                    {uploadPhotoMutation.isPending ? (
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    ) : (
+                      <ImagePlus className="h-5 w-5" aria-hidden="true" />
+                    )}
+                    <input
+                      id="evidencePhoto"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="sr-only"
+                      onChange={handlePhotoSelect}
+                      disabled={uploadPhotoMutation.isPending}
+                    />
+                  </label>
+                )}
+              </div>
+              {photoError && (
+                <p className="text-xs font-medium text-[#D81F2A]" role="alert">{photoError}</p>
+              )}
+            </div>
+
             <Button onClick={() => setPhase("contact")} className={cn("h-12 w-full text-[15px] font-bold", redBtn)}>
               See the full decision
               <ArrowRight className="ml-2 h-4 w-4" />
@@ -545,6 +682,50 @@ export default function TryOneCase() {
           </form>
         )}
 
+        {phase === "verify" && (
+          <form onSubmit={handleVerifySubmit} className={cn(cardClass, "space-y-4 p-5 sm:p-6")}>
+            <div>
+              <h2 className={cn(displayClass, "text-xl")}>Check your email</h2>
+              <p className="mt-1 text-sm text-[#38465F]">
+                We sent a 6-digit code to {maskedDestination || "your email"}. Enter it below to see your full result.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="verificationCode">Verification code</Label>
+              <Input
+                id="verificationCode"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                value={verificationCode}
+                onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, ""))}
+                placeholder="123456"
+                className="text-center text-lg tracking-[0.3em]"
+              />
+            </div>
+            {verifyError && (
+              <p className="text-sm font-medium text-[#D81F2A]" role="alert">{verifyError}</p>
+            )}
+            {resendMessage && <p className="text-sm text-[#1EA66C]">{resendMessage}</p>}
+            <Button
+              type="submit"
+              disabled={verifyMutation.isPending || verificationCode.trim().length < 4}
+              className={cn("h-12 w-full text-[15px] font-bold", redBtn)}
+            >
+              {verifyMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Verify and show my result
+            </Button>
+            <button
+              type="button"
+              onClick={handleResendCode}
+              disabled={resendCodeMutation.isPending}
+              className="w-full text-center text-sm font-semibold text-[#38465F] underline underline-offset-2 hover:text-[#0A1A2E]"
+            >
+              Didn't get a code? Resend
+            </button>
+          </form>
+        )}
+
         {phase === "decision" && decision && (
           <div className="space-y-4">
             {decision.safetyGuidance && <SafetyCard guidance={decision.safetyGuidance} />}
@@ -568,14 +749,72 @@ export default function TryOneCase() {
                   ))}
                 </ul>
               </div>
-              {decision.possibleCausesSuppressed && (
+              {decision.possibleCausesSuppressed ? (
                 <p className="rounded-md bg-[#F1F4F9] p-3 text-xs text-[#73777E]">
                   Possible causes are not shown here — they need physical testing to confirm. Possible causes are not a confirmed diagnosis.
                 </p>
+              ) : (
+                decision.possibleCauses &&
+                decision.possibleCauses.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-bold uppercase tracking-wide text-[#38465F]">
+                      Possible causes (hypothesis only)
+                    </h3>
+                    <ul className="mt-2 space-y-2">
+                      {decision.possibleCauses.map((cause, i) => (
+                        <li key={i} className="rounded-md border border-[#E2E6EC] p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm font-semibold text-[#0A1A2E]">{cause.label}</span>
+                            <span className="rounded-full bg-[#F1F4F9] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#38465F]">
+                              {cause.confidenceBand} confidence
+                            </span>
+                          </div>
+                          {cause.supportingEvidence.length > 0 && (
+                            <ul className="mt-1.5 space-y-0.5 text-xs text-[#73777E]">
+                              {cause.supportingEvidence.map((e, j) => (
+                                <li key={j}>• {e}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 text-xs text-[#73777E]">
+                      AI-generated hypotheses, not a confirmed diagnosis. Physical testing or a technician review is
+                      needed to confirm.
+                    </p>
+                  </div>
+                )
               )}
               <p className="text-xs text-[#73777E]">
                 Human review status: <span className="font-semibold">{decision.humanReviewStatus.replace(/_/g, " ")}</span>
               </p>
+            </div>
+
+            <div className={cn(cardClass, "space-y-3 p-5")}>
+              <div>
+                <h3 className="text-sm font-bold uppercase tracking-wide text-[#38465F]">
+                  Want a qualified technician to review this?
+                </h3>
+                <p className="mt-1 text-sm text-[#38465F]">
+                  A written, technician-reviewed report — delivered within two business hours
+                  (Mon–Sat, 9am–6pm Eastern) once your evidence is complete. CAD $99, paid upfront.
+                </p>
+              </div>
+              {reviewCheckoutError && (
+                <p className="text-sm font-medium text-[#D81F2A]" role="alert">{reviewCheckoutError}</p>
+              )}
+              <Button
+                onClick={handleStartReviewCheckout}
+                disabled={reviewCheckoutMutation.isPending}
+                className={cn("h-11 w-full font-bold", redBtn)}
+              >
+                {reviewCheckoutMutation.isPending ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : null}
+                Get a technician review — CAD $99
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
             </div>
 
             <div className={cn(cardClass, "space-y-3 p-5")}>

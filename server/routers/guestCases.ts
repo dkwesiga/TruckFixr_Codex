@@ -11,8 +11,12 @@ import { isInviteValid, parseInviteCodes } from "../../shared/guestInvite";
 import {
   answerGuestQuestion,
   getGuestCase,
+  listGuestEvidencePhotos,
+  resendGuestContactCode,
   startGuestCase,
   submitGuestContact,
+  uploadGuestEvidencePhoto,
+  verifyGuestContactCode,
 } from "../services/guestCaseService";
 
 // Guests have no fleet, so this is a GLOBAL fail-closed gate (not a per-fleet
@@ -141,5 +145,48 @@ export const guestCasesRouter = router({
     .query(async ({ input }) => {
       assertGuestWorkflowEnabled();
       return getGuestCase(input.publicToken);
+    }),
+
+  verifyContact: publicProcedure
+    .input(
+      z.object({
+        publicToken: z.string().trim().min(10).max(128),
+        code: z.string().trim().min(4).max(12),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      assertGuestWorkflowEnabled();
+      guestRateLimit(ctx, "guest_case_verify", 20);
+      return verifyGuestContactCode(input);
+    }),
+
+  resendVerification: publicProcedure
+    .input(z.object({ publicToken: z.string().trim().min(10).max(128) }))
+    .mutation(async ({ input, ctx }) => {
+      assertGuestWorkflowEnabled();
+      guestRateLimit(ctx, "guest_case_resend_code", 5);
+      return resendGuestContactCode(input);
+    }),
+
+  uploadEvidencePhoto: publicProcedure
+    .input(
+      z.object({
+        publicToken: z.string().trim().min(10).max(128),
+        // image/jpeg|image/png|image/webp base64 data URL; size/type enforced
+        // server-side (parseEvidenceImageDataUrl).
+        dataUrl: z.string().min(32).max(8_000_000),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      assertGuestWorkflowEnabled();
+      guestRateLimit(ctx, "guest_case_evidence_upload", 10);
+      return uploadGuestEvidencePhoto(input);
+    }),
+
+  listEvidencePhotos: publicProcedure
+    .input(z.object({ publicToken: z.string().trim().min(10).max(128) }))
+    .query(async ({ input }) => {
+      assertGuestWorkflowEnabled();
+      return listGuestEvidencePhotos(input.publicToken);
     }),
 });

@@ -84,6 +84,14 @@ type TruckFixrPilotCheckoutInput = {
   pilotApplicationId?: number;
 };
 
+type TechnicianReviewCheckoutInput = {
+  // Guests have no Stripe Customer object; Checkout takes an email directly.
+  customerEmail: string;
+  successUrl: string;
+  cancelUrl: string;
+  technicianReviewId: number;
+};
+
 type StripeInvoice = {
   id: string;
   customer: string;
@@ -262,6 +270,40 @@ export async function createTruckFixrPilotCheckoutSession(input: TruckFixrPilotC
       ...(input.pilotApplicationId
         ? { "metadata[pilot_application_id]": input.pilotApplicationId }
         : {}),
+    },
+  });
+}
+
+export async function createTechnicianReviewCheckoutSession(
+  input: TechnicianReviewCheckoutInput
+) {
+  if (!ENV.stripePriceResolutionReview) {
+    throw new Error("Stripe technician-review price is not configured.");
+  }
+
+  return stripeRequest<StripeCheckoutSession>("/v1/checkout/sessions", {
+    form: {
+      mode: "payment",
+      customer_email: input.customerEmail,
+      success_url: input.successUrl,
+      cancel_url: input.cancelUrl,
+      "line_items[0][price]": ENV.stripePriceResolutionReview,
+      "line_items[0][quantity]": 1,
+      "metadata[product_context]": "truckfixr_resolution_review",
+      "metadata[billing_interval]": "resolution_review",
+      "metadata[technician_review_id]": String(input.technicianReviewId),
+    },
+  });
+}
+
+export async function refundStripePayment(input: {
+  paymentIntentId: string;
+  reason?: "duplicate" | "fraudulent" | "requested_by_customer";
+}) {
+  return stripeRequest<{ id: string; status: string }>("/v1/refunds", {
+    form: {
+      payment_intent: input.paymentIntentId,
+      ...(input.reason ? { reason: input.reason } : {}),
     },
   });
 }

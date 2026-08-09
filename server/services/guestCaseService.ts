@@ -7,13 +7,17 @@
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../db";
+import { randomUUID } from "node:crypto";
 import {
   analyticsEvents,
   freeCaseLedger,
   guestCaseContacts,
   guestCaseEvents,
+  guestCaseEvidence,
   guestCases,
 } from "../../drizzle/schema";
+import { parseEvidenceImageDataUrl } from "./evidencePhotos";
+import { storagePut } from "../storage";
 import {
   MAX_ADAPTIVE_QUESTIONS,
   nextAdaptiveQuestion,
@@ -27,6 +31,11 @@ import { assessGuestCase, type GuestAssessment } from "./guestCaseAssessment";
 import { generateOpaqueToken, hashIdentifier } from "./guestTokens";
 import { enqueueReview } from "./caseReviewQueue";
 import { recordObservabilityEvent } from "./observability";
+import { issueVerificationCode, verifyCode } from "./verificationCodes";
+import { sendEmail } from "./email";
+import { generateGuestLikelyCauses, type GuestLikelyCause } from "./guestCaseAiReport";
+
+const CONTACT_VERIFY_PURPOSE = "guest_contact_verify";
 
 const GUEST_CASE_TTL_DAYS = 30;
 
@@ -108,9 +117,10 @@ function decisionCard(
     operatingAction: assessment.operatingAction,
     recommendation: assessment.recommendation,
     evidenceReviewed,
-    // Possible causes are intentionally SUPPRESSED for a deterministic, no-media
-    // guest pass (evidence incomplete / physical testing required). §16.
-    possibleCauses: null as string[] | null,
+    // Suppressed by default; populated with AI-generated hypothesis-level
+    // causes (§4.6) by submitGuestContact when available for a non-critical
+    // case. Never set for a critical case (safety guidance takes priority).
+    possibleCauses: null as GuestLikelyCause[] | null,
     possibleCausesSuppressed: true,
     humanReviewStatus: assessment.reviewStatus,
     safetyGuidance: assessment.safetyGuidance,
@@ -437,9 +447,26 @@ export async function submitGuestContact(params: {
   }
 
   const card = decisionCard(assessment, input, answers);
+  // AI-generated likely causes (PRD §4.6) are strictly additive: only for
+  // non-critical cases (an active emergency gets safety guidance, not cause
+  // speculation), and never able to change readiness/safetyGuidance — those
+  // remain fully governed by the deterministic assessment above.
+  if (!assessment.criticalTriggered) {
+    const causes = await generateGuestLikelyCauses({ guestCaseId: row.id, input, answers });
+    if (causes.length > 0) {
+      card.possibleCauses = causes;
+      card.possibleCausesSuppressed = false;
+    }
+  }
+  // Persisted for later retrieval by verifyGuestContactCode — recomputing at
+  // verify time would risk drifting from what was captured here.
   await db
     .update(guestCases)
-    .set({ status: "decided", decisionJson: card, updatedAt: new Date() })
+    .set({
+      status: "decided",
+      decisionJson: { card, freeCaseLimitReached: eligibility.limitReached },
+      updatedAt: new Date(),
+    })
     .where(eq(guestCases.id, row.id));
 
   await emitEvent(db, row.id, "contact_captured", { limitReached: eligibility.limitReached });
@@ -453,12 +480,101 @@ export async function submitGuestContact(params: {
     funnelStep: "contact",
   });
 
+  // PRD §4.5: the complete report unlocks only after the contact is verified
+  // with a one-time code. The safety warning (if any) was already shown,
+  // ungated, earlier in the flow — this gate never withholds that.
+  const issued = await issueVerificationCode({
+    guestCaseId: row.id,
+    purpose: CONTACT_VERIFY_PURPOSE,
+    channel: "email",
+    destination: email,
+    send: async ({ destination, code, expiresAt }) => {
+      const minutesValid = Math.round((expiresAt.getTime() - Date.now()) / 60000);
+      await sendEmail({
+        to: [destination],
+        subject: "Your TruckFixr verification code",
+        text: `Your verification code is ${code}. It expires in ${minutesValid} minutes. If you didn't request this, you can ignore this message.`,
+      });
+    },
+  });
+
   return {
-    decision: card,
-    freeCaseLimitReached: eligibility.limitReached,
-    // When the free allowance is used, route to the pilot (guidance still shown).
-    pilotSuggested: eligibility.limitReached,
+    codeSent: true,
+    maskedDestination: issued.maskedDestination,
   };
+}
+
+/** Verify the one-time code and release the previously-computed decision card. */
+export async function verifyGuestContactCode(params: { publicToken: string; code: string }) {
+  const db = await getDb();
+  requireDb(db);
+  const row = await loadCase(db, params.publicToken);
+
+  const result = await verifyCode({
+    guestCaseId: row.id,
+    purpose: CONTACT_VERIFY_PURPOSE,
+    code: params.code,
+  });
+  if (!result.ok) {
+    const messages: Record<string, string> = {
+      not_found: "No verification code was found for this case. Request a new code.",
+      expired: "That code has expired. Request a new code.",
+      already_verified: "Already verified.",
+      too_many_attempts: "Too many incorrect attempts. Request a new code.",
+      incorrect: "That code isn't right. Please check and try again.",
+    };
+    throw new TRPCError({ code: "BAD_REQUEST", message: messages[result.reason] ?? "Verification failed." });
+  }
+
+  const stored = row.decisionJson as { card?: unknown; freeCaseLimitReached?: boolean } | null;
+  if (!stored?.card) {
+    throw new TRPCError({
+      code: "PRECONDITION_FAILED",
+      message: "Contact details haven't been submitted for this case yet.",
+    });
+  }
+
+  await emitEvent(db, row.id, "contact_verified", {});
+
+  return {
+    decision: stored.card,
+    freeCaseLimitReached: Boolean(stored.freeCaseLimitReached),
+    pilotSuggested: Boolean(stored.freeCaseLimitReached),
+  };
+}
+
+/** Resend a fresh code to the contact already on file for this case. */
+export async function resendGuestContactCode(params: { publicToken: string }) {
+  const db = await getDb();
+  requireDb(db);
+  const row = await loadCase(db, params.publicToken);
+
+  const [contact] = await db
+    .select()
+    .from(guestCaseContacts)
+    .where(eq(guestCaseContacts.guestCaseId, row.id))
+    .orderBy(desc(guestCaseContacts.id))
+    .limit(1);
+  if (!contact?.email) {
+    throw new TRPCError({ code: "PRECONDITION_FAILED", message: "No contact email on file for this case." });
+  }
+
+  const issued = await issueVerificationCode({
+    guestCaseId: row.id,
+    purpose: CONTACT_VERIFY_PURPOSE,
+    channel: "email",
+    destination: contact.email,
+    send: async ({ destination, code, expiresAt }) => {
+      const minutesValid = Math.round((expiresAt.getTime() - Date.now()) / 60000);
+      await sendEmail({
+        to: [destination],
+        subject: "Your TruckFixr verification code",
+        text: `Your verification code is ${code}. It expires in ${minutesValid} minutes. If you didn't request this, you can ignore this message.`,
+      });
+    },
+  });
+
+  return { codeSent: true, maskedDestination: issued.maskedDestination };
 }
 
 /** Guest-safe read by publicToken. Returns only this case — never fleet data. */
@@ -478,6 +594,63 @@ export async function getGuestCase(publicToken: string) {
     decision: row.status === "decided" ? decisionCard(assessment, input, answers) : null,
     reviewStatus: row.reviewStatus,
   };
+}
+
+const MAX_GUEST_EVIDENCE_PHOTOS = 5;
+
+/**
+ * Store a guest-submitted evidence photo (PRD §4.1/§4.2). Image-only —
+ * reuses the same size/MIME validation as the fleet inspection upload path
+ * (parseEvidenceImageDataUrl: jpeg/png/webp, 5MB max). Capped per case to
+ * bound abuse of the (unauthenticated) public upload surface.
+ */
+export async function uploadGuestEvidencePhoto(params: { publicToken: string; dataUrl: string }) {
+  const db = await getDb();
+  requireDb(db);
+  const row = await loadCase(db, params.publicToken);
+
+  const existing = await db
+    .select()
+    .from(guestCaseEvidence)
+    .where(eq(guestCaseEvidence.guestCaseId, row.id));
+  if (existing.length >= MAX_GUEST_EVIDENCE_PHOTOS) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `You can attach up to ${MAX_GUEST_EVIDENCE_PHOTOS} photos.`,
+    });
+  }
+
+  const parsed = parseEvidenceImageDataUrl(params.dataUrl);
+  const storageKey = `guest-case-evidence/case-${row.id}/${randomUUID()}.${parsed.extension}`;
+  const { url } = await storagePut(storageKey, parsed.bytes, parsed.mimeType);
+
+  const [saved] = await db
+    .insert(guestCaseEvidence)
+    .values({
+      guestCaseId: row.id,
+      kind: "photo",
+      storageKey,
+      url,
+      mimeType: parsed.mimeType,
+      sizeBytes: parsed.sizeBytes,
+      createdAt: new Date(),
+    })
+    .returning();
+
+  await emitEvent(db, row.id, "evidence_photo_uploaded", { sizeBytes: parsed.sizeBytes });
+
+  return { id: saved.id, url, mimeType: parsed.mimeType, sizeBytes: parsed.sizeBytes };
+}
+
+export async function listGuestEvidencePhotos(publicToken: string) {
+  const db = await getDb();
+  requireDb(db);
+  const row = await loadCase(db, publicToken);
+  const rows = await db
+    .select()
+    .from(guestCaseEvidence)
+    .where(eq(guestCaseEvidence.guestCaseId, row.id));
+  return rows.map((r: any) => ({ id: r.id, url: r.url, mimeType: r.mimeType, sizeBytes: r.sizeBytes }));
 }
 
 export const __testables = { evaluateFreeCase, decisionCard, preliminaryView };

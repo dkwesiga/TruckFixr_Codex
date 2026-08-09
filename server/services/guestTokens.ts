@@ -19,6 +19,11 @@ export const GUEST_TOKEN_PURPOSES = [
   "case_access",
   "driver_link",
   "repair_shop_link",
+  // Parts concierge (PRD v1.1 §6): no-account, expiring links. The wrapped
+  // `t` value is a partsRequests.publicToken, not a guestCases one — this
+  // module signs/verifies any opaque token string, not guest cases specifically.
+  "supplier_offer_link",
+  "customer_offer_view",
 ] as const;
 export type GuestTokenPurpose = (typeof GUEST_TOKEN_PURPOSES)[number];
 

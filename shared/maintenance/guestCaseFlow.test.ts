@@ -58,7 +58,7 @@ describe("critical trigger detection", () => {
   });
 });
 
-describe("three-question cap is enforced for every input path", () => {
+describe("adaptive-question cap is enforced for every input path", () => {
   it("selectAdaptiveQuestions never returns more than the max", () => {
     for (const category of [...CONCERN_CATEGORIES, undefined] as Array<ConcernCategory | undefined>) {
       for (const status of OPERATING_STATUSES) {
@@ -75,7 +75,7 @@ describe("three-question cap is enforced for every input path", () => {
     expect(nextAdaptiveQuestion(input({ concernText: "brakes failed" }), [])).toBeNull();
   });
 
-  it("nextAdaptiveQuestion never asks a 4th question, walking the full flow", () => {
+  it("nextAdaptiveQuestion never exceeds the cap, walking the full flow", () => {
     for (const category of [...CONCERN_CATEGORIES, undefined] as Array<ConcernCategory | undefined>) {
       for (const status of OPERATING_STATUSES) {
         const i = input({ concernCategory: category, operatingStatus: status, concernText: "runs rough sometimes" });

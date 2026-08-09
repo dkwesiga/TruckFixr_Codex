@@ -112,6 +112,14 @@ const PilotAccept = lazyWithChunkRecovery(() => import("./pages/PilotAccept"));
 const CaseReviewQueue = lazyWithChunkRecovery(
   () => import("./pages/admin/CaseReviewQueue")
 );
+const TechnicianReviewQueue = lazyWithChunkRecovery(
+  () => import("./pages/admin/TechnicianReviewQueue")
+);
+const PartsRequestQueue = lazyWithChunkRecovery(
+  () => import("./pages/admin/PartsRequestQueue")
+);
+const SupplierOfferForm = lazyWithChunkRecovery(() => import("./pages/SupplierOfferForm"));
+const PartsOfferComparison = lazyWithChunkRecovery(() => import("./pages/PartsOfferComparison"));
 const OneCaseFunnel = lazyWithChunkRecovery(
   () => import("./pages/admin/OneCaseFunnel")
 );
@@ -302,6 +310,10 @@ function Router() {
         <Route path={"/admin/fleets/:fleetId"} component={AdminFleetDetail} />
         <Route path={"/admin/billing"} component={AdminBillingDashboard} />
         <Route path={"/admin/case-review"} component={CaseReviewQueue} />
+        <Route path={"/admin/technician-reviews"} component={TechnicianReviewQueue} />
+        <Route path={"/admin/parts"} component={PartsRequestQueue} />
+        <Route path={"/supplier-offer"} component={SupplierOfferForm} />
+        <Route path={"/parts-offers"} component={PartsOfferComparison} />
         <Route path={"/admin/one-case-funnel"} component={OneCaseFunnel} />
         <Route
           path={"/admin/fault-codes"}

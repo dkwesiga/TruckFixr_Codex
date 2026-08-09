@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import AppLogo from "@/components/AppLogo";
 import MorningFleetSummary from "@/components/MorningFleetSummary";
+import TrialUpgradeBanner from "@/components/TrialUpgradeBanner";
 import QuickStartBanner from "@/components/quickStart/QuickStartBanner";
 import VehicleCaptureFlow, {
   type VehicleCaptureDraft,
@@ -1058,6 +1059,7 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
 
       <main className="mx-auto max-w-7xl space-y-6 px-4 py-8 pb-28 sm:px-6 lg:px-8 lg:pb-8">
         <QuickStartBanner role={user?.role} />
+        <TrialUpgradeBanner />
 
         {/* Morning Fleet Summary — primary daily engagement */}
         <section>

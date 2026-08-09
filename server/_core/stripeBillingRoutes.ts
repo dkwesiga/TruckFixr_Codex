@@ -16,6 +16,7 @@ import { findUserIdByStripeReference, getSubscriptionState, syncSubscriptionStat
 import { hasPaidAccess, type BillingStatus, type SubscriptionTier } from "../../shared/billing";
 import { markPilotAccessConvertedToPaid } from "../services/pilotAccess";
 import { markPilotPaid } from "../services/pilotApplications";
+import { markTechnicianReviewPaid } from "../services/technicianReviews";
 import { recordObservabilityEvent } from "../services/observability";
 
 const processedWebhookEventIds = new Set<string>();
@@ -90,6 +91,25 @@ export async function processStripeWebhookEvent(
             await markPilotPaid({ applicationId, paymentRef: String(object.id ?? "") });
           } catch (error) {
             console.error("[stripe] markPilotPaid failed for pilot application:", error);
+          }
+        }
+      }
+
+      // One-time CAD $99 technician-reviewed Resolution payment (mode: "payment",
+      // no subscription). Refunds are issued against the PaymentIntent, so that
+      // (not the checkout session id) is what gets stored as paymentRef.
+      if (
+        pilotMetadata.billing_interval === "resolution_review" &&
+        pilotMetadata.technician_review_id
+      ) {
+        const technicianReviewId = Number(pilotMetadata.technician_review_id);
+        const paymentIntentId =
+          typeof object.payment_intent === "string" ? object.payment_intent : String(object.id ?? "");
+        if (Number.isFinite(technicianReviewId)) {
+          try {
+            await markTechnicianReviewPaid({ technicianReviewId, paymentRef: paymentIntentId });
+          } catch (error) {
+            console.error("[stripe] markTechnicianReviewPaid failed:", error);
           }
         }
       }

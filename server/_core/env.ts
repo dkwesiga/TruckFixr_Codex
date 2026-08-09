@@ -54,6 +54,7 @@ export const ENV = {
   stripePriceFleetGrowthAnnual: readEnv("STRIPE_PRICE_FLEET_GROWTH_ANNUAL"),
   stripePriceFleetProAnnual: readEnv("STRIPE_PRICE_FLEET_PRO_ANNUAL"),
   stripePriceFleetPilot30Day: readEnv("STRIPE_PRICE_FLEET_PILOT_30_DAY"),
+  stripePriceResolutionReview: readEnv("STRIPE_PRICE_RESOLUTION_REVIEW"),
   stripePriceExtraTrailerMonthly: readEnv("STRIPE_PRICE_EXTRA_TRAILER_MONTHLY"),
   stripePriceProMonthly: readEnv("STRIPE_PRICE_PRO_MONTHLY"),
   stripePriceProAnnual: readEnv("STRIPE_PRICE_PRO_ANNUAL"),

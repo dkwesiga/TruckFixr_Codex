@@ -1475,6 +1475,36 @@ export type AttentionScoreOverride = typeof attentionScoreOverrides.$inferSelect
 // =====================================================================
 
 // Central Maintenance Case. Exactly one fleet and one primary vehicle/asset.
+// Canonical case spine (PRD v1.1 §3.2/§3.4). Additive unification layer: existing
+// guestCases/maintenanceCases rows each get a linked `cases` row via their own
+// caseId FK below. New pillars (technician review, parts, outcomes) reference
+// this table directly instead of guestCases/maintenanceCases.
+export const cases = pgTable(
+  "cases",
+  {
+    id: serial("id").primaryKey(),
+    // resolution_guest | resolution_fleet | inspection_defect
+    sourceType: varchar("sourceType", { length: 32 }).notNull(),
+    // draft|submitted|clarifying|report_ready|review_offered|review_requested|
+    // review_ready|under_review|reviewed|outcome_pending|closed|cancelled|refunded
+    status: varchar("status", { length: 32 }).default("draft").notNull(),
+    fleetId: integer("fleetId").references(() => fleets.id, {
+      onDelete: "set null",
+    }),
+    vehicleId: varchar("vehicleId", { length: 64 }),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("cases_fleet_idx").on(table.fleetId),
+    index("cases_status_idx").on(table.status),
+    index("cases_sourceType_idx").on(table.sourceType),
+  ]
+);
+
+export type Case = typeof cases.$inferSelect;
+export type InsertCase = typeof cases.$inferInsert;
+
 export const maintenanceCases = pgTable(
   "maintenanceCases",
   {
@@ -1482,6 +1512,9 @@ export const maintenanceCases = pgTable(
     fleetId: integer("fleetId")
       .notNull()
       .references(() => fleets.id, { onDelete: "cascade" }),
+    caseId: integer("caseId").references(() => cases.id, {
+      onDelete: "set null",
+    }),
     reference: varchar("reference", { length: 32 }).notNull(),
     vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
     status: varchar("status", { length: 32 }).default("reported").notNull(),
@@ -1510,6 +1543,7 @@ export const maintenanceCases = pgTable(
     index("maintenanceCases_fleet_status_idx").on(table.fleetId, table.status),
     index("maintenanceCases_fleet_vehicle_idx").on(table.fleetId, table.vehicleId),
     index("maintenanceCases_assigned_manager_idx").on(table.assignedManagerUserId),
+    index("maintenanceCases_caseId_idx").on(table.caseId),
   ]
 );
 
@@ -1785,6 +1819,9 @@ export const guestCases = pgTable(
       () => maintenanceCases.id,
       { onDelete: "set null" }
     ),
+    caseId: integer("caseId").references(() => cases.id, {
+      onDelete: "set null",
+    }),
     // Outcome measurement (§25). All nullable; "unknown" values are allowed.
     initialDecisionAt: dateTimestamp(),
     humanReviewStartedAt: dateTimestamp(),
@@ -1812,6 +1849,7 @@ export const guestCases = pgTable(
     index("guestCases_status_idx").on(table.status),
     index("guestCases_createdAt_idx").on(table.createdAt),
     index("guestCases_matchedFleet_idx").on(table.matchedFleetId),
+    index("guestCases_caseId_idx").on(table.caseId),
   ]
 );
 
@@ -1828,6 +1866,29 @@ export const guestCaseEvents = pgTable(
   },
   (table) => [index("guestCaseEvents_case_idx").on(table.guestCaseId)]
 );
+
+// Guest-submitted evidence photos (PRD v1.1 §4.1/§4.2). Image-only for now —
+// audio/video/PDF multimodal is non-functional platform-wide (rejected by
+// every AI provider today) and explicitly deferred.
+export const guestCaseEvidence = pgTable(
+  "guestCaseEvidence",
+  {
+    id: serial("id").primaryKey(),
+    guestCaseId: integer("guestCaseId")
+      .notNull()
+      .references(() => guestCases.id, { onDelete: "cascade" }),
+    kind: varchar("kind", { length: 16 }).default("photo").notNull(),
+    storageKey: varchar("storageKey", { length: 512 }).notNull(),
+    url: text("url").notNull(),
+    mimeType: varchar("mimeType", { length: 64 }).notNull(),
+    sizeBytes: integer("sizeBytes").notNull(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [index("guestCaseEvidence_case_idx").on(table.guestCaseId)]
+);
+
+export type GuestCaseEvidence = typeof guestCaseEvidence.$inferSelect;
+export type InsertGuestCaseEvidence = typeof guestCaseEvidence.$inferInsert;
 
 export const guestCaseContacts = pgTable(
   "guestCaseContacts",
@@ -2038,3 +2099,211 @@ export const guestCaseFollowUps = pgTable(
 
 export type GuestCaseFollowUp = typeof guestCaseFollowUps.$inferSelect;
 export type InsertGuestCaseFollowUp = typeof guestCaseFollowUps.$inferInsert;
+
+// Paid ($99 CAD) technician-reviewed Resolution report (PRD v1.1 §5 / Appendix B.2).
+export const technicianReviews = pgTable(
+  "technicianReviews",
+  {
+    id: serial("id").primaryKey(),
+    caseId: integer("caseId").references(() => cases.id, { onDelete: "set null" }),
+    guestCaseId: integer("guestCaseId").references(() => guestCases.id, {
+      onDelete: "set null",
+    }),
+    // payment_pending|paid|missing_evidence|call_proposed|review_ready|
+    // under_review|reviewed|delivered|refunded|cancelled
+    status: varchar("status", { length: 24 }).default("payment_pending").notNull(),
+    priceCents: integer("priceCents").default(9900).notNull(),
+    currency: varchar("currency", { length: 8 }).default("CAD").notNull(),
+    stripeCheckoutSessionId: varchar("stripeCheckoutSessionId", { length: 255 }),
+    stripePaymentRef: varchar("stripePaymentRef", { length: 255 }),
+    paidAt: dateTimestamp(),
+    missingEvidenceNotes: text("missingEvidenceNotes"),
+    callProposedAt: dateTimestamp(),
+    callCompletedAt: dateTimestamp(),
+    reviewReadyAt: dateTimestamp(),
+    slaDueAt: dateTimestamp(),
+    afterHours: boolean("afterHours").default(false).notNull(),
+    reviewerUserId: integer("reviewerUserId"),
+    reviewStartedAt: dateTimestamp(),
+    slaBreachNotifiedAt: dateTimestamp(),
+    slaRemedyChoice: varchar("slaRemedyChoice", { length: 24 }), // refund|revised_time
+    slaRevisedDueAt: dateTimestamp(),
+    slaMet: boolean("slaMet"),
+    findingsJson: jsonb("findingsJson"),
+    aiOverridesJson: jsonb("aiOverridesJson"),
+    limitationsText: text("limitationsText"),
+    customerMessage: text("customerMessage"),
+    deliveredAt: dateTimestamp(),
+    refundedAt: dateTimestamp(),
+    refundReason: varchar("refundReason", { length: 64 }),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("technicianReviews_caseId_idx").on(table.caseId),
+    index("technicianReviews_status_idx").on(table.status),
+    index("technicianReviews_slaDue_idx").on(table.slaDueAt),
+  ]
+);
+
+export type TechnicianReview = typeof technicianReviews.$inferSelect;
+export type InsertTechnicianReview = typeof technicianReviews.$inferInsert;
+
+// Missing-evidence reminder cadence for paid reviews (24h/72h/day6, then
+// auto-refund). Mirrors guestCaseFollowUps' shape/cadence pattern.
+export const technicianReviewReminders = pgTable(
+  "technicianReviewReminders",
+  {
+    id: serial("id").primaryKey(),
+    technicianReviewId: integer("technicianReviewId")
+      .notNull()
+      .references(() => technicianReviews.id, { onDelete: "cascade" }),
+    stage: varchar("stage", { length: 16 }).notNull(), // 24h|72h|day6
+    scheduledFor: dateTimestamp().notNull(),
+    channel: varchar("channel", { length: 16 }), // email|sms
+    status: varchar("status", { length: 16 }).default("pending").notNull(), // pending|sent|skipped|failed
+    sentAt: dateTimestamp(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("technicianReviewReminders_review_idx").on(table.technicianReviewId),
+    index("technicianReviewReminders_due_idx").on(table.status, table.scheduledFor),
+    uniqueIndex("technicianReviewReminders_review_stage_unique").on(
+      table.technicianReviewId,
+      table.stage
+    ),
+  ]
+);
+
+export type TechnicianReviewReminder = typeof technicianReviewReminders.$inferSelect;
+export type InsertTechnicianReviewReminder = typeof technicianReviewReminders.$inferInsert;
+
+// OTP verification for the guest Resolution report gate (PRD v1.1 §4.5). The
+// code itself is never stored — only an HMAC over (destination, code).
+export const verificationCodes = pgTable(
+  "verificationCodes",
+  {
+    id: serial("id").primaryKey(),
+    guestCaseId: integer("guestCaseId")
+      .notNull()
+      .references(() => guestCases.id, { onDelete: "cascade" }),
+    purpose: varchar("purpose", { length: 32 }).notNull(), // guest_contact_verify
+    channel: varchar("channel", { length: 16 }).notNull(), // email|sms
+    destination: varchar("destination", { length: 255 }).notNull(),
+    codeHash: varchar("codeHash", { length: 128 }).notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    maxAttempts: integer("maxAttempts").default(5).notNull(),
+    resendCount: integer("resendCount").default(0).notNull(),
+    expiresAt: dateTimestamp().notNull(),
+    verifiedAt: dateTimestamp(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("verificationCodes_case_idx").on(table.guestCaseId, table.purpose),
+    index("verificationCodes_expiresAt_idx").on(table.expiresAt),
+  ]
+);
+
+export type VerificationCode = typeof verificationCodes.$inferSelect;
+export type InsertVerificationCode = typeof verificationCodes.$inferInsert;
+
+// Parts concierge (PRD v1.1 §6). Manual-first MVP: staff create requests,
+// hand suppliers a signed no-account link (guestTokens purpose
+// "supplier_offer_link"), and hand the customer a signed comparison link
+// ("customer_offer_view") — no automated outreach dispatch yet.
+export const partsRequests = pgTable(
+  "partsRequests",
+  {
+    id: serial("id").primaryKey(),
+    publicToken: varchar("publicToken", { length: 64 }).notNull(),
+    caseId: integer("caseId").references(() => cases.id, { onDelete: "set null" }),
+    guestCaseId: integer("guestCaseId").references(() => guestCases.id, {
+      onDelete: "set null",
+    }),
+    // case_derived | known_part_number
+    route: varchar("route", { length: 24 }).notNull(),
+    // draft|qualified|supplier_outreach|offers_available|offer_selected|
+    // referred_to_supplier|transaction_pending|completed|not_completed|expired
+    status: varchar("status", { length: 24 }).default("draft").notNull(),
+    customerName: varchar("customerName", { length: 255 }),
+    customerEmail: varchar("customerEmail", { length: 320 }),
+    customerPhone: varchar("customerPhone", { length: 40 }),
+    vehicleIdentifier: jsonb("vehicleIdentifier"),
+    partNumber: varchar("partNumber", { length: 120 }),
+    partDescription: text("partDescription"),
+    // How the requirement was supported (§6.1): truckfixr_technician |
+    // external_technician | repair_shop | customer_declaration
+    confirmedByType: varchar("confirmedByType", { length: 32 }),
+    confirmedByName: varchar("confirmedByName", { length: 255 }),
+    evidenceNotes: text("evidenceNotes"),
+    selectedOfferId: integer("selectedOfferId"),
+    referredAt: dateTimestamp(),
+    transactionStatus: varchar("transactionStatus", { length: 24 }), // pending|completed|not_completed
+    transactionConfirmedAt: dateTimestamp(),
+    createdByUserId: integer("createdByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("partsRequests_publicToken_unique").on(table.publicToken),
+    index("partsRequests_status_idx").on(table.status),
+    index("partsRequests_caseId_idx").on(table.caseId),
+  ]
+);
+
+export type PartsRequest = typeof partsRequests.$inferSelect;
+export type InsertPartsRequest = typeof partsRequests.$inferInsert;
+
+export const partsOffers = pgTable(
+  "partsOffers",
+  {
+    id: serial("id").primaryKey(),
+    partsRequestId: integer("partsRequestId")
+      .notNull()
+      .references(() => partsRequests.id, { onDelete: "cascade" }),
+    // status: submitted|valid|selected|expired|withdrawn
+    status: varchar("status", { length: 16 }).default("submitted").notNull(),
+    // Item
+    supplierName: varchar("supplierName", { length: 255 }).notNull(),
+    supplierBranch: varchar("supplierBranch", { length: 255 }),
+    respondentName: varchar("respondentName", { length: 255 }),
+    respondentContact: varchar("respondentContact", { length: 255 }),
+    skuPartNumber: varchar("skuPartNumber", { length: 120 }).notNull(),
+    description: text("description"),
+    brandManufacturer: varchar("brandManufacturer", { length: 255 }),
+    conditionType: varchar("conditionType", { length: 24 }), // new|remanufactured|used
+    quantity: integer("quantity").default(1).notNull(),
+    supersessionNotes: text("supersessionNotes"),
+    // Fitment
+    fitmentConfirmed: boolean("fitmentConfirmed").default(false).notNull(),
+    fitmentBasis: text("fitmentBasis"),
+    fitmentExclusions: text("fitmentExclusions"),
+    requiredSerialOrCalibration: text("requiredSerialOrCalibration"),
+    // Commercial
+    priceCents: integer("priceCents").notNull(),
+    currency: varchar("currency", { length: 8 }).default("CAD").notNull(),
+    taxesIncluded: boolean("taxesIncluded").default(false).notNull(),
+    coreChargeCents: integer("coreChargeCents"),
+    coreReturnTerms: text("coreReturnTerms"),
+    depositCents: integer("depositCents"),
+    warrantyText: text("warrantyText"),
+    quoteExpiresAt: dateTimestamp(),
+    // Fulfilment
+    stockStatus: varchar("stockStatus", { length: 40 }),
+    availableQuantity: integer("availableQuantity"),
+    pickupLocation: text("pickupLocation"),
+    deliveryOption: varchar("deliveryOption", { length: 40 }),
+    deliveryCostCents: integer("deliveryCostCents"),
+    estimatedReadyAt: dateTimestamp(),
+    submittedAt: dateTimestamp().defaultNow().notNull(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("partsOffers_request_idx").on(table.partsRequestId),
+    index("partsOffers_status_idx").on(table.status),
+  ]
+);
+
+export type PartsOffer = typeof partsOffers.$inferSelect;
+export type InsertPartsOffer = typeof partsOffers.$inferInsert;

@@ -6,9 +6,11 @@
 //   2. No more than MAX_ADAPTIVE_QUESTIONS questions are ever asked, for any input path.
 //
 // No DB, no AI. Identical input -> identical output, so it is trivially testable and the
-// three-question cap can be asserted directly (see guestCaseFlow.test.ts).
+// question cap can be asserted directly (see guestCaseFlow.test.ts).
 
-export const MAX_ADAPTIVE_QUESTIONS = 3;
+// PRD v1.1 §4.3: ask up to five clarifying questions, one at a time, stopping
+// early once there is enough information for a useful next action.
+export const MAX_ADAPTIVE_QUESTIONS = 5;
 
 export const OPERATING_STATUSES = [
   "operating_normally",
@@ -260,6 +262,11 @@ export function selectAdaptiveQuestions(
   push(categoryQuestion(input.concernCategory));
   // 3. A safety sweep that can still escalate a non-critical-looking report.
   push(Q.safety_sweep);
+  // 4. Whether a safety system is affected (skipped if it was already the
+  //    category question above — `push` dedupes by id).
+  push(Q.defect_safety_system);
+  // 5. Whether scheduled service is overdue (same dedupe behaviour).
+  push(Q.service_overdue);
 
   return ordered.slice(0, MAX_ADAPTIVE_QUESTIONS);
 }

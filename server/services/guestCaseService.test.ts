@@ -4,6 +4,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 // the insert/select/update chains guestCaseService uses.
 const h = vi.hoisted(() => ({
   store: { seq: 0, rows: {} as Record<string, any[]> },
+  sentEmails: [] as Array<{ to: string[]; subject: string; text: string }>,
 }));
 
 vi.mock("../db", () => ({
@@ -41,8 +42,14 @@ vi.mock("../db", () => ({
     const update = (tbl: any) => ({
       set: (vals: any) => ({
         where: async () => {
+          // Ignores the predicate (as the rest of this mock does) but targets
+          // the most-recently-inserted row rather than always the first —
+          // matches every real call site here, which always updates the row
+          // it just loaded/created, and correctly distinguishes rows once a
+          // test has more than one per table.
           const arr = rowsFor(getTableName(tbl));
-          if (arr[0]) Object.assign(arr[0], vals);
+          const last = arr[arr.length - 1];
+          if (last) Object.assign(last, vals);
         },
       }),
     });
@@ -51,17 +58,30 @@ vi.mock("../db", () => ({
 }));
 
 vi.mock("./email", () => ({
-  sendEmail: vi.fn(async () => ({ delivered: false, skipped: true })),
+  sendEmail: vi.fn(async (input: { to: string[]; subject: string; text: string }) => {
+    h.sentEmails.push(input);
+    return { delivered: false, skipped: true };
+  }),
 }));
 
 import {
   answerGuestQuestion,
   getGuestCase,
+  resendGuestContactCode,
   startGuestCase,
   submitGuestContact,
+  verifyGuestContactCode,
 } from "./guestCaseService";
 
 const rows = (name: string) => h.store.rows[name] ?? [];
+
+/** Pull the 6-digit code out of the most recently "sent" verification email. */
+function latestSentCode(): string {
+  const last = h.sentEmails[h.sentEmails.length - 1];
+  const match = last?.text.match(/\b(\d{6})\b/);
+  if (!match) throw new Error("No verification code found in sent emails.");
+  return match[1];
+}
 
 beforeAll(() => {
   process.env.GUEST_TOKEN_SECRET = "svc-test-secret";
@@ -70,6 +90,7 @@ beforeAll(() => {
 beforeEach(() => {
   h.store.seq = 0;
   h.store.rows = {};
+  h.sentEmails = [];
 });
 
 describe("startGuestCase — critical path", () => {
@@ -154,15 +175,16 @@ describe("submitGuestContact", () => {
     ).rejects.toThrow(/acknowledge the disclaimer/i);
   });
 
-  it("records contact + decision, the disclaimer ack, and consents (not preselected)", async () => {
+  it("sends a verification code instead of releasing the decision directly", async () => {
     const { publicToken } = await startGuestCase({
       concernText: "amber light",
       operatingStatus: "operating_normally",
       concernCategory: "warning_light",
     });
     const res = await submitGuestContact({ publicToken, email: "ops@fleet-a.com", consentEmail: true, ...ack });
-    expect(res.decision.readiness).toBeDefined();
-    expect(res.decision.possibleCausesSuppressed).toBe(true);
+    expect(res.codeSent).toBe(true);
+    expect(res.maskedDestination).toContain("@fleet-a.com");
+    expect((res as any).decision).toBeUndefined();
     const contact = rows("guestCaseContacts")[0];
     expect(contact.consentEmail).toBe(true);
     expect(contact.consentSms).toBe(false);
@@ -173,13 +195,47 @@ describe("submitGuestContact", () => {
     expect(contact.disclaimerAcknowledgedAt).toBeInstanceOf(Date);
   });
 
+  it("releases the decision only after the emailed code is verified", async () => {
+    const { publicToken } = await startGuestCase({
+      concernText: "amber light",
+      operatingStatus: "operating_normally",
+      concernCategory: "warning_light",
+    });
+    await submitGuestContact({ publicToken, email: "ops@fleet-a.com", ...ack });
+
+    await expect(verifyGuestContactCode({ publicToken, code: "000000" })).rejects.toThrow(/isn't right/i);
+
+    const res = await verifyGuestContactCode({ publicToken, code: latestSentCode() });
+    expect(res.decision.readiness).toBeDefined();
+    expect(res.decision.possibleCausesSuppressed).toBe(true);
+  });
+
+  it("resend issues a new code that also verifies", async () => {
+    const { publicToken } = await startGuestCase({ concernText: "amber light", operatingStatus: "operating_normally", concernCategory: "warning_light" });
+    await submitGuestContact({ publicToken, email: "ops@fleet-a.com", ...ack });
+    // Resend is cooldown-limited (60s) — advance past it rather than hitting
+    // the real "please wait" guard immediately after the first send.
+    vi.useFakeTimers();
+    try {
+      vi.advanceTimersByTime(61_000);
+      const resend = await resendGuestContactCode({ publicToken });
+      expect(resend.codeSent).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+    const res = await verifyGuestContactCode({ publicToken, code: latestSentCode() });
+    expect(res.decision.readiness).toBeDefined();
+  });
+
   it("flags the free-case limit gracefully on a repeat non-critical submission (never hard-blocks)", async () => {
     const first = await startGuestCase({ concernText: "amber light", operatingStatus: "operating_normally", concernCategory: "warning_light" });
-    const r1 = await submitGuestContact({ publicToken: first.publicToken, email: "ops@fleet-a.com", ...ack });
+    await submitGuestContact({ publicToken: first.publicToken, email: "ops@fleet-a.com", ...ack });
+    const r1 = await verifyGuestContactCode({ publicToken: first.publicToken, code: latestSentCode() });
     expect(r1.freeCaseLimitReached).toBe(false);
 
     const second = await startGuestCase({ concernText: "another amber light", operatingStatus: "operating_normally", concernCategory: "warning_light" });
-    const r2 = await submitGuestContact({ publicToken: second.publicToken, email: "ops@fleet-a.com", ...ack });
+    await submitGuestContact({ publicToken: second.publicToken, email: "ops@fleet-a.com", ...ack });
+    const r2 = await verifyGuestContactCode({ publicToken: second.publicToken, code: latestSentCode() });
     expect(r2.freeCaseLimitReached).toBe(true);
     expect(r2.pilotSuggested).toBe(true);
     // Guidance is still returned — not blocked.
@@ -190,9 +246,11 @@ describe("submitGuestContact", () => {
     // Seed the ledger via a prior non-critical submission with the same email.
     const seed = await startGuestCase({ concernText: "amber light", operatingStatus: "operating_normally", concernCategory: "warning_light" });
     await submitGuestContact({ publicToken: seed.publicToken, email: "driver@fleet-b.com", ...ack });
+    await verifyGuestContactCode({ publicToken: seed.publicToken, code: latestSentCode() });
 
     const crit = await startGuestCase({ concernText: "smoke from the engine", operatingStatus: "stopped", concernCategory: "symptom" });
-    const res = await submitGuestContact({ publicToken: crit.publicToken, email: "driver@fleet-b.com", ...ack });
+    await submitGuestContact({ publicToken: crit.publicToken, email: "driver@fleet-b.com", ...ack });
+    const res = await verifyGuestContactCode({ publicToken: crit.publicToken, code: latestSentCode() });
     expect(res.freeCaseLimitReached).toBe(false);
   });
 });
