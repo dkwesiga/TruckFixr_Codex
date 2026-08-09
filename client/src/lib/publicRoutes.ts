@@ -21,6 +21,7 @@ const PUBLIC_EXACT = new Set<string>([
   "/resources",
   "/fleet-downtime-cost-calculator",
   "/try-one-case",
+  "/find-a-part",
   "/pilot-apply",
   "/pilot/accept",
 ]);

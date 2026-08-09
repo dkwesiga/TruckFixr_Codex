@@ -193,6 +193,12 @@ function Header() {
               {label}
             </button>
           ))}
+          <a href="/try-one-case" className="hover:text-[#0A1A2E]">
+            Report an Issue
+          </a>
+          <a href="/find-a-part" className="hover:text-[#0A1A2E]">
+            Find a Part
+          </a>
           <a href="/access" className="hover:text-[#0A1A2E]">
             Sign in
           </a>

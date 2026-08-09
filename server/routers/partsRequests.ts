@@ -12,6 +12,7 @@ import {
   markPartsTransactionStatus,
   selectOfferViaToken,
   submitOfferViaToken,
+  submitPublicPartsRequest,
 } from "../services/partsRequests";
 
 function assertCanWrite(ctx: { user?: { internalAdminRole?: string | null } }): void {
@@ -33,6 +34,24 @@ const guestRateLimit = (ctx: { req: unknown }, bucket: string, limit: number) =>
   });
 
 export const partsRequestsRouter = router({
+  // Public self-serve intake (landing page "Find a Part"). Starts in
+  // "draft" — staff triage it in /admin/parts before a supplier link goes out.
+  submitPublic: publicProcedure
+    .input(
+      z.object({
+        customerName: z.string().trim().min(1).max(255),
+        customerEmail: z.string().trim().email().max(320),
+        customerPhone: z.string().trim().max(40).optional().nullable(),
+        partNumber: z.string().trim().max(120).optional().nullable(),
+        partDescription: z.string().trim().max(2000).optional().nullable(),
+        vehicleIdentifier: z.record(z.string(), z.unknown()).optional().nullable(),
+      })
+    )
+    .mutation(({ input, ctx }) => {
+      guestRateLimit(ctx, "parts_request_submit_public", 10);
+      return submitPublicPartsRequest(input);
+    }),
+
   // Staff (concierge) side.
   create: staffProcedure
     .input(

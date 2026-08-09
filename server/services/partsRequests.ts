@@ -101,6 +101,59 @@ export async function createPartsRequest(input: CreatePartsRequestInput) {
   return row;
 }
 
+export interface SubmitPublicPartsRequestInput {
+  customerName: string;
+  customerEmail: string;
+  customerPhone?: string | null;
+  partNumber?: string | null;
+  partDescription?: string | null;
+  vehicleIdentifier?: Record<string, unknown> | null;
+}
+
+/**
+ * Public, self-serve intake (landing page "Find a Part"). Unlike
+ * createPartsRequest, TruckFixr has not vetted this yet — it starts in
+ * "draft" so staff triage it in /admin/parts before a supplier link goes out.
+ */
+export async function submitPublicPartsRequest(input: SubmitPublicPartsRequestInput) {
+  const db = await getDb();
+  requireDb(db);
+
+  if (!input.partNumber?.trim() && !input.partDescription?.trim()) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Please provide a part number or describe what you need.",
+    });
+  }
+
+  const now = new Date();
+  const [row] = await db
+    .insert(partsRequests)
+    .values({
+      publicToken: generateOpaqueToken(),
+      route: "known_part_number",
+      status: "draft",
+      customerName: input.customerName,
+      customerEmail: input.customerEmail,
+      customerPhone: input.customerPhone ?? null,
+      vehicleIdentifier: input.vehicleIdentifier ?? null,
+      partNumber: input.partNumber ?? null,
+      partDescription: input.partDescription ?? null,
+      createdByUserId: null,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning();
+
+  recordObservabilityEvent({
+    category: "workflow",
+    event: "parts_request_submitted_public",
+    context: { partsRequestId: row.id },
+  });
+
+  return { id: row.id };
+}
+
 export async function listPartsRequests(statuses?: string[]) {
   const db = await getDb();
   requireDb(db);
@@ -124,7 +177,10 @@ export async function generateSupplierLink(params: { partsRequestId: number }) {
   requireDb(db);
   const row = await loadRequest(db, params.partsRequestId);
 
-  if (row.status === "qualified") {
+  // "draft" covers public self-serve submissions staff haven't triaged yet
+  // (createPartsRequest defaults staff-created requests straight to
+  // "qualified" since staff already vetted them before calling it).
+  if (row.status === "qualified" || row.status === "draft") {
     await db
       .update(partsRequests)
       .set({ status: "supplier_outreach", updatedAt: new Date() })

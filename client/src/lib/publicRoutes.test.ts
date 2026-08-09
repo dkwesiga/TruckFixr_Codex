@@ -14,6 +14,7 @@ describe("publicRoutes — analytics/consent boundary", () => {
       "/resources/ontario-daily-inspection-guide",
       "/fleet-downtime-cost-calculator",
       "/try-one-case",
+      "/find-a-part",
     ]) {
       expect(isPublicMarketingRoute(p), p).toBe(true);
     }

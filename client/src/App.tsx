@@ -119,6 +119,7 @@ const PartsRequestQueue = lazyWithChunkRecovery(
   () => import("./pages/admin/PartsRequestQueue")
 );
 const SupplierOfferForm = lazyWithChunkRecovery(() => import("./pages/SupplierOfferForm"));
+const RequestAPart = lazyWithChunkRecovery(() => import("./pages/RequestAPart"));
 const PartsOfferComparison = lazyWithChunkRecovery(() => import("./pages/PartsOfferComparison"));
 const OneCaseFunnel = lazyWithChunkRecovery(
   () => import("./pages/admin/OneCaseFunnel")
@@ -313,6 +314,7 @@ function Router() {
         <Route path={"/admin/technician-reviews"} component={TechnicianReviewQueue} />
         <Route path={"/admin/parts"} component={PartsRequestQueue} />
         <Route path={"/supplier-offer"} component={SupplierOfferForm} />
+        <Route path={"/find-a-part"} component={RequestAPart} />
         <Route path={"/parts-offers"} component={PartsOfferComparison} />
         <Route path={"/admin/one-case-funnel"} component={OneCaseFunnel} />
         <Route
