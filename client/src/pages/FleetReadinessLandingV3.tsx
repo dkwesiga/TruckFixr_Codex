@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "wouter";
 import {
   AlertTriangle,
@@ -8,6 +8,7 @@ import {
   ClipboardCheck,
   Compass,
   Gauge,
+  Menu,
   Radio,
   RefreshCw,
   Route,
@@ -17,6 +18,7 @@ import {
   TrendingUp,
   Users,
   Wrench,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import AppLogo from "@/components/AppLogo";
@@ -120,6 +122,46 @@ function SeeHowButton({
   );
 }
 
+// Secondary hero CTA — the free, self-serve Resolution entry point.
+function TryOneCaseButton({ className }: { className?: string }) {
+  return (
+    <Link href="/try-one-case">
+      <Button
+        variant="outline"
+        onClick={() =>
+          trackEvent("try_one_case_cta_clicked", { cta_location: "landing_hero" })
+        }
+        className={cn(
+          "min-h-12 h-auto w-full whitespace-normal px-6 py-2.5 text-center text-[15px] font-bold leading-tight border-[#0A1A2E] text-[#0A1A2E] hover:bg-[#0A1A2E] hover:text-white",
+          className
+        )}
+      >
+        Try One Case
+      </Button>
+    </Link>
+  );
+}
+
+// Tertiary hero CTA — the free, self-serve Parts concierge entry point.
+function FindAPartButton({ className }: { className?: string }) {
+  return (
+    <Link href="/find-a-part">
+      <Button
+        variant="ghost"
+        onClick={() =>
+          trackEvent("find_a_part_cta_clicked", { cta_location: "landing_hero" })
+        }
+        className={cn(
+          "min-h-12 h-auto w-full whitespace-normal px-6 py-2.5 text-center text-[15px] font-bold leading-tight bg-[#ECEFF4] text-[#38465F] hover:bg-[#E2E6EC]",
+          className
+        )}
+      >
+        Find a Part
+      </Button>
+    </Link>
+  );
+}
+
 function SectionHeading({
   eyebrow,
   title,
@@ -168,12 +210,18 @@ const READINESS_HEX: Record<Readiness, string> = {
 
 // ── Nav ──────────────────────────────────────────────────────────────────────
 function Header() {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const navItems: Array<[string, string]> = [
     ["How It Works", "how-it-works"],
     ["Who It's For", "who"],
     ["Why TruckFixr", "why"],
     ["About", "about"],
   ];
+
+  function closeMenu() {
+    setMobileMenuOpen(false);
+  }
+
   return (
     <div className="sticky top-0 z-50 border-b border-[#C3C7CE] bg-white/95 backdrop-blur">
       <div
@@ -203,11 +251,74 @@ function Header() {
             Sign in
           </a>
         </nav>
-        <FleetReviewButton
-          location="header"
-          className="hidden h-10 min-h-0 px-4 py-0 text-sm sm:inline-flex"
-        />
+        <div className="flex items-center gap-2">
+          <FleetReviewButton
+            location="header"
+            className="hidden h-10 min-h-0 px-4 py-0 text-sm sm:inline-flex"
+          />
+          <button
+            type="button"
+            aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
+            aria-expanded={mobileMenuOpen}
+            aria-controls="mobile-nav-panel"
+            onClick={() => setMobileMenuOpen(v => !v)}
+            className="flex h-10 w-10 items-center justify-center rounded-md border border-[#C3C7CE] text-[#0A1A2E] lg:hidden"
+          >
+            {mobileMenuOpen ? (
+              <X className="h-5 w-5" aria-hidden="true" />
+            ) : (
+              <Menu className="h-5 w-5" aria-hidden="true" />
+            )}
+          </button>
+        </div>
       </div>
+
+      {mobileMenuOpen ? (
+        <nav
+          id="mobile-nav-panel"
+          className="border-t border-[#C3C7CE] bg-white px-4 py-3 text-sm font-semibold text-[#38465F] lg:hidden"
+        >
+          <div className="flex flex-col divide-y divide-[#EEF1F5]">
+            {navItems.map(([label, id]) => (
+              <button
+                key={id}
+                onClick={() => {
+                  closeMenu();
+                  scrollToSection(id);
+                }}
+                className="py-3 text-left hover:text-[#0A1A2E]"
+              >
+                {label}
+              </button>
+            ))}
+            <a
+              href="/try-one-case"
+              onClick={closeMenu}
+              className="py-3 hover:text-[#0A1A2E]"
+            >
+              Report an Issue
+            </a>
+            <a
+              href="/find-a-part"
+              onClick={closeMenu}
+              className="py-3 hover:text-[#0A1A2E]"
+            >
+              Find a Part
+            </a>
+            <a
+              href="/access"
+              onClick={closeMenu}
+              className="py-3 font-bold text-[#0A1A2E] hover:text-[#D81F2A]"
+            >
+              Sign in
+            </a>
+          </div>
+          <FleetReviewButton
+            location="mobile_menu"
+            className="mt-3 h-11 min-h-0 w-full justify-center py-0"
+          />
+        </nav>
+      ) : null}
     </div>
   );
 }
@@ -369,25 +480,40 @@ function Hero() {
       >
         <div>
           <p className={cn("mb-3.5", eyebrowClass)}>
-            Fleet maintenance workflow for commercial operators
+            Maintenance and repair intelligence for commercial vehicles
           </p>
           <h1 className={cn(displayClass, "text-4xl sm:text-5xl")}>
-            Stop maintenance issues from getting lost, delayed, or becoming
-            costly downtime.
+            Stop vehicle problems from becoming costly downtime.
           </h1>
           <p className="mt-5 max-w-xl text-base leading-7 text-[#38465F]">
-            TruckFixr helps commercial fleets capture vehicle issues, prioritize
-            what needs attention, track repairs, and confirm outcomes through
-            one connected maintenance workflow.
+            Report a vehicle issue and get a same-day AI-backed assessment,
+            source a confirmed part through our GTA supplier network, or run
+            your whole fleet&apos;s maintenance workflow in one place —
+            inspections, repairs, and outcomes, tracked and confirmed.
           </p>
-          <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center">
-            <FleetReviewButton location="hero" />
-            <SeeHowButton />
+          <div className="mt-7 flex max-w-xl flex-col gap-3">
+            <FleetReviewButton location="hero" className="w-full" />
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <TryOneCaseButton />
+              <FindAPartButton />
+            </div>
           </div>
-          <p className="mt-4 text-sm text-[#73777E]">
-            Free 25-minute founder-led review for qualified commercial fleets
-            with 5–50 vehicles.
-          </p>
+          <div className="mt-4 max-w-xl space-y-2">
+            <p className="text-sm text-[#73777E]">
+              <span className="font-semibold text-[#38465F]">Fleet review:</span>{" "}
+              Free 25-minute founder-led review, for fleets with 5–50 vehicles.
+            </p>
+            <div className="flex flex-col gap-1 sm:flex-row sm:gap-6">
+              <p className="text-sm text-[#73777E] sm:flex-1">
+                <span className="font-semibold text-[#38465F]">Try One Case:</span>{" "}
+                Free AI-backed report in minutes. No account needed to start.
+              </p>
+              <p className="text-sm text-[#73777E] sm:flex-1">
+                <span className="font-semibold text-[#38465F]">Find a Part:</span>{" "}
+                GTA concierge — we source supplier offers for you to compare.
+              </p>
+            </div>
+          </div>
         </div>
         <HeroFleetHealthCard />
       </div>
@@ -798,6 +924,14 @@ function WhyTruckFixrSection() {
 
 // ── FAQ + final close ────────────────────────────────────────────────────────
 const FAQS: Array<{ q: string; a: string }> = [
+  {
+    q: "What if I just have one vehicle problem right now, not a whole fleet?",
+    a: "Use Try One Case — describe the issue and get a free, evidence-based report with next steps in minutes. No fleet setup or account required to start.",
+  },
+  {
+    q: "Can you help me find a part without signing up for TruckFixr?",
+    a: "Yes. Find a Part is a free concierge service for GTA fleets — tell us the part number or describe what you need, and we'll bring back supplier offers to compare.",
+  },
   {
     q: "What actually happens on the review?",
     a: "A live 25-minute working session: we confirm your context, diagnose how issues are reported, prioritized, approved, tracked and confirmed today, then show only the parts of TruckFixr connected to the gaps we find — and end with an honest recommendation.",
