@@ -220,6 +220,18 @@ services:
         sync: false
       - key: VITE_ANALYTICS_WEBSITE_ID
         sync: false
+      # Cookieless, banner-free GA4 marketing analytics for the public site (see
+      # docs/marketing-analytics/README.md). Absent/malformed → GA4 stays disabled,
+      # so this is safe to leave unset. Set the real Measurement ID here only after
+      # completing docs/marketing-analytics/external-setup-checklist.md, then
+      # redeploy with build cache cleared (these are build-time VITE_ vars).
+      - key: VITE_GA4_MEASUREMENT_ID
+        sync: false
+      # Must stay "false" in production — true only for local/non-prod debugging.
+      - key: VITE_ANALYTICS_DEBUG
+        value: "false"
+      - key: VITE_ANALYTICS_FORCE_ENABLE
+        value: "false"
       - key: VITE_FRONTEND_FORGE_API_URL
         sync: false
       - key: VITE_FRONTEND_FORGE_API_KEY

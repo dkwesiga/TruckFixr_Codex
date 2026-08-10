@@ -1,0 +1,23 @@
+title = "TruckFixr gitleaks config"
+
+[extend]
+useDefault = true
+
+# render.yaml declares Render Blueprint env var *names* only (e.g.
+# `- key: VITE_GA4_MEASUREMENT_ID`). Real values are either literal non-secret
+# config (committed) or `sync: false` (set by hand in the Render dashboard,
+# never committed) — see .env.example: "Never commit real IDs". Gitleaks'
+# default generic-api-key rule false-positives on the bare `- key: <NAME>`
+# shape because it looks like a `key: <secret>` assignment.
+#
+# Scoped as a per-rule allowlist on generic-api-key only (not a file-wide
+# allowlist), so a real secret pasted anywhere — including into render.yaml —
+# is still caught by every other rule (aws-access-token, stripe, private-key,
+# etc.) and even by generic-api-key itself outside this exact bare-key-name,
+# no-value line shape.
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  regexTarget = "line"
+  regexes = ['''^\s*-\s*key:\s*[A-Z][A-Z0-9_]*\s*$''']

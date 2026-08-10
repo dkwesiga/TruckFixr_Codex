@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "wouter";
 import {
   AlertTriangle,
@@ -291,20 +291,9 @@ function Header() {
                 {label}
               </button>
             ))}
-            <a
-              href="/try-one-case"
-              onClick={closeMenu}
-              className="py-3 hover:text-[#0A1A2E]"
-            >
-              Report an Issue
-            </a>
-            <a
-              href="/find-a-part"
-              onClick={closeMenu}
-              className="py-3 hover:text-[#0A1A2E]"
-            >
-              Find a Part
-            </a>
+            {/* "Report an Issue" (Try One Case) and "Find a Part" are already
+                the hero's secondary CTAs — omitted here to avoid duplicating
+                them in the mobile menu. */}
             <a
               href="/access"
               onClick={closeMenu}
@@ -1038,6 +1027,15 @@ export default function FleetReadinessLandingV3() {
     description:
       "TruckFixr helps commercial fleets capture vehicle issues, prioritize what needs attention, track repairs, and confirm outcomes in one connected workflow. Book a free 25-minute founder-led Fleet Maintenance Review for fleets with 5–50 vehicles.",
   });
+
+  // Deep links like "/#about" (e.g. the app's "About TruckFixr" menu item)
+  // land here after routing but need a scroll pass once the sections mount.
+  useEffect(() => {
+    const hash = window.location.hash.replace("#", "");
+    if (!hash) return;
+    const timer = window.setTimeout(() => scrollToSection(hash), 50);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#F6F8FB] pb-16 font-['IBM_Plex_Sans'] text-[#0A1A2E] sm:pb-0">
