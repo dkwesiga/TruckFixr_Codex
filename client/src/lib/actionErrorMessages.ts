@@ -15,6 +15,32 @@ function includesAny(haystack: string, needles: string[]) {
   return needles.some((needle) => haystack.includes(needle));
 }
 
+const NETWORK_ERROR_NEEDLES = [
+  "failed to fetch",
+  "fetch failed",
+  "load failed",
+  "network error",
+  "networkerror",
+  "network request failed",
+];
+
+// Browsers throw a bare "Failed to fetch" / "Load failed" TypeError for any
+// network-level failure (offline, DNS, CORS, server unreachable). That raw
+// message is meaningless to a guest visitor, so translate it before showing
+// it anywhere in the UI. Non-network errors (validation, server messages)
+// pass through unchanged.
+export function getFriendlyErrorMessage(
+  error: unknown,
+  fallback = "Something went wrong. Please try again."
+): string {
+  const raw = normalizeMessage(error);
+  if (!raw) return fallback;
+  if (includesAny(raw.toLowerCase(), NETWORK_ERROR_NEEDLES)) {
+    return "TruckFixr couldn't reach the server. Check your connection and try again. If the issue continues, contact support.";
+  }
+  return raw;
+}
+
 export function getVehicleCreateErrorPresentation(error: unknown): ErrorPresentation {
   const raw = normalizeMessage(error);
   const message = raw.toLowerCase();

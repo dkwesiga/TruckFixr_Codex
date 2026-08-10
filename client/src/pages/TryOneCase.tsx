@@ -10,6 +10,8 @@ import { cn } from "@/lib/utils";
 import { trackEvent } from "@/lib/analytics";
 import { trpc } from "@/lib/trpc";
 import { useSeoMeta } from "@/lib/useSeoMeta";
+import { getFriendlyErrorMessage } from "@/lib/actionErrorMessages";
+import { decodeVin, normalizeVinInput, type DecodedVehicle } from "@/lib/vin";
 import { ReadinessPill, type Readiness } from "@/components/readiness/ReadinessPill";
 import {
   GUEST_RESULT_DISCLAIMER_TEXT,
@@ -78,7 +80,7 @@ interface DecisionCard {
   safetyGuidance: string | null;
 }
 
-type Phase = "intake" | "questions" | "critical" | "preliminary" | "contact" | "verify" | "decision";
+type Phase = "vehicle" | "intake" | "questions" | "critical" | "preliminary" | "contact" | "verify" | "decision";
 
 function SafetyCard({ guidance }: { guidance: string }) {
   return (
@@ -120,7 +122,7 @@ export default function TryOneCase() {
       "Describe one real vehicle concern. TruckFixr gives you a clear next action — Ready, Monitor, Service Soon, or Stop. No account, fleet import, or payment required.",
   });
 
-  const [phase, setPhase] = useState<Phase>("intake");
+  const [phase, setPhase] = useState<Phase>("vehicle");
   const [publicToken, setPublicToken] = useState<string | null>(null);
   const [safetyGuidance, setSafetyGuidance] = useState<string | null>(null);
   const [preliminary, setPreliminary] = useState<Preliminary | null>(null);
@@ -129,11 +131,22 @@ export default function TryOneCase() {
   const [decision, setDecision] = useState<DecisionCard | null>(null);
   const [freeCaseLimitReached, setFreeCaseLimitReached] = useState(false);
 
+  // Vehicle identification (step 1) — VIN decode first, manual entry as fallback.
+  const [vin, setVin] = useState("");
+  const [vinDecoding, setVinDecoding] = useState(false);
+  const [decodedVehicle, setDecodedVehicle] = useState<DecodedVehicle | null>(null);
+  const [vehicleDecodeError, setVehicleDecodeError] = useState<string | null>(null);
+  const [manualVehicleEntry, setManualVehicleEntry] = useState(false);
+  const [manualMake, setManualMake] = useState("");
+  const [manualModel, setManualModel] = useState("");
+  const [manualYear, setManualYear] = useState("");
+  const [manualUnitNumber, setManualUnitNumber] = useState("");
+  const [vehicleStepError, setVehicleStepError] = useState<string | null>(null);
+
   // Intake fields.
   const [concernText, setConcernText] = useState("");
   const [concernCategory, setConcernCategory] = useState("");
   const [operatingStatus, setOperatingStatus] = useState("");
-  const [unitOrVin, setUnitOrVin] = useState("");
   const [inviteCode, setInviteCode] = useState(() =>
     typeof window !== "undefined"
       ? new URLSearchParams(window.location.search).get("invite") ?? ""
@@ -194,6 +207,59 @@ export default function TryOneCase() {
     }
   }
 
+  async function handleDecodeVin() {
+    setVehicleDecodeError(null);
+    const normalized = normalizeVinInput(vin);
+    if (normalized.length !== 17) {
+      setVehicleDecodeError("VIN must be 17 characters.");
+      return;
+    }
+    setVin(normalized);
+    setVinDecoding(true);
+    const result = await decodeVin(normalized);
+    setVinDecoding(false);
+    if (result.ok) {
+      setDecodedVehicle(result.vehicle);
+      setVehicleStepError(null);
+      trackEvent("vin_decoded", { cta_location: "try_one_case" });
+    } else {
+      setDecodedVehicle(null);
+      setVehicleDecodeError(result.error);
+      setManualVehicleEntry(true);
+    }
+  }
+
+  function buildVehicleIdentifier() {
+    if (decodedVehicle) {
+      return {
+        vin: decodedVehicle.vin,
+        make: decodedVehicle.make || undefined,
+        model: decodedVehicle.model || undefined,
+        year: decodedVehicle.year ? String(decodedVehicle.year) : undefined,
+        unitNumber: manualUnitNumber.trim() || undefined,
+      };
+    }
+    const identifier = {
+      unitNumber: manualUnitNumber.trim() || undefined,
+      make: manualMake.trim() || undefined,
+      model: manualModel.trim() || undefined,
+      year: manualYear.trim() || undefined,
+    };
+    return Object.values(identifier).some(Boolean) ? identifier : undefined;
+  }
+
+  function handleVehicleContinue() {
+    setVehicleStepError(null);
+    const hasDecoded = Boolean(decodedVehicle && (decodedVehicle.make || decodedVehicle.model));
+    const hasManual = Boolean(manualVehicleEntry && (manualMake.trim() || manualModel.trim()));
+    if (!hasDecoded && !hasManual) {
+      setVehicleStepError("Decode a VIN, or enter the vehicle's make and model, to continue.");
+      return;
+    }
+    trackEvent("vehicle_identified", { method: hasDecoded ? "vin_decode" : "manual" });
+    setPhase("intake");
+  }
+
   async function handleIntakeSubmit(e: FormEvent) {
     e.preventDefault();
     setIntakeError(null);
@@ -211,11 +277,7 @@ export default function TryOneCase() {
         concernText: concernText.trim(),
         concernCategory: concernCategory || undefined,
         operatingStatus,
-        vehicleIdentifier: unitOrVin.trim()
-          ? unitOrVin.trim().length >= 11
-            ? { vin: unitOrVin.trim() }
-            : { unitNumber: unitOrVin.trim() }
-          : undefined,
+        vehicleIdentifier: buildVehicleIdentifier(),
         intakeSource: "web",
         inviteCode: inviteCode.trim() || undefined,
         trapField,
@@ -223,7 +285,7 @@ export default function TryOneCase() {
       setPublicToken(res.publicToken);
       applyStep(res);
     } catch (err) {
-      const raw = err instanceof Error ? err.message : "Something went wrong. Please try again.";
+      const raw = getFriendlyErrorMessage(err);
       // Fail-safe UX: if the client is in public mode but the server hasn't
       // completed the public-launch gate (e.g. sign-off/reviewer not yet set),
       // the server still requires an invite. Show a friendly "not open yet"
@@ -283,7 +345,7 @@ export default function TryOneCase() {
       setPhase("verify");
       trackEvent("verification_code_sent", {});
     } catch (err) {
-      setContactError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+      setContactError(getFriendlyErrorMessage(err));
     }
   }
 
@@ -298,7 +360,7 @@ export default function TryOneCase() {
       setPhase("decision");
       trackEvent("decision_card_viewed", { readiness: (res.decision as DecisionCard).readiness });
     } catch (err) {
-      setVerifyError(err instanceof Error ? err.message : "That code didn't work. Please try again.");
+      setVerifyError(getFriendlyErrorMessage(err, "That code didn't work. Please try again."));
     }
   }
 
@@ -311,7 +373,7 @@ export default function TryOneCase() {
       setMaskedDestination(res.maskedDestination);
       setResendMessage("A new code is on its way.");
     } catch (err) {
-      setVerifyError(err instanceof Error ? err.message : "Couldn't resend a code. Please try again.");
+      setVerifyError(getFriendlyErrorMessage(err, "Couldn't resend a code. Please try again."));
     }
   }
 
@@ -342,7 +404,7 @@ export default function TryOneCase() {
       const res = await uploadPhotoMutation.mutateAsync({ publicToken, dataUrl });
       setPhotos((prev) => [...prev, { id: res.id, url: res.url }]);
     } catch (err) {
-      setPhotoError(err instanceof Error ? err.message : "Couldn't upload that photo. Please try again.");
+      setPhotoError(getFriendlyErrorMessage(err, "Couldn't upload that photo. Please try again."));
     }
   }
 
@@ -356,9 +418,7 @@ export default function TryOneCase() {
         window.location.href = res.checkoutUrl;
       }
     } catch (err) {
-      setReviewCheckoutError(
-        err instanceof Error ? err.message : "Couldn't start checkout. Please try again."
-      );
+      setReviewCheckoutError(getFriendlyErrorMessage(err, "Couldn't start checkout. Please try again."));
     }
   }
 
@@ -397,6 +457,124 @@ export default function TryOneCase() {
           Decision support only — not a confirmed diagnosis, roadworthiness certification, or emergency service.
         </div>
 
+        {phase === "vehicle" && (
+          <div className={cn(cardClass, "space-y-5 p-5 sm:p-6")}>
+            <div>
+              <p className="mb-1 text-[11px] font-bold uppercase tracking-[0.14em] text-[#D81F2A]">
+                Try one vehicle case — free
+              </p>
+              <h1 className={cn(displayClass, "text-2xl sm:text-3xl")}>Which vehicle is this?</h1>
+              <p className="mt-2 text-sm leading-6 text-[#38465F]">
+                Start with the VIN — TruckFixr pulls the make, model, and year automatically.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="vin" className="text-sm font-semibold">
+                VIN
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  id="vin"
+                  value={vin}
+                  onChange={(e) => setVin(e.target.value)}
+                  placeholder="17-character VIN"
+                  maxLength={17}
+                  autoComplete="off"
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  onClick={handleDecodeVin}
+                  disabled={vinDecoding}
+                  className={cn("h-11 shrink-0 font-bold", redBtn)}
+                >
+                  {vinDecoding ? <Loader2 className="h-4 w-4 animate-spin" /> : "Decode"}
+                </Button>
+              </div>
+              {vehicleDecodeError && (
+                <p className="text-sm font-medium text-[#D81F2A]" role="alert">
+                  {vehicleDecodeError}
+                </p>
+              )}
+            </div>
+
+            {decodedVehicle && (decodedVehicle.make || decodedVehicle.model || decodedVehicle.year) && (
+              <div className="rounded-md border border-[#1EA66C] bg-[#EAF8F1] p-3 text-sm">
+                <p className="flex items-center gap-1.5 font-bold text-[#0A1A2E]">
+                  <Check className="h-4 w-4 shrink-0 text-[#1EA66C]" aria-hidden="true" />
+                  {[decodedVehicle.year, decodedVehicle.make, decodedVehicle.model].filter(Boolean).join(" ")}
+                </p>
+                <p className="mt-1 text-xs text-[#38465F]">VIN {decodedVehicle.vin}</p>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setManualVehicleEntry((v) => !v)}
+              className="text-sm font-semibold text-[#38465F] underline underline-offset-2 hover:text-[#0A1A2E]"
+            >
+              {manualVehicleEntry ? "Hide manual entry" : "Don't have the VIN? Enter vehicle details manually"}
+            </button>
+
+            {manualVehicleEntry && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label htmlFor="manualMake" className="text-sm font-semibold">
+                    Make
+                  </Label>
+                  <Input id="manualMake" value={manualMake} onChange={(e) => setManualMake(e.target.value)} placeholder="e.g. Freightliner" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="manualModel" className="text-sm font-semibold">
+                    Model
+                  </Label>
+                  <Input id="manualModel" value={manualModel} onChange={(e) => setManualModel(e.target.value)} placeholder="e.g. Cascadia" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="manualYear" className="text-sm font-semibold">
+                    Year <span className="font-normal text-[#73777E]">(optional)</span>
+                  </Label>
+                  <Input
+                    id="manualYear"
+                    value={manualYear}
+                    onChange={(e) => setManualYear(e.target.value.replace(/\D/g, ""))}
+                    placeholder="e.g. 2021"
+                    inputMode="numeric"
+                    maxLength={4}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="manualUnitNumber" className="text-sm font-semibold">
+                    Unit number <span className="font-normal text-[#73777E]">(optional)</span>
+                  </Label>
+                  <Input
+                    id="manualUnitNumber"
+                    value={manualUnitNumber}
+                    onChange={(e) => setManualUnitNumber(e.target.value)}
+                    placeholder="e.g. Unit 214"
+                  />
+                </div>
+              </div>
+            )}
+
+            {vehicleStepError && (
+              <p className="text-sm font-medium text-[#D81F2A]" role="alert">
+                {vehicleStepError}
+              </p>
+            )}
+
+            <Button
+              type="button"
+              onClick={handleVehicleContinue}
+              className={cn("h-12 w-full text-[15px] font-bold", redBtn)}
+            >
+              Continue
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          </div>
+        )}
+
         {phase === "intake" && (
           <form onSubmit={handleIntakeSubmit} className={cn(cardClass, "space-y-5 p-5 sm:p-6")} noValidate>
             <div>
@@ -407,6 +585,24 @@ export default function TryOneCase() {
               <p className="mt-2 text-sm leading-6 text-[#38465F]">
                 No account, fleet setup, or payment required. TruckFixr gives you a clear next action.
               </p>
+            </div>
+
+            <div className="flex items-center justify-between rounded-md border border-[#E2E6EC] bg-[#F8FAFC] p-3 text-sm">
+              <span className="font-semibold text-[#0A1A2E]">
+                {decodedVehicle
+                  ? [decodedVehicle.year, decodedVehicle.make, decodedVehicle.model].filter(Boolean).join(" ") ||
+                    `VIN ${decodedVehicle.vin}`
+                  : [manualYear, manualMake, manualModel].filter(Boolean).join(" ") ||
+                    manualUnitNumber ||
+                    "Vehicle not specified"}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPhase("vehicle")}
+                className="font-semibold text-[#38465F] underline underline-offset-2 hover:text-[#0A1A2E]"
+              >
+                Change
+              </button>
             </div>
 
             {INVITE_REQUIRED && (
@@ -486,18 +682,6 @@ export default function TryOneCase() {
                 ))}
               </div>
             </fieldset>
-
-            <div className="space-y-2">
-              <Label htmlFor="unitOrVin" className="text-sm font-semibold">
-                Unit number or VIN <span className="font-normal text-[#73777E]">(optional)</span>
-              </Label>
-              <Input
-                id="unitOrVin"
-                value={unitOrVin}
-                onChange={(e) => setUnitOrVin(e.target.value)}
-                placeholder="Unit 214 or 1FUJGLDR…"
-              />
-            </div>
 
             {intakeError && (
               <p className="text-sm font-medium text-[#D81F2A]" role="alert">

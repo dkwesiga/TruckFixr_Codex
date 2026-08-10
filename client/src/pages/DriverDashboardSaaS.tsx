@@ -768,7 +768,7 @@ function DriverDashboardContent() {
               <BookOpenCheck className="mr-2 h-4 w-4" />
               Quick Start Guides
             </DropdownMenuItem>
-            <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/")}>
+            <DropdownMenuItem className="cursor-pointer rounded-xl" onClick={() => navigate("/#about")}>
               <Info className="mr-2 h-4 w-4" />
               About TruckFixr
             </DropdownMenuItem>
