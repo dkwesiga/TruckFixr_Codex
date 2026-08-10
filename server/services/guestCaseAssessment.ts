@@ -57,6 +57,17 @@ export interface GuestAssessment {
    *  Null here (the deterministic engine) — populated only by the AI path in
    *  guestCaseAi.ts when a model call succeeds. Never influences readiness/action. */
   explanation: string | null;
+  /** AI-reported confidence (0-100) in the severity/action classification.
+   *  Null here (the deterministic engine has no probabilistic signal) and for
+   *  a critical case (confidence review doesn't apply once already critical).
+   *  Set only by the AI path in guestCaseAi.ts. */
+  confidence: number | null;
+  /** True once confidence stayed below threshold after the confidence-driven
+   *  question budget was exhausted (see CONFIDENCE_THRESHOLD /
+   *  CONFIDENCE_QUESTION_CAP in guestCaseAi.ts). Always false here — decided
+   *  by guestCaseService.ts, which is the only layer that knows whether
+   *  another question is still coming. */
+  confidenceLow: boolean;
 }
 
 type Answers = Record<string, string>;
@@ -118,6 +129,8 @@ export function assessGuestCase(
       reviewCategory: "critical_safety",
       reviewStatus: "review_required",
       explanation: null,
+      confidence: null,
+      confidenceLow: false,
     };
   }
 
@@ -149,5 +162,7 @@ export function assessGuestCase(
     reviewCategory: null,
     reviewStatus: "automated_guidance_only",
     explanation: null,
+    confidence: null,
+    confidenceLow: false,
   };
 }

@@ -62,6 +62,8 @@ interface Preliminary {
   label: string;
   recommendation: string;
   explanation?: string | null;
+  confidenceLow?: boolean;
+  lowConfidenceNotice?: string | null;
 }
 interface LikelyCause {
   label: string;
@@ -80,9 +82,23 @@ interface DecisionCard {
   humanReviewStatus: string;
   safetyGuidance: string | null;
   explanation?: string | null;
+  confidenceLow?: boolean;
+  lowConfidenceNotice?: string | null;
 }
 
 type Phase = "vehicle" | "intake" | "questions" | "critical" | "preliminary" | "contact" | "verify" | "decision";
+
+function LowConfidenceNotice({ message }: { message: string }) {
+  return (
+    <div
+      className="flex items-start gap-2 rounded-md border border-[#F3D9A0] bg-[#FDF3DF] p-3 text-sm text-[#7a5a12]"
+      role="status"
+    >
+      <AlertOctagon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+      <span>{message}</span>
+    </div>
+  );
+}
 
 function SafetyCard({ guidance }: { guidance: string }) {
   return (
@@ -748,6 +764,9 @@ export default function TryOneCase() {
             {preliminary.explanation && (
               <p className="text-sm leading-6 text-[#38465F]">{preliminary.explanation}</p>
             )}
+            {preliminary.confidenceLow && preliminary.lowConfidenceNotice && (
+              <LowConfidenceNotice message={preliminary.lowConfidenceNotice} />
+            )}
             <div className="rounded-md bg-[#F1F4F9] p-3 text-sm text-[#38465F]">
               Add one contact method to see the full decision card — reasoning, what to check next, and how to share it.
             </div>
@@ -928,6 +947,11 @@ export default function TryOneCase() {
                 <p className="mt-1 text-[15px] leading-6 text-[#0A1A2E]">{decision.recommendation}</p>
                 {decision.explanation && (
                   <p className="mt-2 text-sm leading-6 text-[#38465F]">{decision.explanation}</p>
+                )}
+                {decision.confidenceLow && decision.lowConfidenceNotice && (
+                  <div className="mt-3">
+                    <LowConfidenceNotice message={decision.lowConfidenceNotice} />
+                  </div>
                 )}
               </div>
               <div>
