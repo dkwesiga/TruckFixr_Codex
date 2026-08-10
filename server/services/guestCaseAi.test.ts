@@ -226,10 +226,10 @@ describe("generateGuestAssessment — AI path", () => {
     expect(a.recommendation).toBe("Limit operation and arrange an inspection or service promptly.");
   });
 
-  it("treats an AI-classified critical severity the same as a deterministic critical trigger", async () => {
+  it("treats an AI-classified critical severity the same as a deterministic critical trigger, once at least one clarifying answer is on record", async () => {
     ENV.openRouterApiKey = "test-key";
     const a = await generateGuestAssessment(
-      { input: benignInput, answers: {} },
+      { input: benignInput, answers: { symptom_frequency: "worsening" } },
       {
         fetcher: async () =>
           jsonResponse(
@@ -247,6 +247,36 @@ describe("generateGuestAssessment — AI path", () => {
     expect(a.customerReadiness).toBe("stop");
     expect(a.safetyGuidance).toBeTruthy();
     expect(a.reviewStatus).toBe("review_required");
+  });
+
+  it("does NOT let the AI escalate straight to critical on the very first turn (no clarifying answers yet) — falls back to the rule-based result so a question still gets asked", async () => {
+    ENV.openRouterApiKey = "test-key";
+    const wontStartInput: GuestCaseInput = {
+      concernText: "truck won't start",
+      operatingStatus: "stopped",
+    };
+    const a = await generateGuestAssessment(
+      { input: wontStartInput, answers: {} },
+      {
+        fetcher: async () =>
+          jsonResponse(
+            chatCompletion(
+              JSON.stringify({
+                severity: "critical",
+                action: "tow",
+                explanation: "A vehicle that won't start should be towed immediately.",
+              })
+            )
+          ),
+      }
+    );
+    expect(a.criticalTriggered).toBe(false);
+    expect(a.customerReadiness).not.toBe("stop");
+    expect(a.safetyGuidance).toBeNull();
+    // Matches the rule-based engine exactly (no AI explanation attached either,
+    // since the AI's turn-1 verdict was discarded).
+    const expected = assessGuestCase(wontStartInput, {});
+    expect(a).toEqual(expected);
   });
 
   it("falls back to the deterministic engine on invalid AI output (bad enum value)", async () => {

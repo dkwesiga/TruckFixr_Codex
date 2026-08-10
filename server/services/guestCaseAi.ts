@@ -224,8 +224,9 @@ Return strict JSON only: {"severity": "...", "action": "...", "explanation": "..
 Guidance:
 - stable + continue_monitor: nothing about the description suggests a change is needed soon.
 - attention + complete_trip_then_inspect: worth finishing the current trip, then getting it looked at.
-- attention + schedule_service: should be looked at soon, but can keep running until then.
-- critical + pull_from_service / roadside_assistance / tow: if, even after re-reading the description carefully, this looks genuinely unsafe to keep operating — do not hesitate to choose this; a downstream safety system will still show the strongest possible warning in that case.
+- attention + schedule_service: should be looked at soon, but can keep running until then. This is the right bucket for a vehicle that simply won't start, cranks but doesn't fire, or is otherwise stuck/immobile with no danger signs — it needs service, but an immobile, non-running vehicle is not endangering anyone right now.
+- critical + pull_from_service / roadside_assistance / tow: reserve this for a description that itself names a real, active hazard (e.g. fire, smoke, a fluid actively spraying/pouring, a collision, brakes or steering that failed while driving) — never choose this just because the vehicle is stopped, immobile, or won't start. A vehicle that cannot move cannot run anyone over or lose control; immobility on its own is one of the SAFEST states a vehicle can be in, not a reason to escalate.
+- If the description is too vague to tell which non-critical bucket fits, choose attention + schedule_service rather than guessing — a follow-up question will gather more detail before anything is finalized.
 
 "explanation" is 1-2 plain-language sentences a truck driver or small-fleet owner would understand, grounded in the SPECIFIC vehicle/symptom/category described (name the actual symptom or system) — never a generic template sentence, never a confirmed diagnosis, never a specific part or repair recommendation. Do not repeat the raw severity/action words verbatim; explain the reasoning.`;
 
@@ -245,6 +246,19 @@ export async function generateGuestAssessment(
   const ruleBased = ruleBasedAssessGuestCase(ctx.input, ctx.answers);
   if (ruleBased.criticalTriggered) return ruleBased;
 
+  // Below the keyword floor, the model is reasoning off a single unverified
+  // line of free text with zero clarifying context on the very first turn.
+  // A model can still misjudge that as critical (e.g. reading "won't start"
+  // as urgent, when an immobile vehicle is one of the safest states there
+  // is) — and doing so before any adaptive question has been asked would
+  // skip the whole clarifying flow entirely (no question is ever asked once
+  // a case is critical). So a critical verdict is only trusted once at least
+  // one clarifying answer is on record; on the first turn it's treated the
+  // same as an invalid AI response — fall back to the rule-based result
+  // (never critical here, since the keyword floor above already cleared it)
+  // and let the normal adaptive-question flow run for a turn first.
+  const hasAnsweredAtLeastOneQuestion = Object.keys(ctx.answers).length > 0;
+
   try {
     const result = await invokeWithOrchestration({
       feature: "guest_case_assessment",
@@ -262,12 +276,24 @@ export async function generateGuestAssessment(
     const text = typeof raw === "string" ? raw : "";
     const parsed = assessmentSchema.parse(JSON.parse(text));
 
+    const aiWantsCritical = parsed.severity === "critical" || isCriticalAction(parsed.action);
+
+    if (aiWantsCritical && !hasAnsweredAtLeastOneQuestion) {
+      recordObservabilityEvent({
+        category: "ai_provider",
+        event: "guest_case_ai_critical_deferred",
+        severity: "info",
+        message: "AI classified the first-turn description as critical with no clarifying answers yet — deferred to the rule-based result for this turn so the adaptive flow still asks a question.",
+      });
+      return ruleBased;
+    }
+
     // The AI can still land on "critical" (e.g. a description that reads as
     // unsafe without matching a hard-coded keyword) — treat that exactly like
     // a deterministic critical trigger: immediate safety guidance, required
     // review, no possible-causes speculation. criticalTrigger stays null
     // (not keyword-based) — callers already handle that (criticalReason()).
-    if (parsed.severity === "critical" || isCriticalAction(parsed.action)) {
+    if (aiWantsCritical) {
       return {
         criticalTrigger: null,
         criticalTriggered: true,
