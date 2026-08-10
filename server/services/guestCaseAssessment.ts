@@ -44,12 +44,19 @@ export interface GuestAssessment {
   internalSeverity: MaintenanceSeverity;
   operatingAction: MaintenanceAction;
   customerReadiness: CustomerReadiness;
-  /** One-line, customer-facing operating recommendation. */
+  /** One-line, customer-facing operating recommendation. Always one of the
+   *  fixed CUSTOMER_READINESS_META strings — never AI-worded, even when the
+   *  severity/action classification that picked it came from the AI path in
+   *  guestCaseAi.ts (see generateGuestAssessment). */
   recommendation: string;
   /** Safety guidance to show immediately for a critical case (else null). */
   safetyGuidance: string | null;
   reviewCategory: ReviewCategory | null;
   reviewStatus: ReviewStatus;
+  /** AI-generated, issue-specific explanation, additive on top of `recommendation`.
+   *  Null here (the deterministic engine) — populated only by the AI path in
+   *  guestCaseAi.ts when a model call succeeds. Never influences readiness/action. */
+  explanation: string | null;
 }
 
 type Answers = Record<string, string>;
@@ -110,6 +117,7 @@ export function assessGuestCase(
       safetyGuidance: SAFETY_DISCLAIMERS.critical,
       reviewCategory: "critical_safety",
       reviewStatus: "review_required",
+      explanation: null,
     };
   }
 
@@ -140,5 +148,6 @@ export function assessGuestCase(
     // pulls them into review (capacity/eligibility dependent — never promised).
     reviewCategory: null,
     reviewStatus: "automated_guidance_only",
+    explanation: null,
   };
 }

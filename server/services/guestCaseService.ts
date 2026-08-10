@@ -20,14 +20,15 @@ import { parseEvidenceImageDataUrl } from "./evidencePhotos";
 import { storagePut } from "../storage";
 import {
   MAX_ADAPTIVE_QUESTIONS,
-  nextAdaptiveQuestion,
   type AdaptiveQuestion,
   type ConcernCategory,
   type GuestCaseInput,
   type OperatingStatus,
 } from "../../shared/maintenance/guestCaseFlow";
 import { customerReadinessMeta } from "../../shared/maintenance/customerReadiness";
-import { assessGuestCase, type GuestAssessment } from "./guestCaseAssessment";
+import { SAFETY_DISCLAIMERS } from "../../shared/maintenance/caseWorkflow";
+import type { GuestAssessment } from "./guestCaseAssessment";
+import { generateGuestAssessment, generateGuestNextQuestion } from "./guestCaseAi";
 import { generateOpaqueToken, hashIdentifier } from "./guestTokens";
 import { enqueueReview } from "./caseReviewQueue";
 import { recordObservabilityEvent } from "./observability";
@@ -97,6 +98,51 @@ function preliminaryView(assessment: GuestAssessment) {
     action: assessment.operatingAction,
     recommendation: assessment.recommendation,
     label: customerReadinessMeta(assessment.customerReadiness).label,
+    // AI-generated, issue-specific explanation (guestCaseAi.ts) — additive,
+    // null when the deterministic engine handled this case (critical path,
+    // or the AI call failed/wasn't configured).
+    explanation: assessment.explanation,
+  };
+}
+
+/**
+ * Rebuilds a GuestAssessment from a row's already-persisted fields, instead
+ * of recomputing via generateGuestAssessment(). Now that the assessment can
+ * involve an AI call, recomputing on every read/step would both cost an
+ * extra call for no reason (the answers haven't changed since the last
+ * start/answer step that already computed and stored this) and risk the
+ * model landing on a subtly different result than what the guest already
+ * saw — e.g. a different readiness or explanation between the preliminary
+ * screen and the final decision card. Reading back what was actually stored
+ * guarantees the two stay identical.
+ */
+function assessmentFromRow(row: {
+  criticalTriggered: boolean | null;
+  internalSeverity: string;
+  customerReadiness: string;
+  operatingAction: string;
+  reviewStatus: string;
+  preliminaryJson: unknown;
+}): GuestAssessment {
+  const stored =
+    row.preliminaryJson && typeof row.preliminaryJson === "object"
+      ? (row.preliminaryJson as { recommendation?: string; explanation?: string | null })
+      : null;
+  const criticalTriggered = row.criticalTriggered === true;
+  return {
+    criticalTrigger: null,
+    criticalTriggered,
+    internalSeverity: row.internalSeverity as GuestAssessment["internalSeverity"],
+    operatingAction: row.operatingAction as GuestAssessment["operatingAction"],
+    customerReadiness: row.customerReadiness as GuestAssessment["customerReadiness"],
+    recommendation:
+      stored?.recommendation ??
+      customerReadinessMeta(row.customerReadiness as GuestAssessment["customerReadiness"])
+        .operatingRecommendation,
+    safetyGuidance: criticalTriggered ? SAFETY_DISCLAIMERS.critical : null,
+    reviewCategory: criticalTriggered ? "critical_safety" : null,
+    reviewStatus: row.reviewStatus as GuestAssessment["reviewStatus"],
+    explanation: stored?.explanation ?? null,
   };
 }
 
@@ -124,6 +170,7 @@ function decisionCard(
     possibleCausesSuppressed: true,
     humanReviewStatus: assessment.reviewStatus,
     safetyGuidance: assessment.safetyGuidance,
+    explanation: assessment.explanation,
   };
 }
 
@@ -182,7 +229,11 @@ export async function startGuestCase(args: StartGuestCaseArgs) {
     concernCategory: args.concernCategory,
     faultCodes: args.faultCodes,
   };
-  const assessment = assessGuestCase(input, {});
+  const assessment = await generateGuestAssessment({
+    input,
+    answers: {},
+    vehicleIdentifier: args.vehicleIdentifier ?? null,
+  });
   const now = new Date();
   const publicToken = generateOpaqueToken();
 
@@ -247,7 +298,11 @@ export async function startGuestCase(args: StartGuestCaseArgs) {
 
   const nextQuestion: AdaptiveQuestion | null = assessment.criticalTriggered
     ? null
-    : nextAdaptiveQuestion(input, []);
+    : await generateGuestNextQuestion({
+        input,
+        answers: {},
+        vehicleIdentifier: args.vehicleIdentifier ?? null,
+      });
 
   return {
     publicToken,
@@ -287,7 +342,8 @@ export async function answerGuestQuestion(params: {
     [params.questionId]: params.answer,
   };
   const input = toInput(row);
-  const assessment = assessGuestCase(input, answers);
+  const vehicleIdentifier = (row.vehicleIdentifier ?? null) as GuestVehicleIdentifier | null;
+  const assessment = await generateGuestAssessment({ input, answers, vehicleIdentifier });
   const now = new Date();
   // Capture prior state BEFORE the update (avoid any read-after-write aliasing).
   const wasCritical = row.criticalTriggered === true;
@@ -323,7 +379,7 @@ export async function answerGuestQuestion(params: {
 
   const nextQuestion = assessment.criticalTriggered
     ? null
-    : nextAdaptiveQuestion(input, Object.keys(answers));
+    : await generateGuestNextQuestion({ input, answers, vehicleIdentifier });
 
   return {
     criticalTriggered: assessment.criticalTriggered,
@@ -418,7 +474,7 @@ export async function submitGuestContact(params: {
   const input = toInput(row);
   const answers: Answers =
     row.answersJson && typeof row.answersJson === "object" ? row.answersJson : {};
-  const assessment = assessGuestCase(input, answers);
+  const assessment = assessmentFromRow(row);
 
   // Free-case duplicate detection never blocks a critical case, and even for a
   // non-critical duplicate we still show guidance (graceful, no hard block §24).
@@ -582,16 +638,21 @@ export async function getGuestCase(publicToken: string) {
   const db = await getDb();
   requireDb(db);
   const row = await loadCase(db, publicToken);
-  const input = toInput(row);
-  const answers: Answers =
-    row.answersJson && typeof row.answersJson === "object" ? row.answersJson : {};
-  const assessment = assessGuestCase(input, answers);
+  // Read back exactly what start/answer/submitContact already computed and
+  // stored, rather than recomputing (see assessmentFromRow's comment) — this
+  // also means a decided case correctly includes the AI possible-causes that
+  // were attached in submitGuestContact, which a fresh recompute would miss.
+  const preliminary =
+    row.preliminaryJson && typeof row.preliminaryJson === "object"
+      ? row.preliminaryJson
+      : preliminaryView(assessmentFromRow(row));
+  const stored = row.decisionJson as { card?: unknown } | null;
   return {
     publicToken: row.publicToken,
     status: row.status,
     criticalTriggered: row.criticalTriggered,
-    preliminary: preliminaryView(assessment),
-    decision: row.status === "decided" ? decisionCard(assessment, input, answers) : null,
+    preliminary,
+    decision: row.status === "decided" ? (stored?.card ?? null) : null,
     reviewStatus: row.reviewStatus,
   };
 }

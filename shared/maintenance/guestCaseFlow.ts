@@ -218,6 +218,11 @@ const Q: Record<string, AdaptiveQuestion> = {
   },
 };
 
+// The mandatory safety sweep — always asked verbatim by deterministic code
+// (see server/services/guestCaseAi.ts), never authored, reworded, or skipped
+// by the AI-generated question path. Exported so that layer can force it in.
+export const SAFETY_SWEEP_QUESTION: AdaptiveQuestion = Q.safety_sweep;
+
 function categoryQuestion(
   category: ConcernCategory | undefined
 ): AdaptiveQuestion | null {

@@ -61,6 +61,7 @@ interface Preliminary {
   readiness: Readiness;
   label: string;
   recommendation: string;
+  explanation?: string | null;
 }
 interface LikelyCause {
   label: string;
@@ -78,6 +79,7 @@ interface DecisionCard {
   possibleCausesSuppressed: boolean;
   humanReviewStatus: string;
   safetyGuidance: string | null;
+  explanation?: string | null;
 }
 
 type Phase = "vehicle" | "intake" | "questions" | "critical" | "preliminary" | "contact" | "verify" | "decision";
@@ -743,6 +745,9 @@ export default function TryOneCase() {
             </p>
             <ReadinessPill readiness={preliminary.readiness} size="lg" />
             <p className="text-[15px] leading-6 text-[#0A1A2E]">{preliminary.recommendation}</p>
+            {preliminary.explanation && (
+              <p className="text-sm leading-6 text-[#38465F]">{preliminary.explanation}</p>
+            )}
             <div className="rounded-md bg-[#F1F4F9] p-3 text-sm text-[#38465F]">
               Add one contact method to see the full decision card — reasoning, what to check next, and how to share it.
             </div>
@@ -921,6 +926,9 @@ export default function TryOneCase() {
               <div>
                 <h2 className={cn(displayClass, "text-xl")}>Operating action</h2>
                 <p className="mt-1 text-[15px] leading-6 text-[#0A1A2E]">{decision.recommendation}</p>
+                {decision.explanation && (
+                  <p className="mt-2 text-sm leading-6 text-[#38465F]">{decision.explanation}</p>
+                )}
               </div>
               <div>
                 <h3 className="text-sm font-bold uppercase tracking-wide text-[#38465F]">Evidence reviewed</h3>
