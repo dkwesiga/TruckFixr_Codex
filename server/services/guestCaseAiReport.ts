@@ -8,6 +8,7 @@
 // it must never block or alter the deterministic result.
 
 import { analyzeDiagnosticWithAi } from "./tadisCore";
+import { recordObservabilityEvent } from "./observability";
 import type { GuestCaseInput } from "../../shared/maintenance/guestCaseFlow";
 
 export interface GuestLikelyCause {
@@ -43,7 +44,16 @@ export async function generateGuestLikelyCauses(params: {
       faultCodes: params.input.faultCodes ?? [],
     });
 
-    if (!output.ai_response_available) return [];
+    if (!output.ai_response_available) {
+      recordObservabilityEvent({
+        category: "ai_provider",
+        event: "guest_case_ai_causes_unavailable",
+        severity: "warning",
+        message: "analyzeDiagnosticWithAi returned ai_response_available: false",
+        context: { guestCaseId: params.guestCaseId },
+      });
+      return [];
+    }
 
     return [...output.ranked_likely_causes]
       .sort((a, b) => b.probability - a.probability)
@@ -56,6 +66,13 @@ export async function generateGuestLikelyCauses(params: {
       }));
   } catch (error) {
     console.error("[GuestCaseAiReport] AI likely-causes generation failed; showing none:", error);
+    recordObservabilityEvent({
+      category: "ai_provider",
+      event: "guest_case_ai_causes_failed",
+      severity: "warning",
+      message: error instanceof Error ? error.message : String(error),
+      context: { guestCaseId: params.guestCaseId },
+    });
     return [];
   }
 }
