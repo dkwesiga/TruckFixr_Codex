@@ -26,9 +26,9 @@ import {
   type OperatingStatus,
 } from "../../shared/maintenance/guestCaseFlow";
 import { customerReadinessMeta } from "../../shared/maintenance/customerReadiness";
-import { SAFETY_DISCLAIMERS } from "../../shared/maintenance/caseWorkflow";
+import { LOW_CONFIDENCE_NOTICE, SAFETY_DISCLAIMERS } from "../../shared/maintenance/caseWorkflow";
 import type { GuestAssessment } from "./guestCaseAssessment";
-import { generateGuestAssessment, generateGuestNextQuestion } from "./guestCaseAi";
+import { CONFIDENCE_THRESHOLD, generateGuestAssessment, generateGuestNextQuestion } from "./guestCaseAi";
 import { generateOpaqueToken, hashIdentifier } from "./guestTokens";
 import { enqueueReview } from "./caseReviewQueue";
 import { recordObservabilityEvent } from "./observability";
@@ -102,6 +102,9 @@ function preliminaryView(assessment: GuestAssessment) {
     // null when the deterministic engine handled this case (critical path,
     // or the AI call failed/wasn't configured).
     explanation: assessment.explanation,
+    confidence: assessment.confidence,
+    confidenceLow: assessment.confidenceLow,
+    lowConfidenceNotice: assessment.confidenceLow ? LOW_CONFIDENCE_NOTICE : null,
   };
 }
 
@@ -126,9 +129,15 @@ function assessmentFromRow(row: {
 }): GuestAssessment {
   const stored =
     row.preliminaryJson && typeof row.preliminaryJson === "object"
-      ? (row.preliminaryJson as { recommendation?: string; explanation?: string | null })
+      ? (row.preliminaryJson as {
+          recommendation?: string;
+          explanation?: string | null;
+          confidence?: number | null;
+          confidenceLow?: boolean;
+        })
       : null;
   const criticalTriggered = row.criticalTriggered === true;
+  const confidenceLow = stored?.confidenceLow === true;
   return {
     criticalTrigger: null,
     criticalTriggered,
@@ -140,9 +149,11 @@ function assessmentFromRow(row: {
       customerReadinessMeta(row.customerReadiness as GuestAssessment["customerReadiness"])
         .operatingRecommendation,
     safetyGuidance: criticalTriggered ? SAFETY_DISCLAIMERS.critical : null,
-    reviewCategory: criticalTriggered ? "critical_safety" : null,
+    reviewCategory: criticalTriggered ? "critical_safety" : confidenceLow ? "technical_uncertainty" : null,
     reviewStatus: row.reviewStatus as GuestAssessment["reviewStatus"],
     explanation: stored?.explanation ?? null,
+    confidence: stored?.confidence ?? null,
+    confidenceLow,
   };
 }
 
@@ -171,6 +182,9 @@ function decisionCard(
     humanReviewStatus: assessment.reviewStatus,
     safetyGuidance: assessment.safetyGuidance,
     explanation: assessment.explanation,
+    confidence: assessment.confidence,
+    confidenceLow: assessment.confidenceLow,
+    lowConfidenceNotice: assessment.confidenceLow ? LOW_CONFIDENCE_NOTICE : null,
   };
 }
 
@@ -219,6 +233,34 @@ function criticalReason(triggerCode: string | null): string {
   return triggerCode ? `critical_trigger:${triggerCode}` : "critical_trigger";
 }
 
+/**
+ * Once generateGuestNextQuestion() has decided no further question is coming
+ * (nextQuestion is null), check whether that's because confidence never
+ * cleared CONFIDENCE_THRESHOLD within its question budget — if so, flag the
+ * case for a technical review. This never touches the readiness/action/
+ * recommendation already computed; it's purely additive, same as
+ * `explanation`. Never applies to an already-critical case (that already has
+ * its own review_required routing) or when there's no AI confidence signal
+ * at all (deterministic fallback — nothing to be "low confidence" about).
+ */
+function applyLowConfidenceEscalation(
+  assessment: GuestAssessment,
+  nextQuestion: AdaptiveQuestion | null
+): GuestAssessment {
+  const stillLow =
+    !assessment.criticalTriggered &&
+    nextQuestion === null &&
+    typeof assessment.confidence === "number" &&
+    assessment.confidence < CONFIDENCE_THRESHOLD;
+  if (!stillLow) return assessment;
+  return {
+    ...assessment,
+    confidenceLow: true,
+    reviewCategory: "technical_uncertainty",
+    reviewStatus: "review_queued",
+  };
+}
+
 export async function startGuestCase(args: StartGuestCaseArgs) {
   const db = await getDb();
   requireDb(db);
@@ -229,11 +271,20 @@ export async function startGuestCase(args: StartGuestCaseArgs) {
     concernCategory: args.concernCategory,
     faultCodes: args.faultCodes,
   };
-  const assessment = await generateGuestAssessment({
+  const rawAssessment = await generateGuestAssessment({
     input,
     answers: {},
     vehicleIdentifier: args.vehicleIdentifier ?? null,
   });
+  const nextQuestion: AdaptiveQuestion | null = rawAssessment.criticalTriggered
+    ? null
+    : await generateGuestNextQuestion({
+        input,
+        answers: {},
+        vehicleIdentifier: args.vehicleIdentifier ?? null,
+        confidence: rawAssessment.confidence,
+      });
+  const assessment = applyLowConfidenceEscalation(rawAssessment, nextQuestion);
   const now = new Date();
   const publicToken = generateOpaqueToken();
 
@@ -294,15 +345,20 @@ export async function startGuestCase(args: StartGuestCaseArgs) {
       severity: "warning",
       context: { code: assessment.criticalTrigger?.code ?? "unspecified" },
     });
+  } else if (assessment.confidenceLow) {
+    await enqueueReview({
+      guestCaseId: row.id,
+      category: "technical_uncertainty",
+      submittedAt: now,
+      escalationReason: `low_ai_confidence:${assessment.confidence}`,
+    });
+    recordObservabilityEvent({
+      category: "workflow",
+      event: "guest_case_low_confidence_escalated",
+      severity: "info",
+      context: { confidence: assessment.confidence },
+    });
   }
-
-  const nextQuestion: AdaptiveQuestion | null = assessment.criticalTriggered
-    ? null
-    : await generateGuestNextQuestion({
-        input,
-        answers: {},
-        vehicleIdentifier: args.vehicleIdentifier ?? null,
-      });
 
   return {
     publicToken,
@@ -343,10 +399,16 @@ export async function answerGuestQuestion(params: {
   };
   const input = toInput(row);
   const vehicleIdentifier = (row.vehicleIdentifier ?? null) as GuestVehicleIdentifier | null;
-  const assessment = await generateGuestAssessment({ input, answers, vehicleIdentifier });
+  const rawAssessment = await generateGuestAssessment({ input, answers, vehicleIdentifier });
   const now = new Date();
   // Capture prior state BEFORE the update (avoid any read-after-write aliasing).
   const wasCritical = row.criticalTriggered === true;
+  const wasAlreadyQueuedForLowConfidence = row.reviewStatus === "review_queued";
+
+  const nextQuestion = rawAssessment.criticalTriggered
+    ? null
+    : await generateGuestNextQuestion({ input, answers, vehicleIdentifier, confidence: rawAssessment.confidence });
+  const assessment = applyLowConfidenceEscalation(rawAssessment, nextQuestion);
 
   await db
     .update(guestCases)
@@ -375,11 +437,20 @@ export async function answerGuestQuestion(params: {
       submittedAt: now,
       escalationReason: criticalReason(assessment.criticalTrigger?.code ?? null),
     });
+  } else if (assessment.confidenceLow && !wasAlreadyQueuedForLowConfidence) {
+    await enqueueReview({
+      guestCaseId: row.id,
+      category: "technical_uncertainty",
+      submittedAt: now,
+      escalationReason: `low_ai_confidence:${assessment.confidence}`,
+    });
+    recordObservabilityEvent({
+      category: "workflow",
+      event: "guest_case_low_confidence_escalated",
+      severity: "info",
+      context: { confidence: assessment.confidence },
+    });
   }
-
-  const nextQuestion = assessment.criticalTriggered
-    ? null
-    : await generateGuestNextQuestion({ input, answers, vehicleIdentifier });
 
   return {
     criticalTriggered: assessment.criticalTriggered,

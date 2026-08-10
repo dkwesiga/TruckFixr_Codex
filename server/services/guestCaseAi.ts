@@ -24,6 +24,16 @@
 // output, or missing provider configuration falls back to the original
 // deterministic engine — the guest never sees an error or a stalled flow
 // because of this.
+//
+// Confidence review: the assessment call also reports a 0-100 confidence in
+// its own classification. Below CONFIDENCE_THRESHOLD, the flow keeps asking
+// clarifying questions (still capped — see CONFIDENCE_QUESTION_CAP) instead
+// of settling early; guestCaseService.ts flags the case for a technical
+// review if confidence is still low once that budget runs out. A critical
+// verdict is likewise never trusted from the model alone on the very first
+// turn (see hasAnsweredAtLeastOneQuestion below) — always deferred to the
+// rule-based (non-critical, since the keyword floor already cleared it)
+// result until there's at least one clarifying answer to support it.
 
 import { z } from "zod";
 import { invokeWithOrchestration } from "./aiOrchestrator";
@@ -70,9 +80,24 @@ export type GuestAiContext = {
   input: GuestCaseInput;
   answers: Answers;
   vehicleIdentifier?: GuestAiVehicleIdentifier | null;
+  /** Latest AI confidence (0-100) from this turn's generateGuestAssessment
+   *  call, if any — passed to generateGuestNextQuestion so it can keep
+   *  asking while confidence is low, up to CONFIDENCE_QUESTION_CAP. */
+  confidence?: number | null;
 };
 
 const AI_TIMEOUT_MS = 12_000;
+
+// Below this confidence (0-100), the flow keeps asking clarifying questions
+// instead of settling on the current best guess.
+export const CONFIDENCE_THRESHOLD = 85;
+// Confidence-driven follow-ups stop after this many total adaptive questions
+// have been answered (counting the mandatory safety sweep), even if
+// confidence is still low — bounds the flow and gives guestCaseService.ts a
+// clear point to flag the case for a technical review instead. This is
+// tighter than the absolute MAX_ADAPTIVE_QUESTIONS hard cap, which still
+// applies as a backstop regardless of confidence.
+export const CONFIDENCE_QUESTION_CAP = 3;
 
 function vehicleLine(vehicle?: GuestAiVehicleIdentifier | null): string {
   if (!vehicle) return "Not provided.";
@@ -154,11 +179,24 @@ export async function generateGuestNextQuestion(
   // Hard floor 2: the mandatory safety sweep is always asked as the second
   // question, and forced in on the final available slot if it still hasn't
   // been asked by then — regardless of what the AI does on other turns.
-  if (!answeredIds.includes(SAFETY_SWEEP_QUESTION.id)) {
+  const safetySwept = answeredIds.includes(SAFETY_SWEEP_QUESTION.id);
+  if (!safetySwept) {
     const remainingSlots = MAX_ADAPTIVE_QUESTIONS - answeredIds.length;
     if (answeredIds.length === 1 || remainingSlots <= 1) {
       return SAFETY_SWEEP_QUESTION;
     }
+  }
+
+  // Confidence-driven stop: once the mandatory safety sweep is out of the
+  // way (never skipped, regardless of confidence — checked above), stop
+  // asking as soon as the model is confident enough, or once the
+  // confidence-question budget is used up either way. guestCaseService.ts
+  // is the one that turns "still low after the budget ran out" into a
+  // technical-review flag, since it's the only layer that knows this was
+  // the last question.
+  if (safetySwept && typeof ctx.confidence === "number") {
+    if (ctx.confidence >= CONFIDENCE_THRESHOLD) return null;
+    if (answeredIds.length >= CONFIDENCE_QUESTION_CAP) return null;
   }
 
   try {
@@ -212,20 +250,23 @@ const assessmentSchema = z.object({
   severity: z.enum(MAINTENANCE_SEVERITIES as unknown as [MaintenanceSeverity, ...MaintenanceSeverity[]]),
   action: z.enum(MAINTENANCE_ACTIONS as unknown as [MaintenanceAction, ...MaintenanceAction[]]),
   explanation: z.string().trim().min(3).max(400),
+  confidence: z.number().min(0).max(100),
 });
 
 const ASSESSMENT_SYSTEM_PROMPT = `You are a commercial vehicle maintenance triage assistant. Classify a guest-submitted vehicle concern that has already passed a keyword-based safety screen (so it is not an obvious fire/brake/steering/collision emergency), and write a short, specific explanation.
 
-Return strict JSON only: {"severity": "...", "action": "...", "explanation": "..."}.
+Return strict JSON only: {"severity": "...", "action": "...", "explanation": "...", "confidence": <0-100>}.
 
 "severity" must be exactly one of: stable, attention, critical.
 "action" must be exactly one of: continue_monitor, complete_trip_then_inspect, schedule_service, pull_from_service, roadside_assistance, tow.
+"confidence" is an integer 0-100: how confident you are that this severity/action classification is actually correct given what's been described so far. Score it honestly — lower it whenever a detail that would change your answer is still missing (e.g. you don't know if a noise is constant or occasional, whether a light is red or amber, whether this has happened before). A vague, one-line description with no clarifying answers yet should usually score well under 85; a description with several specific, consistent details supporting the same conclusion can score high. Do not inflate this to seem decisive — an honest low score is what lets the system ask a better follow-up question instead of guessing.
 
 Guidance:
 - stable + continue_monitor: nothing about the description suggests a change is needed soon.
 - attention + complete_trip_then_inspect: worth finishing the current trip, then getting it looked at.
-- attention + schedule_service: should be looked at soon, but can keep running until then.
-- critical + pull_from_service / roadside_assistance / tow: if, even after re-reading the description carefully, this looks genuinely unsafe to keep operating — do not hesitate to choose this; a downstream safety system will still show the strongest possible warning in that case.
+- attention + schedule_service: should be looked at soon, but can keep running until then. This is the right bucket for a vehicle that simply won't start, cranks but doesn't fire, or is otherwise stuck/immobile with no danger signs — it needs service, but an immobile, non-running vehicle is not endangering anyone right now.
+- critical + pull_from_service / roadside_assistance / tow: reserve this for a description that itself names a real, active hazard (e.g. fire, smoke, a fluid actively spraying/pouring, a collision, brakes or steering that failed while driving) — never choose this just because the vehicle is stopped, immobile, or won't start. A vehicle that cannot move cannot run anyone over or lose control; immobility on its own is one of the SAFEST states a vehicle can be in, not a reason to escalate.
+- If the description is too vague to tell which non-critical bucket fits, choose attention + schedule_service rather than guessing — a follow-up question will gather more detail before anything is finalized.
 
 "explanation" is 1-2 plain-language sentences a truck driver or small-fleet owner would understand, grounded in the SPECIFIC vehicle/symptom/category described (name the actual symptom or system) — never a generic template sentence, never a confirmed diagnosis, never a specific part or repair recommendation. Do not repeat the raw severity/action words verbatim; explain the reasoning.`;
 
@@ -245,6 +286,19 @@ export async function generateGuestAssessment(
   const ruleBased = ruleBasedAssessGuestCase(ctx.input, ctx.answers);
   if (ruleBased.criticalTriggered) return ruleBased;
 
+  // Below the keyword floor, the model is reasoning off a single unverified
+  // line of free text with zero clarifying context on the very first turn.
+  // A model can still misjudge that as critical (e.g. reading "won't start"
+  // as urgent, when an immobile vehicle is one of the safest states there
+  // is) — and doing so before any adaptive question has been asked would
+  // skip the whole clarifying flow entirely (no question is ever asked once
+  // a case is critical). So a critical verdict is only trusted once at least
+  // one clarifying answer is on record; on the first turn it's treated the
+  // same as an invalid AI response — fall back to the rule-based result
+  // (never critical here, since the keyword floor above already cleared it)
+  // and let the normal adaptive-question flow run for a turn first.
+  const hasAnsweredAtLeastOneQuestion = Object.keys(ctx.answers).length > 0;
+
   try {
     const result = await invokeWithOrchestration({
       feature: "guest_case_assessment",
@@ -262,12 +316,24 @@ export async function generateGuestAssessment(
     const text = typeof raw === "string" ? raw : "";
     const parsed = assessmentSchema.parse(JSON.parse(text));
 
+    const aiWantsCritical = parsed.severity === "critical" || isCriticalAction(parsed.action);
+
+    if (aiWantsCritical && !hasAnsweredAtLeastOneQuestion) {
+      recordObservabilityEvent({
+        category: "ai_provider",
+        event: "guest_case_ai_critical_deferred",
+        severity: "info",
+        message: "AI classified the first-turn description as critical with no clarifying answers yet — deferred to the rule-based result for this turn so the adaptive flow still asks a question.",
+      });
+      return ruleBased;
+    }
+
     // The AI can still land on "critical" (e.g. a description that reads as
     // unsafe without matching a hard-coded keyword) — treat that exactly like
     // a deterministic critical trigger: immediate safety guidance, required
     // review, no possible-causes speculation. criticalTrigger stays null
     // (not keyword-based) — callers already handle that (criticalReason()).
-    if (parsed.severity === "critical" || isCriticalAction(parsed.action)) {
+    if (aiWantsCritical) {
       return {
         criticalTrigger: null,
         criticalTriggered: true,
@@ -279,6 +345,8 @@ export async function generateGuestAssessment(
         reviewCategory: "critical_safety",
         reviewStatus: "review_required",
         explanation: parsed.explanation,
+        confidence: parsed.confidence,
+        confidenceLow: false,
       };
     }
 
@@ -295,6 +363,8 @@ export async function generateGuestAssessment(
       reviewCategory: null,
       reviewStatus: "automated_guidance_only",
       explanation: parsed.explanation,
+      confidence: parsed.confidence,
+      confidenceLow: false,
     };
   } catch (error) {
     recordObservabilityEvent({

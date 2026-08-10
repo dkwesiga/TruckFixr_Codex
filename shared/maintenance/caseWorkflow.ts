@@ -106,6 +106,15 @@ export const SAFETY_DISCLAIMERS = {
     "Do not operate unless an authorized qualified person has assessed the vehicle and an owner or manager has recorded the reason for overriding this recommendation.",
 } as const;
 
+// Shown when the guest "/try-one-case" AI classifier's confidence stayed
+// below threshold after its clarifying-question budget was used up (see
+// CONFIDENCE_THRESHOLD/CONFIDENCE_QUESTION_CAP in
+// server/services/guestCaseAi.ts). Fixed wording, never AI-authored, matching
+// SAFETY_DISCLAIMERS above — the recommendation itself is still shown; this is
+// an additive disclosure, not a replacement for it.
+export const LOW_CONFIDENCE_NOTICE =
+  "This assessment has lower-than-usual confidence given the details available. TruckFixr has flagged this case for a technical review — a team member will follow up.";
+
 // Human-readable case reference: MC-{YEAR}-{6-digit zero-padded sequence}.
 export function formatCaseReference(year: number, sequence: number): string {
   return `MC-${year}-${String(sequence).padStart(6, "0")}`;

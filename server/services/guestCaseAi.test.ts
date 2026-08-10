@@ -179,6 +179,69 @@ describe("generateGuestNextQuestion — AI path", () => {
   });
 });
 
+describe("generateGuestNextQuestion — confidence-driven question budget", () => {
+  const answeredThroughSafetySweep = { first_question: "x", [SAFETY_SWEEP_QUESTION.id]: "none" };
+
+  it("stops asking once confidence clears the threshold, without calling AI again", async () => {
+    ENV.openRouterApiKey = "test-key";
+    const q = await generateGuestNextQuestion(
+      { input: benignInput, answers: answeredThroughSafetySweep, confidence: 85 },
+      { fetcher: async () => { throw new Error("must not be called once confident"); } }
+    );
+    expect(q).toBeNull();
+  });
+
+  it("keeps asking while confidence is below threshold and the budget isn't exhausted yet", async () => {
+    ENV.openRouterApiKey = "test-key";
+    const q = await generateGuestNextQuestion(
+      { input: benignInput, answers: answeredThroughSafetySweep, confidence: 60 },
+      {
+        fetcher: async () =>
+          jsonResponse(
+            chatCompletion(
+              JSON.stringify({
+                id: "confidence_followup",
+                prompt: "One more detail?",
+                options: [
+                  { value: "a", label: "A" },
+                  { value: "b", label: "B" },
+                ],
+              })
+            )
+          ),
+      }
+    );
+    expect(q?.id).toBe("confidence_followup");
+  });
+
+  it("stops once the confidence-question budget (3 total) is exhausted, even though confidence is still low and the hard 5-cap hasn't been hit", async () => {
+    ENV.openRouterApiKey = "test-key";
+    const answers = { ...answeredThroughSafetySweep, confidence_followup: "x" }; // 3 answered
+    const q = await generateGuestNextQuestion(
+      { input: benignInput, answers, confidence: 40 },
+      { fetcher: async () => { throw new Error("must not be called once the budget is exhausted"); } }
+    );
+    expect(q).toBeNull();
+  });
+
+  it("still asks the mandatory safety sweep on turn 2 even when confidence is already high", async () => {
+    ENV.openRouterApiKey = "test-key";
+    const q = await generateGuestNextQuestion(
+      { input: benignInput, answers: { first_question: "x" }, confidence: 95 },
+      { fetcher: async () => { throw new Error("must not be called — the safety sweep is forced, not AI-generated"); } }
+    );
+    expect(q?.id).toBe(SAFETY_SWEEP_QUESTION.id);
+  });
+
+  it("ignores the confidence budget entirely when no confidence signal is present (unconfigured/deterministic path unchanged)", async () => {
+    const q = await generateGuestNextQuestion({ input: benignInput, answers: answeredThroughSafetySweep });
+    // No AI configured in this test's env (cleared in beforeEach) — falls back
+    // to the deterministic bank exactly as it did before confidence existed.
+    const expected = nextAdaptiveQuestion(benignInput, Object.keys(answeredThroughSafetySweep));
+    expect(q?.id).toBe(expected?.id);
+  });
+});
+
 describe("generateGuestAssessment — safety floor (no AI needed)", () => {
   it("returns the deterministic critical result unchanged, without calling AI", async () => {
     ENV.openRouterApiKey = "test-key";
@@ -212,6 +275,7 @@ describe("generateGuestAssessment — AI path", () => {
                 severity: "attention",
                 action: "schedule_service",
                 explanation: "The amber light plus rough idle suggests a sensor or ignition issue worth checking soon.",
+                confidence: 72,
               })
             )
           ),
@@ -222,14 +286,15 @@ describe("generateGuestAssessment — AI path", () => {
     expect(a.customerReadiness).toBe("service_soon");
     expect(a.criticalTriggered).toBe(false);
     expect(a.explanation).toContain("sensor or ignition");
+    expect(a.confidence).toBe(72);
     // recommendation stays the fixed, non-AI-worded string for this readiness bucket.
     expect(a.recommendation).toBe("Limit operation and arrange an inspection or service promptly.");
   });
 
-  it("treats an AI-classified critical severity the same as a deterministic critical trigger", async () => {
+  it("treats an AI-classified critical severity the same as a deterministic critical trigger, once at least one clarifying answer is on record", async () => {
     ENV.openRouterApiKey = "test-key";
     const a = await generateGuestAssessment(
-      { input: benignInput, answers: {} },
+      { input: benignInput, answers: { symptom_frequency: "worsening" } },
       {
         fetcher: async () =>
           jsonResponse(
@@ -238,6 +303,7 @@ describe("generateGuestAssessment — AI path", () => {
                 severity: "critical",
                 action: "pull_from_service",
                 explanation: "Given what was described, this should not keep operating.",
+                confidence: 90,
               })
             )
           ),
@@ -249,6 +315,37 @@ describe("generateGuestAssessment — AI path", () => {
     expect(a.reviewStatus).toBe("review_required");
   });
 
+  it("does NOT let the AI escalate straight to critical on the very first turn (no clarifying answers yet) — falls back to the rule-based result so a question still gets asked", async () => {
+    ENV.openRouterApiKey = "test-key";
+    const wontStartInput: GuestCaseInput = {
+      concernText: "truck won't start",
+      operatingStatus: "stopped",
+    };
+    const a = await generateGuestAssessment(
+      { input: wontStartInput, answers: {} },
+      {
+        fetcher: async () =>
+          jsonResponse(
+            chatCompletion(
+              JSON.stringify({
+                severity: "critical",
+                action: "tow",
+                explanation: "A vehicle that won't start should be towed immediately.",
+                confidence: 90,
+              })
+            )
+          ),
+      }
+    );
+    expect(a.criticalTriggered).toBe(false);
+    expect(a.customerReadiness).not.toBe("stop");
+    expect(a.safetyGuidance).toBeNull();
+    // Matches the rule-based engine exactly (no AI explanation attached either,
+    // since the AI's turn-1 verdict was discarded).
+    const expected = assessGuestCase(wontStartInput, {});
+    expect(a).toEqual(expected);
+  });
+
   it("falls back to the deterministic engine on invalid AI output (bad enum value)", async () => {
     ENV.openRouterApiKey = "test-key";
     const a = await generateGuestAssessment(
@@ -256,7 +353,9 @@ describe("generateGuestAssessment — AI path", () => {
       {
         fetcher: async () =>
           jsonResponse(
-            chatCompletion(JSON.stringify({ severity: "not_a_real_severity", action: "schedule_service", explanation: "x" }))
+            chatCompletion(
+              JSON.stringify({ severity: "not_a_real_severity", action: "schedule_service", explanation: "x", confidence: 90 })
+            )
           ),
       }
     );
