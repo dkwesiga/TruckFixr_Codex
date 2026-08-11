@@ -36,7 +36,7 @@
 // result until there's at least one clarifying answer to support it.
 
 import { z } from "zod";
-import { invokeWithOrchestration } from "./aiOrchestrator";
+import { extractJsonObject, invokeWithOrchestration } from "./aiOrchestrator";
 import { recordObservabilityEvent } from "./observability";
 import {
   MAX_ADAPTIVE_QUESTIONS,
@@ -214,7 +214,7 @@ export async function generateGuestNextQuestion(
 
     const raw = result.choices[0]?.message.content;
     const text = typeof raw === "string" ? raw : "";
-    const parsed = questionSchema.parse(JSON.parse(text));
+    const parsed = questionSchema.parse(JSON.parse(extractJsonObject(text)));
 
     if (parsed.id === SAFETY_SWEEP_QUESTION.id) {
       parsed.id = `${parsed.id}_ai`;
@@ -314,7 +314,7 @@ export async function generateGuestAssessment(
 
     const raw = result.choices[0]?.message.content;
     const text = typeof raw === "string" ? raw : "";
-    const parsed = assessmentSchema.parse(JSON.parse(text));
+    const parsed = assessmentSchema.parse(JSON.parse(extractJsonObject(text)));
 
     const aiWantsCritical = parsed.severity === "critical" || isCriticalAction(parsed.action);
 
