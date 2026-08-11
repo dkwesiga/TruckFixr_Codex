@@ -757,6 +757,12 @@ async function ensureAuthSchema(pool: Pool) {
     `);
 
     await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "faultCodeReferenceSources_partner_fleet_unique"
+      ON "faultCodeReferenceSources" ("sourceType", ("metadata"->>'partnerFleetId'))
+      WHERE "sourceType" = 'partner_shop';
+    `);
+
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS "adminFleetNotes" (
         "id" serial PRIMARY KEY,
         "fleetId" integer NOT NULL,

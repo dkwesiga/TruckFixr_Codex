@@ -56,10 +56,10 @@ function parseChecks(text: string) {
 function PartnerKnowledgeStudioInner() {
   const fleetsQuery = trpc.fleet.list.useQuery();
   const partnerFleet = useMemo(
-    () => (fleetsQuery.data ?? []).find((fleet: any) => fleet.isPartner) ?? null,
+    () => (fleetsQuery.data ?? []).find((fleet) => fleet.isPartner) ?? null,
     [fleetsQuery.data]
   );
-  const fleetId = partnerFleet?.id as number | undefined;
+  const fleetId = partnerFleet?.id;
 
   const utils = trpc.useUtils();
   const [openOutcomeId, setOpenOutcomeId] = useState<number | null>(null);
@@ -87,8 +87,9 @@ function PartnerKnowledgeStudioInner() {
   });
 
   const outcomes = outcomesQuery.data ?? [];
+  type PromotableOutcome = (typeof outcomes)[number];
 
-  function openFor(outcome: any) {
+  function openFor(outcome: PromotableOutcome) {
     setOpenOutcomeId(outcome.id);
     setForm({
       ...emptyForm(),
@@ -188,7 +189,7 @@ function PartnerKnowledgeStudioInner() {
         </Card>
       ) : (
         <div className="space-y-4">
-          {outcomes.map((outcome: any) => {
+          {outcomes.map((outcome) => {
             const isOpen = openOutcomeId === outcome.id;
             const parts = Array.isArray(outcome.partsReplaced) ? outcome.partsReplaced : [];
             return (
