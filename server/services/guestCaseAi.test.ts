@@ -119,6 +119,34 @@ describe("generateGuestNextQuestion — AI path", () => {
     });
   });
 
+  it("still succeeds when the model wraps its JSON in a markdown code fence (a common non-conformance even under json_object mode)", async () => {
+    ENV.openRouterApiKey = "test-key";
+    const q = await generateGuestNextQuestion(
+      { input: benignInput, answers: { first_question: "x", [SAFETY_SWEEP_QUESTION.id]: "none" } },
+      {
+        fetcher: async () =>
+          jsonResponse(
+            chatCompletion(
+              [
+                "Here's a good follow-up question:",
+                "```json",
+                JSON.stringify({
+                  id: "fenced_question",
+                  prompt: "Does it happen every time or only sometimes?",
+                  options: [
+                    { value: "every_time", label: "Every time" },
+                    { value: "sometimes", label: "Sometimes" },
+                  ],
+                }),
+                "```",
+              ].join("\n")
+            )
+          ),
+      }
+    );
+    expect(q?.id).toBe("fenced_question");
+  });
+
   it("renames an AI-returned 'safety_sweep' id to avoid colliding with the reserved one", async () => {
     ENV.openRouterApiKey = "test-key";
     const q = await generateGuestNextQuestion(
@@ -289,6 +317,33 @@ describe("generateGuestAssessment — AI path", () => {
     expect(a.confidence).toBe(72);
     // recommendation stays the fixed, non-AI-worded string for this readiness bucket.
     expect(a.recommendation).toBe("Limit operation and arrange an inspection or service promptly.");
+  });
+
+  it("still succeeds when the model wraps its JSON in a markdown code fence", async () => {
+    ENV.openRouterApiKey = "test-key";
+    const a = await generateGuestAssessment(
+      { input: benignInput, answers: {} },
+      {
+        fetcher: async () =>
+          jsonResponse(
+            chatCompletion(
+              [
+                "```json",
+                JSON.stringify({
+                  severity: "attention",
+                  action: "schedule_service",
+                  explanation: "Worth a look given the described symptom.",
+                  confidence: 70,
+                }),
+                "```",
+              ].join("\n")
+            )
+          ),
+      }
+    );
+    expect(a.internalSeverity).toBe("attention");
+    expect(a.customerReadiness).toBe("service_soon");
+    expect(a.confidence).toBe(70);
   });
 
   it("treats an AI-classified critical severity the same as a deterministic critical trigger, once at least one clarifying answer is on record", async () => {

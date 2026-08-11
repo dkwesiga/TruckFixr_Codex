@@ -23,6 +23,11 @@ function normalizeVin(vin: string) {
   return vin.trim().toUpperCase();
 }
 
+// NHTSA's vPIC API has no published SLA and is occasionally slow; this bounds
+// how long a guest waits on the "Decode" button before falling back to
+// manual entry.
+const VIN_DECODE_TIMEOUT_MS = 8_000;
+
 const VIN_MODEL_YEAR_MAP: Record<string, number> = {
   A: 1980,
   B: 1981,
@@ -159,6 +164,157 @@ function inferVehicleType(result: VinDecodeResult): VehicleTypeValue {
   return "straight_truck";
 }
 
+type DecodeVinResult = {
+  status: number;
+  body: Record<string, unknown>;
+};
+
+/**
+ * Core VIN decode logic against NHTSA, independent of Express — takes an
+ * injectable fetcher/timeout so it's directly unit-testable (see
+ * vehicleLookupRoutes.test.ts) without a request/response harness. The route
+ * handler below just forwards { status, body } as-is.
+ */
+export async function decodeVinFromNhtsa(
+  vin: string,
+  options?: { fetcher?: typeof fetch; timeoutMs?: number }
+): Promise<DecodeVinResult> {
+  const fetcher = options?.fetcher ?? fetch;
+  const timeoutMs = options?.timeoutMs ?? VIN_DECODE_TIMEOUT_MS;
+
+  try {
+    const endpoint = new URL(
+      `https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValuesExtended/${encodeURIComponent(vin)}`
+    );
+
+    endpoint.searchParams.set("format", "json");
+    const inferredModelYear = inferModelYearFromVin(vin);
+    if (inferredModelYear) {
+      endpoint.searchParams.set("modelyear", String(inferredModelYear));
+    }
+
+    // NHTSA's official vPIC decoder is public. If a team-level key is provided for a proxy
+    // or allowlist setup, we forward it as a best-effort query parameter.
+    if (ENV.nhtsaApiKey) {
+      endpoint.searchParams.set("api_key", ENV.nhtsaApiKey);
+    }
+
+    // NHTSA's public API has no SLA and can stall for well beyond what a
+    // guest will wait on a "Decode" button — bound it so a slow/hanging
+    // response fails fast into the existing manual-entry fallback instead
+    // of leaving the client spinner running indefinitely.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    let response: globalThis.Response;
+    try {
+      response = await fetcher(endpoint, {
+        headers: {
+          Accept: "application/json",
+        },
+        signal: controller.signal,
+      });
+    } catch (fetchError) {
+      if (fetchError instanceof Error && fetchError.name === "AbortError") {
+        return {
+          status: 504,
+          body: {
+            error: "The VIN decoder is taking too long to respond. Try again, or enter the vehicle details manually.",
+            fallback: {
+              allowManualEntry: true,
+              vin,
+            },
+          },
+        };
+      }
+      throw fetchError;
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!response.ok) {
+      return {
+        status: 502,
+        body: {
+          error: "Unable to decode VIN right now",
+          fallback: {
+            allowManualEntry: true,
+            vin,
+          },
+        },
+      };
+    }
+
+    const payload = (await response.json()) as { Results?: VinDecodeResult[] };
+    const result = payload.Results?.[0];
+
+    if (!result) {
+      return {
+        status: 404,
+        body: {
+          error: "No VIN data returned",
+          fallback: {
+            allowManualEntry: true,
+            vin,
+          },
+        },
+      };
+    }
+
+    const errorCode = result.ErrorCode?.trim();
+    const hasDecodeError = Boolean(errorCode && errorCode !== "0");
+    const hasUsefulDecodedData = Boolean(
+      result.Make?.trim() ||
+        result.Model?.trim() ||
+        result.ModelYear?.trim() ||
+        result.EngineManufacturer?.trim() ||
+        result.EngineModel?.trim()
+    );
+
+    if (hasDecodeError && !hasUsefulDecodedData) {
+      return {
+        status: 422,
+        body: {
+          error: result.ErrorText || "VIN could not be decoded",
+          fallback: {
+            allowManualEntry: true,
+            vin,
+          },
+        },
+      };
+    }
+
+    return {
+      status: 200,
+      body: {
+        vin,
+        make: result.Make?.trim() || "",
+        model: result.Model?.trim() || "",
+        year: Number(result.ModelYear) || null,
+        engineMake: inferEngineMake(result),
+        vehicleType: inferVehicleType(result),
+        decodedVehicleType: result.VehicleType?.trim() || "",
+        bodyClass: result.BodyClass?.trim() || "",
+        engineModel: result.EngineModel?.trim() || "",
+        engineDescription: buildEngineDescription(result),
+        warnings: hasDecodeError ? result.ErrorText?.trim() || "" : "",
+        suggestedVin: result.SuggestedVIN?.trim() || "",
+      },
+    };
+  } catch (error) {
+    console.error("[VIN Decode] Failed to decode VIN", error);
+    return {
+      status: 500,
+      body: {
+        error: "VIN decoding failed",
+        fallback: {
+          allowManualEntry: true,
+          vin,
+        },
+      },
+    };
+  }
+}
+
 export function registerVehicleLookupRoutes(app: Express) {
   app.post("/api/vehicles/extract-vin", async (req: Request, res: Response) => {
     const imageDataUrl = String(req.body?.imageDataUrl ?? "").trim();
@@ -204,98 +360,7 @@ export function registerVehicleLookupRoutes(app: Express) {
       return;
     }
 
-    try {
-      const endpoint = new URL(
-        `https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValuesExtended/${encodeURIComponent(vin)}`
-      );
-
-      endpoint.searchParams.set("format", "json");
-      const inferredModelYear = inferModelYearFromVin(vin);
-      if (inferredModelYear) {
-        endpoint.searchParams.set("modelyear", String(inferredModelYear));
-      }
-
-      // NHTSA's official vPIC decoder is public. If a team-level key is provided for a proxy
-      // or allowlist setup, we forward it as a best-effort query parameter.
-      if (ENV.nhtsaApiKey) {
-        endpoint.searchParams.set("api_key", ENV.nhtsaApiKey);
-      }
-
-      const response = await fetch(endpoint, {
-        headers: {
-          Accept: "application/json",
-        },
-      });
-
-      if (!response.ok) {
-        res.status(502).json({
-          error: "Unable to decode VIN right now",
-          fallback: {
-            allowManualEntry: true,
-            vin,
-          },
-        });
-        return;
-      }
-
-      const payload = await response.json() as { Results?: VinDecodeResult[] };
-      const result = payload.Results?.[0];
-
-      if (!result) {
-        res.status(404).json({
-          error: "No VIN data returned",
-          fallback: {
-            allowManualEntry: true,
-            vin,
-          },
-        });
-        return;
-      }
-
-      const errorCode = result.ErrorCode?.trim();
-      const hasDecodeError = Boolean(errorCode && errorCode !== "0");
-      const hasUsefulDecodedData = Boolean(
-        result.Make?.trim() ||
-          result.Model?.trim() ||
-          result.ModelYear?.trim() ||
-          result.EngineManufacturer?.trim() ||
-          result.EngineModel?.trim()
-      );
-
-      if (hasDecodeError && !hasUsefulDecodedData) {
-        res.status(422).json({
-          error: result.ErrorText || "VIN could not be decoded",
-          fallback: {
-            allowManualEntry: true,
-            vin,
-          },
-        });
-        return;
-      }
-
-      res.json({
-        vin,
-        make: result.Make?.trim() || "",
-        model: result.Model?.trim() || "",
-        year: Number(result.ModelYear) || null,
-        engineMake: inferEngineMake(result),
-        vehicleType: inferVehicleType(result),
-        decodedVehicleType: result.VehicleType?.trim() || "",
-        bodyClass: result.BodyClass?.trim() || "",
-        engineModel: result.EngineModel?.trim() || "",
-        engineDescription: buildEngineDescription(result),
-        warnings: hasDecodeError ? result.ErrorText?.trim() || "" : "",
-        suggestedVin: result.SuggestedVIN?.trim() || "",
-      });
-    } catch (error) {
-      console.error("[VIN Decode] Failed to decode VIN", error);
-      res.status(500).json({
-        error: "VIN decoding failed",
-        fallback: {
-          allowManualEntry: true,
-          vin,
-        },
-      });
-    }
+    const { status, body } = await decodeVinFromNhtsa(vin);
+    res.status(status).json(body);
   });
 }

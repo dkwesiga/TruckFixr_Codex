@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { ENV } from "../_core/env";
-import { invokeWithOrchestration } from "./aiOrchestrator";
+import { extractJsonObject, invokeWithOrchestration } from "./aiOrchestrator";
 
 function createJsonResponse(body: unknown, init?: { status?: number; statusText?: string }) {
   return new Response(JSON.stringify(body), {
@@ -11,6 +11,24 @@ function createJsonResponse(body: unknown, init?: { status?: number; statusText?
     },
   });
 }
+
+describe("extractJsonObject", () => {
+  it("passes through a clean JSON object unchanged", () => {
+    expect(extractJsonObject('{"a":1}')).toBe('{"a":1}');
+  });
+
+  it("extracts JSON wrapped in a ```json fence", () => {
+    expect(extractJsonObject('Here you go:\n```json\n{"a":1}\n```')).toBe('{"a":1}');
+  });
+
+  it("extracts JSON wrapped in a bare ``` fence", () => {
+    expect(extractJsonObject('```\n{"a":1}\n```')).toBe('{"a":1}');
+  });
+
+  it("extracts a JSON object embedded in surrounding prose with no fence", () => {
+    expect(extractJsonObject('Sure, the answer is {"a":1} — let me know if you need more.')).toBe('{"a":1}');
+  });
+});
 
 describe("aiOrchestrator", () => {
   beforeEach(() => {
