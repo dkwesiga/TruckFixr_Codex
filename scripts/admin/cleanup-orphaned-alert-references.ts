@@ -55,7 +55,7 @@ type OrphanRef = {
 const ORPHAN_REFS: OrphanRef[] = [
   { table: "inAppAlerts", column: "defectId", referencedTable: "defects", strategy: "null" },
   { table: "defectActions", column: "defectId", referencedTable: "defects", strategy: "null" },
-  { table: "inspectionFlags", column: "defectId", referencedTable: "defects", strategy: "null" },
+  { table: "inspectionReviewQueueItems", column: "defectId", referencedTable: "defects", strategy: "null" },
   { table: "inspectionReviewActions", column: "defectId", referencedTable: "defects", strategy: "null" },
   { table: "aiTriageRecords", column: "defectId", referencedTable: "defects", strategy: "null" },
   { table: "repairOutcomes", column: "defectId", referencedTable: "defects", strategy: "null" },

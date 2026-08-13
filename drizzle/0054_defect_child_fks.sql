@@ -27,7 +27,7 @@ UPDATE "defectActions" a SET "defectId" = NULL
 WHERE a."defectId" IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM "defects" d WHERE d."id" = a."defectId");
 
-UPDATE "inspectionFlags" a SET "defectId" = NULL
+UPDATE "inspectionReviewQueueItems" a SET "defectId" = NULL
 WHERE a."defectId" IS NOT NULL
   AND NOT EXISTS (SELECT 1 FROM "defects" d WHERE d."id" = a."defectId");
 
@@ -65,7 +65,7 @@ BEGIN
   FOR rec IN
     SELECT * FROM (VALUES
       ('defectActions', 'SET NULL'),
-      ('inspectionFlags', 'SET NULL'),
+      ('inspectionReviewQueueItems', 'SET NULL'),
       ('inspectionReviewActions', 'SET NULL'),
       ('aiTriageRecords', 'SET NULL'),
       ('repairOutcomes', 'SET NULL'),
