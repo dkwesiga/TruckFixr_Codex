@@ -56,6 +56,22 @@ describe("critical trigger detection", () => {
     const t = detectCriticalTrigger(input({ concernText: "I think the trailer brakes are on fire" }));
     expect(t?.code).toBe("fire");
   });
+
+  it("does not false-trigger 'fire' on common non-fire automotive phrasing (word-boundary regression)", () => {
+    expect(detectCriticalTrigger(input({ concernText: "truck won't start, cranks fine but never fires" }))).toBeNull();
+    expect(detectCriticalTrigger(input({ concernText: "engine has a misfire on cylinder 3" }))).toBeNull();
+    expect(detectCriticalTrigger(input({ concernText: "engine backfires under load" }))).toBeNull();
+    expect(detectCriticalTrigger(input({ concernText: "fired up fine this morning, no issues" }))).toBeNull();
+  });
+
+  it("does not false-trigger 'wheel off' on 'wheel offset' (word-boundary regression)", () => {
+    expect(detectCriticalTrigger(input({ concernText: "noticed a wheel offset issue after the alignment" }))).toBeNull();
+  });
+
+  it("still catches plural 'brakes' without a matching phrase (word-boundary regression)", () => {
+    const t = detectCriticalTrigger(input({ concernText: "brakes feel weak this morning" }));
+    expect(t?.code).toBe("brake_performance");
+  });
 });
 
 describe("adaptive-question cap is enforced for every input path", () => {

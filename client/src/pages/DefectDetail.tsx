@@ -185,10 +185,38 @@ function DefectDetailContent() {
       </div>
     );
   }
+  // Distinguish a genuine "not found" (deleted/reset defect) from a server-side
+  // failure loading it — otherwise a backend error looks identical to a missing
+  // record and hides the real problem.
+  if (defectQuery.isError && defectQuery.error?.data?.code !== "NOT_FOUND") {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 px-6 text-center text-slate-600">
+        <div className="max-w-md space-y-2">
+          <p className="text-lg font-semibold text-slate-900">We couldn&apos;t load this issue</p>
+          <p className="text-sm">
+            Something went wrong fetching it. This is a temporary problem on our side, not a
+            missing issue — please try again.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button onClick={() => void defectQuery.refetch()}>Try again</Button>
+          <Button variant="outline" onClick={() => navigate("/manager")}>
+            Back to dashboard
+          </Button>
+        </div>
+      </div>
+    );
+  }
   if (!defect) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 text-slate-600">
-        <p>Issue not found.</p>
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 px-6 text-center text-slate-600">
+        <div className="max-w-md space-y-2">
+          <p className="text-lg font-semibold text-slate-900">This issue is no longer available</p>
+          <p className="text-sm">
+            It may have been resolved, removed, or reset (for example, when demo data is
+            refreshed). The link you followed points to an issue that no longer exists.
+          </p>
+        </div>
         <Button variant="outline" onClick={() => navigate("/manager")}>
           Back to dashboard
         </Button>

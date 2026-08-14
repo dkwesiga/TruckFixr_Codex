@@ -52,7 +52,7 @@ export const CRITICAL_TRIGGERS: CriticalTrigger[] = [
   { code: "smoke", label: "Smoke", keywords: ["smoke", "smoking"] },
   { code: "collision_risk", label: "Collision-related mechanical risk", keywords: ["collision", "crash", "accident", "rollover", "rolled over"] },
   { code: "immediate_danger", label: "Immediate danger to people", keywords: ["injury", "injured", "someone hurt", "people in danger", "trapped", "hurt"] },
-  { code: "brake_performance", label: "Brake performance concern", keywords: ["no brakes", "brake failure", "brakes gone", "brake fade", "won't stop", "cannot stop", "brake"] },
+  { code: "brake_performance", label: "Brake performance concern", keywords: ["no brakes", "brake failure", "brakes gone", "brake fade", "won't stop", "cannot stop", "brake", "brakes"] },
   { code: "steering", label: "Steering concern", keywords: ["can't steer", "cannot steer", "won't steer", "loss of steering", "steering failure", "hard to steer"] },
   { code: "wheel_separation", label: "Wheel-separation concern", keywords: ["wheel coming off", "wheel separation", "wheel off", "studs sheared", "lugs sheared", "sheared studs"] },
   { code: "tire_instability", label: "Tire instability", keywords: ["blowout", "blow out", "tire blew", "tire shredded", "tread separation"] },
@@ -73,6 +73,22 @@ export interface GuestCaseInput {
 
 const norm = (s: string): string => s.toLowerCase();
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Whole-word/whole-phrase match, not naive substring — plain `.includes()`
+ * false-triggered on extremely common automotive phrasing (e.g. the "fire"
+ * keyword matching inside "never fires", "misfire", "backfire"; "wheel off"
+ * matching inside "wheel offset"), which was inflating benign no-start/
+ * alignment reports to CRITICAL. `\b` boundaries fix both without needing an
+ * exception list for every inflected form.
+ */
+function matchesKeyword(text: string, keyword: string): boolean {
+  return new RegExp(`\\b${escapeRegExp(keyword)}\\b`, "i").test(text);
+}
+
 /**
  * Returns the first matching critical trigger, or null. `unsafe_to_move` is
  * always critical (immediate danger). Otherwise matches concern text keywords.
@@ -91,7 +107,7 @@ export function detectCriticalTrigger(
   }
   const text = norm(input.concernText ?? "");
   for (const trigger of CRITICAL_TRIGGERS) {
-    if (trigger.keywords.some((kw) => text.includes(kw))) {
+    if (trigger.keywords.some((kw) => matchesKeyword(text, kw))) {
       return trigger;
     }
   }
