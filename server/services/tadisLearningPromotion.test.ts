@@ -95,9 +95,14 @@ vi.mock("../../drizzle/schema", () => {
 });
 vi.mock("../db", () => ({ getDb: mockDb.getDb }));
 vi.mock("./maintenanceActivityLog", () => ({ logMaintenanceActivity: async () => {} }));
-vi.mock("./partnerKnowledge", () => ({ detectLikelyPii: () => [] }));
+// Real implementation (not mocked) so the PII-scan-scope fix is actually
+// exercised end to end, not just assumed.
+vi.mock("./partnerKnowledge", async () => {
+  const actual = await vi.importActual<typeof import("./partnerKnowledge")>("./partnerKnowledge");
+  return { detectLikelyPii: actual.detectLikelyPii };
+});
 
-import { evaluateAndUpsertCandidate } from "./tadisLearningPromotion";
+import { evaluateAndUpsertCandidate, promoteCandidate } from "./tadisLearningPromotion";
 
 const FLEET = 1;
 const CASE = 100;
@@ -199,5 +204,59 @@ describe("evaluateAndUpsertCandidate", () => {
     await evaluateAndUpsertCandidate({ fleetId: FLEET, outcomeId: OUTCOME });
     expect(store.tadisLearningRecords).toHaveLength(1);
     expect(store.tadisLearningRecords[0].eligibilityStatus).toBe("excluded");
+  });
+
+  it("scans symptoms, fault codes, and parts for PII, not just fault/repair/rationale text", async () => {
+    seedCommon();
+    // A phone number smuggled into a "symptom" field — must be caught even
+    // though it never touches confirmedFault/repairPerformed/rationale.
+    store.maintenanceDecisions[0].likelyCausesJson = ["call customer at 416-555-0199 for details"];
+    store.repairOutcomes.push({
+      id: OUTCOME, fleetId: FLEET, vehicleId: "veh-1", maintenanceCaseId: CASE,
+      outcomeState: "confirmed", confirmedFault: "Failed outlet NOx sensor", repairPerformed: "Replaced outlet NOx sensor",
+      evidenceQualityScore: 92, evidenceQualityTier: "confirmed",
+      verifiedByUserId: 9, recordedByUserId: 5, systemCategory: "emissions_aftertreatment",
+      confirmedFaultCode: "SPN3226/FMI4", partsReplaced: ["outlet NOx sensor"],
+    });
+
+    await evaluateAndUpsertCandidate({ fleetId: FLEET, outcomeId: OUTCOME });
+    const record = store.tadisLearningRecords[0];
+    expect(record.rootCause).toBe("[withheld pending PII review]");
+    expect(record.repairAction).toBe("[withheld pending PII review]");
+    expect(record.symptomsJson).toEqual([]);
+  });
+});
+
+describe("promoteCandidate", () => {
+  it("refuses to promote a record a platform admin already excluded", async () => {
+    seedCommon();
+    store.repairOutcomes.push({
+      id: OUTCOME, fleetId: FLEET, vehicleId: "veh-1", maintenanceCaseId: CASE,
+      outcomeState: "confirmed", confirmedFault: "Failed outlet NOx sensor", repairPerformed: "Replaced outlet NOx sensor",
+      evidenceQualityScore: 92, evidenceQualityTier: "confirmed", verifiedByUserId: 9, recordedByUserId: 5,
+    });
+    await evaluateAndUpsertCandidate({ fleetId: FLEET, outcomeId: OUTCOME });
+    const learningRecordId = store.tadisLearningRecords[0].id;
+    store.tadisLearningRecords[0].eligibilityStatus = "excluded";
+
+    await expect(promoteCandidate({ learningRecordId, actorUserId: 7 })).rejects.toMatchObject({
+      code: "BAD_REQUEST",
+    });
+    expect(store.tadisLearningRecords[0].eligibilityStatus).toBe("excluded");
+  });
+
+  it("promotes a live candidate", async () => {
+    seedCommon();
+    store.repairOutcomes.push({
+      id: OUTCOME, fleetId: FLEET, vehicleId: "veh-1", maintenanceCaseId: CASE,
+      outcomeState: "confirmed", confirmedFault: "Failed outlet NOx sensor", repairPerformed: "Replaced outlet NOx sensor",
+      evidenceQualityScore: 92, evidenceQualityTier: "confirmed", verifiedByUserId: 9, recordedByUserId: 5,
+    });
+    await evaluateAndUpsertCandidate({ fleetId: FLEET, outcomeId: OUTCOME });
+    const learningRecordId = store.tadisLearningRecords[0].id;
+
+    const updated = await promoteCandidate({ learningRecordId, actorUserId: 7 });
+    expect(updated.eligibilityStatus).toBe("promoted");
+    expect(store.tadisLearningRecords[0].eligibilityStatus).toBe("promoted");
   });
 });

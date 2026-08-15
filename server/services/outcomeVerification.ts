@@ -1,7 +1,7 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "../db";
-import { maintenanceCases, outcomeRevisions, repairCycles, repairOutcomes } from "../../drizzle/schema";
+import { maintenanceCases, outcomeRevisions, repairCycles, repairOutcomes, vehicles } from "../../drizzle/schema";
 import {
   canTransitionOutcome,
   type EvidenceSource,
@@ -24,6 +24,10 @@ export async function listOutcomesForCase(fleetId: number, caseId: number) {
     .where(and(eq(repairOutcomes.fleetId, fleetId), eq(repairOutcomes.maintenanceCaseId, caseId)));
 }
 
+// Excludes superseded rows: once reviseVerifiedOutcome() replaces a
+// verified/confirmed outcome, the old row must never accept further
+// lifecycle mutations (confirm/fail/etc) — those apply only to the current,
+// active outcome row for a cycle.
 async function requireOutcome(
   db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
   fleetId: number,
@@ -32,9 +36,20 @@ async function requireOutcome(
   const [row] = await db
     .select()
     .from(repairOutcomes)
-    .where(and(eq(repairOutcomes.id, outcomeId), eq(repairOutcomes.fleetId, fleetId)))
+    .where(
+      and(
+        eq(repairOutcomes.id, outcomeId),
+        eq(repairOutcomes.fleetId, fleetId),
+        isNull(repairOutcomes.supersededAt)
+      )
+    )
     .limit(1);
-  if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Repair outcome not found in this fleet." });
+  if (!row) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: "Repair outcome not found in this fleet, or it has been superseded by a revision.",
+    });
+  }
   return row;
 }
 
@@ -83,6 +98,36 @@ export async function reportOutcome(input: {
     .where(and(eq(maintenanceCases.id, input.caseId), eq(maintenanceCases.fleetId, input.fleetId)))
     .limit(1);
   if (!caseRow) throw new TRPCError({ code: "NOT_FOUND", message: "Case not found in this fleet." });
+
+  // A capability-granted (non-manager) caller supplies vehicleId/repairCycleId
+  // directly — never trust them without confirming they belong to this fleet
+  // and this case, or an outcome could be attached to another tenant's
+  // vehicle or another case's repair cycle.
+  const [vehicleRow] = await db
+    .select({ id: vehicles.id })
+    .from(vehicles)
+    .where(and(eq(vehicles.id, input.vehicleId), eq(vehicles.fleetId, input.fleetId)))
+    .limit(1);
+  if (!vehicleRow) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Vehicle not found in this fleet." });
+  }
+
+  if (input.repairCycleId != null) {
+    const [cycleRow] = await db
+      .select({ id: repairCycles.id })
+      .from(repairCycles)
+      .where(
+        and(
+          eq(repairCycles.id, input.repairCycleId),
+          eq(repairCycles.fleetId, input.fleetId),
+          eq(repairCycles.caseId, input.caseId)
+        )
+      )
+      .limit(1);
+    if (!cycleRow) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Repair cycle not found on this case." });
+    }
+  }
 
   const now = new Date();
   const [created] = await db

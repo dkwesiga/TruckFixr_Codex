@@ -1,4 +1,4 @@
-import { inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb } from "../db";
 import { tadisLearningRecords } from "../../drizzle/schema";
 
@@ -98,9 +98,14 @@ function scoreRecord(query: LearningRetrievalQuery, record: RankedLearningRecord
   return { score: Math.round(score * 100) / 100, matched };
 }
 
-// Ranks promoted + candidate learning records for a query context. Excluded
-// records are never returned. Historical-import records are still eligible
-// (their capped evidenceQualityScore already discounts them naturally).
+// Ranks PROMOTED learning records only for a query context. A "candidate"
+// has not yet cleared the explicit human promotion gate (see
+// tadisLearningPromotion.ts::promoteCandidate) — it must never be
+// retrievable as evidence, whether from this staff preview or (once wired
+// in) live diagnosis. Staff review unreviewed candidates separately via
+// partner.listLearningCandidates. Excluded records are never returned.
+// Historical-import records are still eligible once promoted (their capped
+// evidenceQualityScore already discounts them naturally).
 export async function rankLearningRecordsForQuery(
   query: LearningRetrievalQuery
 ): Promise<RankedLearningRecord[]> {
@@ -110,7 +115,7 @@ export async function rankLearningRecordsForQuery(
   const rows = await db
     .select()
     .from(tadisLearningRecords)
-    .where(inArray(tadisLearningRecords.eligibilityStatus, ["promoted", "candidate"]))
+    .where(eq(tadisLearningRecords.eligibilityStatus, "promoted"))
     .limit(500);
 
   const ranked = rows

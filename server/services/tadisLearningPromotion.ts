@@ -112,7 +112,20 @@ export async function evaluateAndUpsertCandidate(input: { fleetId: number; outco
 
   // De-identification: only generalizable fields cross the boundary. No
   // customer name/phone/email/invoice/pricing/private notes/fleet identity.
-  const piiScanTargets = [outcome.confirmedFault, outcome.repairPerformed, decision?.rationale ?? ""]
+  // Every free-text field that gets copied onto the shared record must be
+  // scanned — symptoms/likely causes, fault codes, and parts all originate
+  // from unrestricted shop input just like the fault/repair/rationale text.
+  const symptomsForScan = Array.isArray(decision?.likelyCausesJson) ? (decision.likelyCausesJson as string[]) : [];
+  const faultCodesForScan = outcome.confirmedFaultCode ? [outcome.confirmedFaultCode] : [];
+  const partsForScan = Array.isArray(outcome.partsReplaced) ? (outcome.partsReplaced as string[]) : [];
+  const piiScanTargets = [
+    outcome.confirmedFault,
+    outcome.repairPerformed,
+    decision?.rationale ?? "",
+    ...symptomsForScan,
+    ...faultCodesForScan,
+    ...partsForScan,
+  ]
     .filter(Boolean)
     .join(" \n ");
   const piiKinds = detectLikelyPii(piiScanTargets);
@@ -137,15 +150,15 @@ export async function evaluateAndUpsertCandidate(input: { fleetId: number; outco
     engineMake: vehicle?.engineMake ?? null,
     engineModel: null,
     assetType: vehicle?.assetType ?? null,
-    symptomsJson: (decision?.likelyCausesJson ?? null) as never,
-    faultCodesJson: outcome.confirmedFaultCode ? ([outcome.confirmedFaultCode] as never) : null,
+    symptomsJson: (piiKinds.length === 0 ? symptomsForScan : []) as never,
+    faultCodesJson: (piiKinds.length === 0 ? faultCodesForScan : []) as never,
     affectedSystem: outcome.systemCategory ?? null,
     affectedSubsystem: outcome.componentCategory ?? null,
     diagnosticFindings: piiKinds.length === 0 ? decision?.rationale ?? null : null,
     rootCause: piiKinds.length === 0 ? outcome.confirmedFault : "[withheld pending PII review]",
     resolutionCategory: decision?.resolutionCategory ?? null,
     repairAction: piiKinds.length === 0 ? outcome.repairPerformed : "[withheld pending PII review]",
-    partsReplacedJson: (outcome.partsReplaced ?? null) as never,
+    partsReplacedJson: (piiKinds.length === 0 ? partsForScan : []) as never,
     verificationMethod: outcome.verificationMethod ?? null,
     outcomeState: outcome.outcomeState,
     evidenceQualityScore: outcome.evidenceQualityScore ?? 0,
@@ -195,6 +208,17 @@ export async function promoteCandidate(input: {
     .limit(1);
   if (!record) throw new TRPCError({ code: "NOT_FOUND", message: "Learning record not found." });
 
+  // Only a live candidate may be promoted — in particular, a record a
+  // platform admin has already excluded must never be reachable by this
+  // path, even by the partner shop that owns it (§4: only Platform Admin
+  // may exclude, and that decision must stick).
+  if (record.eligibilityStatus !== "candidate") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `This record is "${record.eligibilityStatus}" and cannot be promoted from here.`,
+    });
+  }
+
   if (record.rootCause === "[withheld pending PII review]" || record.repairAction === "[withheld pending PII review]") {
     throw new TRPCError({
       code: "BAD_REQUEST",
@@ -202,6 +226,8 @@ export async function promoteCandidate(input: {
     });
   }
 
+  // Re-check eligibilityStatus in the WHERE clause too, so a concurrent
+  // exclusion between the read above and this write can't be raced past.
   const [updated] = await db
     .update(tadisLearningRecords)
     .set({
@@ -210,8 +236,15 @@ export async function promoteCandidate(input: {
       promotedAt: new Date(),
       updatedAt: new Date(),
     })
-    .where(eq(tadisLearningRecords.id, record.id))
+    .where(and(eq(tadisLearningRecords.id, record.id), eq(tadisLearningRecords.eligibilityStatus, "candidate")))
     .returning();
+
+  if (!updated) {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "This record was changed by someone else (e.g. excluded) just now. Refresh and try again.",
+    });
+  }
 
   await logMaintenanceActivity({
     fleetId: record.originFleetId,

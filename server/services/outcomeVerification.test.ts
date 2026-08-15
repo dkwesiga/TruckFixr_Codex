@@ -10,6 +10,7 @@ const { store, mockDb } = vi.hoisted(() => {
     repairCycles: [] as any[],
     repairOutcomes: [] as any[],
     outcomeRevisions: [] as any[],
+    vehicles: [] as any[],
     seq: 0,
   };
 
@@ -71,6 +72,7 @@ const { store, mockDb } = vi.hoisted(() => {
       store.repairCycles = [];
       store.repairOutcomes = [];
       store.outcomeRevisions = [];
+      store.vehicles = [];
       store.seq = 0;
     },
   };
@@ -80,6 +82,7 @@ const { store, mockDb } = vi.hoisted(() => {
 vi.mock("drizzle-orm", () => ({
   and: (...ps: any[]) => ({ __match: (r: any) => ps.every((p) => (p?.__match ? p.__match(r) : true)) }),
   eq: (col: any, val: any) => ({ __match: (r: any) => r[col?.__col ?? col] === val }),
+  isNull: (col: any) => ({ __match: (r: any) => r[col?.__col ?? col] == null }),
 }));
 
 vi.mock("../../drizzle/schema", () => {
@@ -93,6 +96,7 @@ vi.mock("../../drizzle/schema", () => {
     repairCycles: mk("repairCycles"),
     repairOutcomes: mk("repairOutcomes"),
     outcomeRevisions: mk("outcomeRevisions"),
+    vehicles: mk("vehicles"),
   };
 });
 
@@ -116,6 +120,8 @@ const CASE = 100;
 beforeEach(() => {
   mockDb.reset();
   store.maintenanceCases.push({ id: CASE, fleetId: FLEET, reference: "MC-2026-000001" });
+  store.vehicles.push({ id: "veh-1", fleetId: FLEET });
+  store.vehicles.push({ id: "veh-other-fleet", fleetId: 999 });
 });
 
 describe("reportOutcome", () => {
@@ -131,6 +137,40 @@ describe("reportOutcome", () => {
     });
     expect(outcome.outcomeState).toBe("reported");
     expect(outcome.verifiedAt).toBeFalsy();
+  });
+
+  it("rejects a vehicle that does not belong to this fleet (cross-tenant guard)", async () => {
+    await expect(
+      reportOutcome({
+        fleetId: FLEET,
+        caseId: CASE,
+        actorUserId: 5,
+        confirmedFault: "x",
+        repairPerformed: "y",
+        evidenceSource: "shop_verified",
+        vehicleId: "veh-other-fleet",
+      })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(store.repairOutcomes).toHaveLength(0);
+  });
+
+  it("rejects a repair cycle that belongs to a different case", async () => {
+    store.maintenanceCases.push({ id: CASE + 1, fleetId: FLEET, reference: "MC-2026-000002" });
+    store.repairCycles.push({ id: 500, fleetId: FLEET, caseId: CASE + 1, cycleNumber: 1 });
+
+    await expect(
+      reportOutcome({
+        fleetId: FLEET,
+        caseId: CASE,
+        repairCycleId: 500,
+        actorUserId: 5,
+        confirmedFault: "x",
+        repairPerformed: "y",
+        evidenceSource: "shop_verified",
+        vehicleId: "veh-1",
+      })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(store.repairOutcomes).toHaveLength(0);
   });
 });
 
@@ -304,6 +344,36 @@ describe("reviseVerifiedOutcome", () => {
     expect(store.outcomeRevisions).toHaveLength(1);
     expect(store.outcomeRevisions[0].requiresReVerification).toBe(true);
     expect(store.outcomeRevisions[0].changedByUserId).toBe(42);
+  });
+
+  it("rejects further lifecycle mutations on the superseded row once a revision exists", async () => {
+    const outcome = await reportOutcome({
+      fleetId: FLEET,
+      caseId: CASE,
+      actorUserId: 5,
+      confirmedFault: "Original fault text",
+      repairPerformed: "y",
+      evidenceSource: "shop_verified",
+      vehicleId: "veh-1",
+    });
+    await verifyOutcome({ fleetId: FLEET, outcomeId: outcome.id, actorUserId: 9, verificationMethod: "road_test" });
+    await reviseVerifiedOutcome({
+      fleetId: FLEET,
+      outcomeId: outcome.id,
+      actorUserId: 42,
+      reason: "Correction.",
+      patch: { confirmedFault: "Corrected fault text" },
+    });
+
+    // The old (now superseded) row must reject confirm/fail — the append-only
+    // revision history would otherwise be undermined by mutating a row that
+    // has already been replaced.
+    await expect(
+      confirmOutcome({ fleetId: FLEET, outcomeId: outcome.id, actorUserId: 9, confirmationEvidenceType: "no_comeback_time_elapsed" })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(
+      markOutcomeFailed({ fleetId: FLEET, outcomeId: outcome.id, actorUserId: 9, failureNotes: "should not apply" })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
   it("refuses to revise an outcome that isn't verified/confirmed yet", async () => {

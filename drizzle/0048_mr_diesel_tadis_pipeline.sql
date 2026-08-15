@@ -131,14 +131,26 @@ CREATE POLICY "partnerProfiles_select_policy" ON "partnerProfiles"
   FOR SELECT TO authenticated
   USING ("user_has_fleet_access"("fleetId", "current_app_user_id"()));
 
--- Seed Mr Diesel Inc's profile if the fleet already exists (idempotent; a
--- normal onboarding flow creates this row going forward). Silently does
--- nothing if no such fleet exists yet in this environment.
+-- Backfill a profile row for every existing partner fleet so the table's
+-- privacy-preserving default applies uniformly (idempotent; a normal
+-- onboarding flow creates this row going forward for new partners).
+-- Deliberately does NOT opt any fleet into deidentified_learning here — an
+-- `isPartner = true` filter would silently flip every partner tenant in the
+-- environment (not just Mr Diesel) out of the private_only default.
 INSERT INTO "partnerProfiles" ("fleetId", "tenantType", "businessName", "contributionPolicy")
-SELECT "id", 'repair_shop', "name", 'deidentified_learning'
+SELECT "id", 'repair_shop', "name", 'private_only'
 FROM "fleets"
 WHERE "isPartner" = true
 ON CONFLICT ("fleetId") DO NOTHING;
+
+-- Mr Diesel Inc, and only Mr Diesel Inc, defaults to deidentified_learning
+-- per the pipeline spec (§13). Matched by name since no stable identifier
+-- exists yet at migration time; a real onboarding flow should instead call
+-- partnerProfiles.setContributionPolicy explicitly.
+UPDATE "partnerProfiles"
+SET "contributionPolicy" = 'deidentified_learning', "updatedAt" = now()
+WHERE "fleetId" IN (SELECT "id" FROM "fleets" WHERE "isPartner" = true AND "name" ILIKE 'Mr Diesel%')
+  AND "contributionPolicy" = 'private_only';
 
 -- ---------------------------------------------------------------------------
 -- tadisLearningRecords: de-identified knowledge-base candidates (§13/§15).
