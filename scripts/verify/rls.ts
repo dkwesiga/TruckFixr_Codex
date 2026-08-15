@@ -73,6 +73,8 @@ const POST_0012_RLS_TABLES = [
   "repairDocuments",
   "repairAuthorizations",
   "partnerProfiles",
+  "tadisLearningRecords",
+  "outcomeRevisions",
 ] as const;
 
 async function assertPost0012RlsEnabled(client: PoolClient) {

@@ -59,6 +59,12 @@ const AdminFleetDetail = lazyWithChunkRecovery(
 const PartnerKnowledgeStudio = lazyWithChunkRecovery(
   () => import("./pages/PartnerKnowledgeStudio")
 );
+const ShopCaseCapture = lazyWithChunkRecovery(
+  () => import("./pages/ShopCaseCapture")
+);
+const TadisAnalyticsDashboard = lazyWithChunkRecovery(
+  () => import("./pages/admin/TadisAnalyticsDashboard")
+);
 const InspectionReportDvir = lazyWithChunkRecovery(
   () => import("./pages/InspectionReportDvir")
 );
@@ -322,6 +328,8 @@ function Router() {
           component={FaultCodeReviewDashboard}
         />
         <Route path={"/partner/knowledge"} component={PartnerKnowledgeStudio} />
+        <Route path={"/partner/cases/new"} component={ShopCaseCapture} />
+        <Route path={"/admin/tadis"} component={TadisAnalyticsDashboard} />
         <Route path={"/404"} component={NotFound} />
         <Route path={"/"} component={HomePage} />
         <Route component={NotFound} />

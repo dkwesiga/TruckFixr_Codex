@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { protectedProcedure, router } from "../_core/trpc";
+import { protectedProcedure, staffProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import {
   faultCodeReferenceApprovals,
@@ -9,6 +9,7 @@ import {
   faultCodeReferenceSources,
   fleets,
   repairOutcomes,
+  tadisLearningRecords,
 } from "../../drizzle/schema";
 import { canManageVehicleAccess } from "../services/vehicleAccess";
 import {
@@ -16,6 +17,14 @@ import {
   describePromotionError,
   RISK_LEVELS,
 } from "../services/partnerKnowledge";
+import {
+  CONTRIBUTION_POLICIES,
+  ensurePartnerProfile,
+  getPartnerProfile,
+  setContributionPolicy,
+} from "../services/partnerProfiles";
+import { excludeLearningRecord, promoteCandidate } from "../services/tadisLearningPromotion";
+import { rankLearningRecordsForQuery } from "../services/tadisLearningRetrieval";
 
 const referenceDraftSchema = z.object({
   codeSystem: z.string().trim().min(1).max(64),
@@ -267,5 +276,116 @@ export const partnerRouter = router({
         referenceId: createdReference.id,
         reviewStatus: "needs_review" as const,
       };
+    }),
+
+  // ---- Partner profile / contribution policy (§3/§13) -------------------
+  getProfile: protectedProcedure
+    .input(z.object({ fleetId: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      const db = assertDb(await getDb());
+      await requirePartnerFleet(db, ctx.user, input.fleetId);
+      const profile = await ensurePartnerProfile({ fleetId: input.fleetId });
+      return profile ?? (await getPartnerProfile(input.fleetId));
+    }),
+
+  updateContributionPolicy: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().int().positive(),
+        contributionPolicy: z.enum(CONTRIBUTION_POLICIES),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = assertDb(await getDb());
+      await requirePartnerFleet(db, ctx.user, input.fleetId);
+      return setContributionPolicy({
+        fleetId: input.fleetId,
+        contributionPolicy: input.contributionPolicy,
+        actorUserId: ctx.user.id,
+      });
+    }),
+
+  // ---- TADIS learning-record candidates (§12/§13) ------------------------
+  listLearningCandidates: protectedProcedure
+    .input(z.object({ fleetId: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      const db = assertDb(await getDb());
+      await requirePartnerFleet(db, ctx.user, input.fleetId);
+      return db
+        .select()
+        .from(tadisLearningRecords)
+        .where(
+          and(
+            eq(tadisLearningRecords.originFleetId, input.fleetId),
+            eq(tadisLearningRecords.eligibilityStatus, "candidate")
+          )
+        )
+        .orderBy(desc(tadisLearningRecords.createdAt))
+        .limit(100);
+    }),
+
+  // A partner shop may promote its own de-identified candidate. TruckFixr
+  // staff can also promote on the shop's behalf via the staff procedure below.
+  promoteLearningRecord: protectedProcedure
+    .input(z.object({ fleetId: z.number().int().positive(), learningRecordId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const db = assertDb(await getDb());
+      await requirePartnerFleet(db, ctx.user, input.fleetId);
+      const [record] = await db
+        .select({ id: tadisLearningRecords.id, originFleetId: tadisLearningRecords.originFleetId })
+        .from(tadisLearningRecords)
+        .where(eq(tadisLearningRecords.id, input.learningRecordId))
+        .limit(1);
+      if (!record || record.originFleetId !== input.fleetId) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "This learning record does not belong to your shop." });
+      }
+      return promoteCandidate({ learningRecordId: input.learningRecordId, actorUserId: ctx.user.id });
+    }),
+
+  // Platform admin only (§4): flag/exclude a learning record from retrieval.
+  excludeLearningRecord: staffProcedure
+    .input(
+      z.object({
+        learningRecordId: z.number().int().positive(),
+        reason: z.string().trim().min(1).max(1000),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      return excludeLearningRecord({
+        learningRecordId: input.learningRecordId,
+        actorUserId: ctx.user.id,
+        reason: input.reason,
+      });
+    }),
+
+  // Explainability preview (§15): staff-only view of how retrieval would
+  // rank existing learning records for a hypothetical query, without running
+  // a live diagnosis. Useful for QA and for demonstrating the ranking.
+  previewRetrieval: staffProcedure
+    .input(
+      z.object({
+        make: z.string().trim().max(100).optional(),
+        model: z.string().trim().max(100).optional(),
+        modelYear: z.number().int().optional(),
+        engineMake: z.string().trim().max(100).optional(),
+        symptoms: z.array(z.string()).optional(),
+        faultCodes: z.array(z.string()).optional(),
+        affectedSystem: z.string().trim().max(64).optional(),
+      })
+    )
+    .query(async ({ input }) => {
+      const ranked = await rankLearningRecordsForQuery(input);
+      return ranked.map((item) => ({
+        id: item.record.id,
+        make: item.record.make,
+        model: item.record.model,
+        modelYear: item.record.modelYear,
+        outcomeState: item.record.outcomeState,
+        evidenceQualityScore: item.record.evidenceQualityScore,
+        evidenceQualityTier: item.record.evidenceQualityTier,
+        eligibilityStatus: item.record.eligibilityStatus,
+        score: item.score,
+        matchedSignals: item.matchedSignals,
+      }));
     }),
 });
