@@ -21,6 +21,7 @@
     "utm": "tsx scripts/marketing/utm.ts",
     "seed:fault-codes": "tsx scripts/seed-fault-code-references.ts",
     "seed:partner": "tsx scripts/seed-partner-mr-diesel.ts",
+    "seed:partner-staff": "tsx scripts/seed-partner-mr-diesel-staff.ts",
     "seed:demo": "tsx scripts/seed-demo-data.ts",
     "seed:demo:rollback": "tsx scripts/seed-demo-data-rollback.ts",
     "seed:maintenance-demo": "tsx scripts/seed-maintenance-demo.ts",
