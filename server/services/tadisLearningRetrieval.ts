@@ -3,12 +3,14 @@ import { getDb } from "../db";
 import { tadisLearningRecords } from "../../drizzle/schema";
 
 // Evidence-weighted retrieval over de-identified TADIS learning records
-// (§15). Standalone and additive: it does not modify tadisCore.ts's existing
-// hardcoded case library. `toSimilarCaseInputs()` below maps ranked results
-// into tadisCore's own `SimilarCaseSchema` shape so a caller building a
-// DiagnosticInputRequest can simply spread these into `similarCases` — see
-// the integration note in the deliverables summary for the one remaining
-// wiring step at the live diagnosis call site.
+// (§15). Standalone and additive: it does not modify tadisCore.ts's
+// internals or its existing hardcoded case library — a caller builds a
+// DiagnosticInputRequest and spreads `getSimilarCasesForDiagnosis()`'s
+// result into `similarCases`, which tadisCore.ts's own
+// buildDiagnosticContext()/retrieveSimilarCases() already merge with
+// BUILT_IN_CASES and use to score CAUSE_LIBRARY entries (see
+// aiTriage.ts::runDefectTriage and inspections.ts::runInspectionTriage for
+// the live call sites).
 
 export type LearningRetrievalQuery = {
   make?: string | null;
@@ -128,6 +130,23 @@ export async function rankLearningRecordsForQuery(
 
   const limit = Math.max(1, Math.min(20, query.limit ?? 8));
   return ranked.slice(0, limit);
+}
+
+// One-call convenience for diagnosis call sites (§15 live wiring): rank +
+// map in one step, and NEVER throw — a retrieval failure (DB hiccup, empty
+// knowledge base, etc) must degrade to no similar cases, not block a
+// diagnosis. Mirrors the fail-open convention used throughout aiOrchestrator
+// consumers (ocr.ts, guestCaseAiReport.ts).
+export async function getSimilarCasesForDiagnosis(
+  query: LearningRetrievalQuery
+): Promise<ReturnType<typeof toSimilarCaseInputs>> {
+  try {
+    const ranked = await rankLearningRecordsForQuery(query);
+    return toSimilarCaseInputs(ranked);
+  } catch (error) {
+    console.error("[tadisLearningRetrieval] getSimilarCasesForDiagnosis failed; continuing with none", error);
+    return [];
+  }
 }
 
 // Maps ranked learning records into tadisCore's SimilarCaseSchema shape

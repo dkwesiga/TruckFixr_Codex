@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const analyzeDiagnosticWithAi = vi.fn();
+const getSimilarCasesForDiagnosis = vi.fn(async () => [] as unknown[]);
 
 vi.mock("./services/tadisCore", () => ({
   analyzeDiagnosticWithAi: (...args: unknown[]) => analyzeDiagnosticWithAi(...args),
+}));
+vi.mock("./services/tadisLearningRetrieval", () => ({
+  getSimilarCasesForDiagnosis: (...args: unknown[]) => getSimilarCasesForDiagnosis(...args),
 }));
 
 import { mapTriageAction, runDefectTriage } from "./services/aiTriage";
@@ -27,6 +31,8 @@ function analysis(overrides: Record<string, unknown> = {}) {
 
 afterEach(() => {
   analyzeDiagnosticWithAi.mockReset();
+  getSimilarCasesForDiagnosis.mockReset();
+  getSimilarCasesForDiagnosis.mockResolvedValue([]);
 });
 
 describe("mapTriageAction", () => {
@@ -104,5 +110,52 @@ describe("runDefectTriage", () => {
       severity: "critical",
     });
     expect(result.recommended_action).toBe("do_not_operate");
+  });
+
+  it("wires evidence-weighted TADIS learning records into the diagnosis call (§15)", async () => {
+    const similarCases = [{ id: "tadis-learning-1", causeId: "worn-pads", cause: "Worn brake pads" }];
+    getSimilarCasesForDiagnosis.mockResolvedValue(similarCases);
+    analyzeDiagnosticWithAi.mockResolvedValue(analysis());
+
+    await runDefectTriage({
+      vehicleId: "TRUCK-1",
+      vehicle,
+      defectDescription: "Squealing brakes",
+      severity: "medium",
+      symptoms: ["squealing"],
+      faultCodes: ["SPN123"],
+    });
+
+    expect(getSimilarCasesForDiagnosis).toHaveBeenCalledWith(
+      expect.objectContaining({
+        make: vehicle.make,
+        model: vehicle.model,
+        modelYear: vehicle.year,
+        symptoms: ["squealing"],
+        faultCodes: ["SPN123"],
+      })
+    );
+    expect(analyzeDiagnosticWithAi).toHaveBeenCalledWith(
+      expect.objectContaining({ similarCases })
+    );
+  });
+
+  it("degrades to the conservative fallback (never throws) if TADIS retrieval fails", async () => {
+    // getSimilarCasesForDiagnosis is itself designed to never reject (it
+    // catches internally in tadisLearningRetrieval.ts) — this simulates a
+    // caller-level mock misbehaving anyway, to prove runDefectTriage's
+    // existing outer try/catch still absorbs it safely.
+    getSimilarCasesForDiagnosis.mockRejectedValue(new Error("retrieval down"));
+    analyzeDiagnosticWithAi.mockResolvedValue(analysis());
+
+    const result = await runDefectTriage({
+      vehicleId: "TRUCK-1",
+      vehicle,
+      defectDescription: "Squealing brakes",
+      severity: "medium",
+    });
+
+    expect(result.confidence_score).toBe(0);
+    expect(result.manager_summary).toContain("AI triage unavailable");
   });
 });
