@@ -32,6 +32,14 @@ export type TruckFixrPlan = {
   extraTrailerPriceCadMonthly: number | null;
   aiDiagnosticSessionLimit: number | null;
   aiSessionLimitType: "total" | "monthly" | "custom";
+  /**
+   * "hard": exceeding aiDiagnosticSessionLimit blocks further AI calls.
+   * "soft": the limit is a fair-use guideline — calls still succeed past it,
+   * but usage beyond it is flagged internally for review. AI marginal cost
+   * is negligible, so paid plans favor "soft" to avoid discouraging the
+   * case volume that grows confirmed TADIS outcomes.
+   */
+  aiUsageEnforcement: "hard" | "soft";
   creditCardRequired: boolean;
   unlimitedInspections: boolean;
   unlimitedUsers: boolean;
@@ -60,6 +68,7 @@ export const TRUCKFIXR_PLANS: Record<PlanKey, TruckFixrPlan> = {
     extraTrailerPriceCadMonthly: 5,
     aiDiagnosticSessionLimit: 10,
     aiSessionLimitType: "total",
+    aiUsageEnforcement: "hard",
     creditCardRequired: false,
     unlimitedInspections: true,
     unlimitedUsers: true,
@@ -85,6 +94,7 @@ export const TRUCKFIXR_PLANS: Record<PlanKey, TruckFixrPlan> = {
     extraTrailerPriceCadMonthly: 5,
     aiDiagnosticSessionLimit: 20,
     aiSessionLimitType: "monthly",
+    aiUsageEnforcement: "soft",
     creditCardRequired: false,
     unlimitedInspections: true,
     unlimitedUsers: true,
@@ -110,6 +120,7 @@ export const TRUCKFIXR_PLANS: Record<PlanKey, TruckFixrPlan> = {
     extraTrailerPriceCadMonthly: 5,
     aiDiagnosticSessionLimit: 75,
     aiSessionLimitType: "monthly",
+    aiUsageEnforcement: "soft",
     creditCardRequired: true,
     unlimitedInspections: true,
     unlimitedUsers: true,
@@ -130,11 +141,12 @@ export const TRUCKFIXR_PLANS: Record<PlanKey, TruckFixrPlan> = {
     billingInterval: "monthly",
     priceCadMonthly: 99,
     priceCadAnnual: 990,
-    poweredVehicleLimit: 10,
-    includedTrailerLimit: 10,
+    poweredVehicleLimit: 12,
+    includedTrailerLimit: 12,
     extraTrailerPriceCadMonthly: 5,
     aiDiagnosticSessionLimit: 150,
     aiSessionLimitType: "monthly",
+    aiUsageEnforcement: "soft",
     creditCardRequired: true,
     unlimitedInspections: true,
     unlimitedUsers: true,
@@ -147,8 +159,8 @@ export const TRUCKFIXR_PLANS: Record<PlanKey, TruckFixrPlan> = {
     publicSelectable: true,
     recommended: true,
     description: "Recommended for growing fleets that want full operational coverage and more AI room.",
-    publicNote: "Includes up to 10 powered vehicles, 10 active trailers, and 150 AI diagnostic sessions per month.",
-    cta: "Start 30-Day Fleet Pilot",
+    publicNote: "Includes up to 12 powered vehicles, 12 active trailers, and 150 AI diagnostic sessions per month (fair-use — not a hard cutoff).",
+    cta: "Choose Plan",
   },
   fleet_pro: {
     name: "Fleet Pro",
@@ -156,11 +168,12 @@ export const TRUCKFIXR_PLANS: Record<PlanKey, TruckFixrPlan> = {
     billingInterval: "monthly",
     priceCadMonthly: 199,
     priceCadAnnual: 1990,
-    poweredVehicleLimit: 20,
-    includedTrailerLimit: 20,
+    poweredVehicleLimit: 25,
+    includedTrailerLimit: 25,
     extraTrailerPriceCadMonthly: 5,
     aiDiagnosticSessionLimit: 300,
     aiSessionLimitType: "monthly",
+    aiUsageEnforcement: "soft",
     creditCardRequired: true,
     unlimitedInspections: true,
     unlimitedUsers: true,
@@ -172,7 +185,7 @@ export const TRUCKFIXR_PLANS: Record<PlanKey, TruckFixrPlan> = {
     prioritySupport: true,
     publicSelectable: true,
     description: "For larger small-fleet operations that need the highest included capacity in the MVP lineup.",
-    publicNote: "Includes up to 20 powered vehicles, 20 active trailers, and 300 AI diagnostic sessions per month.",
+    publicNote: "Includes up to 25 powered vehicles, 25 active trailers, and 300 AI diagnostic sessions per month (fair-use — not a hard cutoff).",
     cta: "Choose Plan",
   },
   custom_fleet: {
@@ -186,6 +199,7 @@ export const TRUCKFIXR_PLANS: Record<PlanKey, TruckFixrPlan> = {
     extraTrailerPriceCadMonthly: null,
     aiDiagnosticSessionLimit: null,
     aiSessionLimitType: "custom",
+    aiUsageEnforcement: "soft",
     creditCardRequired: false,
     unlimitedInspections: true,
     unlimitedUsers: true,
@@ -241,6 +255,7 @@ export function getTruckFixrPlanLimits(planKey: PlanKey) {
     includedTrailerLimit: plan.includedTrailerLimit,
     totalActiveTrailerLimit: plan.includedTrailerLimit,
     aiDiagnosticSessionLimit: plan.aiDiagnosticSessionLimit,
+    aiUsageEnforcement: plan.aiUsageEnforcement,
   };
 }
 

@@ -72,6 +72,9 @@ type TruckFixrStripeCheckoutInput = {
   extraTrailerQuantity?: number;
   successUrl: string;
   cancelUrl: string;
+  // Amount (CAD cents) from a completed $99 pilot to credit toward this checkout,
+  // per the pilot's 14-day conversion window. See pilotApplications.pilotCreditAmountCents.
+  pilotCreditCentsToApply?: number;
 };
 
 type TruckFixrPilotCheckoutInput = {
@@ -199,6 +202,19 @@ function getTruckFixrPriceId(planKey: PlanKey, billingInterval: Exclude<TruckFix
   return resolveTruckFixrPrice(planKey, billingInterval).value;
 }
 
+/** Creates a single-use, one-time Stripe coupon for a pilot conversion credit. */
+async function createPilotCreditCoupon(amountCents: number) {
+  return stripeRequest<{ id: string }>("/v1/coupons", {
+    form: {
+      amount_off: amountCents,
+      currency: "cad",
+      duration: "once",
+      max_redemptions: 1,
+      name: "TruckFixr pilot credit",
+    },
+  });
+}
+
 export async function createTruckFixrCheckoutSession(input: TruckFixrStripeCheckoutInput) {
   const priceResolution = resolveTruckFixrPrice(input.planKey, input.billingInterval);
   const configuredPriceId = priceResolution.value || getTruckFixrPriceId(input.planKey, input.billingInterval);
@@ -215,6 +231,9 @@ export async function createTruckFixrCheckoutSession(input: TruckFixrStripeCheck
 
   const planLimits = getTruckFixrPlanLimits(input.planKey);
   const extraTrailerQuantity = Math.max(0, Math.floor(input.extraTrailerQuantity ?? 0));
+  const pilotCreditCents = Math.max(0, Math.floor(input.pilotCreditCentsToApply ?? 0));
+  const pilotCoupon = pilotCreditCents > 0 ? await createPilotCreditCoupon(pilotCreditCents) : null;
+
   const form: Record<string, string | number | boolean | null | undefined> = {
     mode: "subscription",
     customer: input.customerId,
@@ -222,7 +241,10 @@ export async function createTruckFixrCheckoutSession(input: TruckFixrStripeCheck
     cancel_url: input.cancelUrl,
     "line_items[0][price]": priceId,
     "line_items[0][quantity]": 1,
-    allow_promotion_codes: true,
+    // Stripe rejects allow_promotion_codes combined with discounts, so a pilot
+    // credit takes priority over letting the customer enter their own code.
+    allow_promotion_codes: pilotCoupon ? undefined : true,
+    ...(pilotCoupon ? { "discounts[0][coupon]": pilotCoupon.id } : {}),
     "subscription_data[metadata][company_id]": input.companyId,
     "subscription_data[metadata][plan_key]": input.planKey,
     "subscription_data[metadata][billing_interval]": input.billingInterval,

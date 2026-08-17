@@ -97,6 +97,17 @@ vi.mock("./services/companyAccess", () => ({
   canManageCompanyBilling: vi.fn(async () => true),
 }));
 
+const { getUnconsumedPilotCredit, consumePilotCredit } = vi.hoisted(() => ({
+  getUnconsumedPilotCredit: vi.fn(async () => null),
+  consumePilotCredit: vi.fn(async () => undefined),
+}));
+
+vi.mock("./services/pilotApplications", () => ({
+  beginCheckout: vi.fn(),
+  getUnconsumedPilotCredit,
+  consumePilotCredit,
+}));
+
 import { appRouter } from "./routers";
 import { processStripeWebhookEvent } from "./_core/stripeBillingRoutes";
 
@@ -288,6 +299,73 @@ describe("subscription billing flow", () => {
       })
     );
     expect(result.checkoutUrl).toContain("checkout.stripe.test");
+  });
+
+  it("applies an unconsumed pilot conversion credit to checkout and consumes it", async () => {
+    createStripeCustomer.mockResolvedValue({ id: "cus_123" });
+    createTruckFixrCheckoutSession.mockResolvedValue({ url: "https://checkout.stripe.test/session_456" });
+    getSubscriptionState.mockResolvedValue({
+      tier: "free",
+      billingStatus: "active",
+      effectiveTier: "free",
+      activeFleetId: 1,
+      billingCadence: "monthly",
+      stripeCustomerId: "cus_123",
+      stripeSubscriptionId: null,
+      stripePriceId: null,
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      trialStart: null,
+      trialEnd: null,
+      cancelAtPeriodEnd: false,
+    });
+    getUnconsumedPilotCredit.mockResolvedValue({ id: 42, amountCents: 9900 });
+
+    const caller = appRouter.createCaller(createContext());
+    await caller.subscriptions.createCheckoutSession({
+      planKey: "fleet_growth",
+      billingInterval: "monthly",
+      successPath: "/profile?subscription=success",
+      cancelPath: "/pricing?subscription=cancelled",
+    });
+
+    expect(createTruckFixrCheckoutSession).toHaveBeenCalledWith(
+      expect.objectContaining({ pilotCreditCentsToApply: 9900 })
+    );
+    expect(consumePilotCredit).toHaveBeenCalledWith(42);
+  });
+
+  it("does not consume a pilot credit if checkout session creation fails", async () => {
+    createStripeCustomer.mockResolvedValue({ id: "cus_123" });
+    createTruckFixrCheckoutSession.mockRejectedValue(new Error("Stripe unavailable"));
+    getSubscriptionState.mockResolvedValue({
+      tier: "free",
+      billingStatus: "active",
+      effectiveTier: "free",
+      activeFleetId: 1,
+      billingCadence: "monthly",
+      stripeCustomerId: "cus_123",
+      stripeSubscriptionId: null,
+      stripePriceId: null,
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      trialStart: null,
+      trialEnd: null,
+      cancelAtPeriodEnd: false,
+    });
+    getUnconsumedPilotCredit.mockResolvedValue({ id: 42, amountCents: 9900 });
+
+    const caller = appRouter.createCaller(createContext());
+    await expect(
+      caller.subscriptions.createCheckoutSession({
+        planKey: "fleet_growth",
+        billingInterval: "monthly",
+        successPath: "/profile?subscription=success",
+        cancelPath: "/pricing?subscription=cancelled",
+      })
+    ).rejects.toThrow("Stripe unavailable");
+
+    expect(consumePilotCredit).not.toHaveBeenCalled();
   });
 
   it("surfaces billing state and restricted paid access in settings", async () => {

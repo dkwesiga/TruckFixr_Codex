@@ -21,7 +21,7 @@ import {
   syncSubscriptionState,
 } from "../services/subscriptions";
 import { recordPilotMilestone, redeemPilotAccessCode } from "../services/pilotAccess";
-import { beginCheckout } from "../services/pilotApplications";
+import { beginCheckout, consumePilotCredit, getUnconsumedPilotCredit } from "../services/pilotApplications";
 import { ENV } from "../_core/env";
 import { canManageCompanyBilling } from "../services/companyAccess";
 import {
@@ -162,6 +162,8 @@ export const subscriptionsRouter = router({
         await ensureStripeCustomerId(ctx.user.id, customer.id);
       }
 
+      const pilotCredit = await getUnconsumedPilotCredit(current.activeFleetId);
+
       const session =
         "planKey" in input
           ? await createTruckFixrCheckoutSession({
@@ -172,6 +174,7 @@ export const subscriptionsRouter = router({
               extraTrailerQuantity: input.extraTrailerQuantity ?? 0,
               successUrl: getAbsoluteUrl(input.successPath),
               cancelUrl: getAbsoluteUrl(input.cancelPath),
+              pilotCreditCentsToApply: pilotCredit?.amountCents ?? undefined,
             })
           : await createTruckFixrCheckoutSession({
               customerId,
@@ -181,7 +184,15 @@ export const subscriptionsRouter = router({
               extraTrailerQuantity: 0,
               successUrl: getAbsoluteUrl(input.successPath),
               cancelUrl: getAbsoluteUrl(input.cancelPath),
+              pilotCreditCentsToApply: pilotCredit?.amountCents ?? undefined,
             });
+
+      // Consume immediately once the checkout session is created (not on payment
+      // completion) so a customer can't reload /pricing and start a second
+      // checkout that stacks another coupon before finishing the first one.
+      if (pilotCredit) {
+        await consumePilotCredit(pilotCredit.id);
+      }
 
       return {
         checkoutUrl: session.url,
