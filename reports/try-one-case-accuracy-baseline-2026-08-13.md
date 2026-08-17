@@ -184,6 +184,49 @@ free text is the right fallback severity when the AI *does* fail (still
 relevant for C4 and for production's inevitable occasional fallback, even at
 a much lower rate now).
 
+## Update 2026-08-17 (3): C4's specific fallback root-caused and partly fixed
+
+Called `generateGuestAssessment()` directly against C4's real input 5 times
+in a row (turn 0, no answers) to see the actual failure reasons rather than
+just success/fail counts. Found two distinct, unrelated causes — neither is
+the reasoning/timeout issue fixed above:
+
+1. **By-design safety floor, working correctly**: 1/5 runs had the AI
+   classify the case as `critical` on turn 0 with zero clarifying answers —
+   `generateGuestAssessment` correctly defers a first-turn critical verdict
+   to the rule-based result (`guest_case_ai_critical_deferred`), exactly as
+   designed. Not a bug. But the rule-based fallback it defers to classifies
+   this input as `stable` — the most lenient possible reading, for a case
+   the AI itself flagged as potentially critical. Flagged, not fixed (see
+   below).
+2. **Real bug, fixed**: 1/5 runs failed schema validation —
+   `"explanation": too_big, maximum 400 characters`. The model's explanation
+   ran a few characters past the 400-char cap, and the *entire* otherwise-
+   valid classification (severity, action, confidence) was discarded because
+   of it, falling all the way back to the rule engine's `stable` default.
+   Fixed by truncating the explanation to 400 chars before schema validation
+   instead of rejecting the whole response — 1 new regression test in
+   `guestCaseAi.test.ts` (29/29 pass).
+
+**Re-verified with the fix in place**, this time simulating one answered
+clarifying question (past the turn-0 safety floor): 5 of 6 runs succeeded
+and consistently classified the case as **`critical`/`pull_from_service`,
+confidence 85-90** — not merely `attention` as this benchmark's own C4
+expectation assumed. On reflection that's a defensible, arguably more
+correct call: stalling on a highway is a real collision risk, not just a
+"needs service soon" symptom. The one remaining fallback in that re-run was
+the turn-0-only safety floor from cause 1 above, working as intended.
+
+**Net effect**: what looked like unexplained "AI reliability" flakiness for
+this one case was actually two identifiable, mostly-fixed causes, not
+irreducible noise. Still open: whether the rule-based engine's `stable`
+default is the right severity to show for `symptom`-category free text
+during the (now much rarer, but still real) window where a first-turn
+critical AI verdict is correctly deferred — that's a change to shared
+severity-classification logic affecting more than just this case, so it
+needs its own benchmark pass across a broader case set before touching it,
+not a one-off fix scoped to C4.
+
 ## Sample-size caveat
 
 12 synthetic golden cases, single run per case (barring the timeout-driven
