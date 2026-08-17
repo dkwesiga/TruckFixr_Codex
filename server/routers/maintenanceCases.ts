@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import {
   CASE_STATUSES,
@@ -19,6 +20,7 @@ import {
   getCaseForFleet,
   listCasesForFleet,
   reopenCase,
+  setCaseTadisEligibilityOverride,
   transitionCaseStatus,
 } from "../services/maintenanceCases";
 import {
@@ -36,17 +38,78 @@ import {
 } from "../services/repairCycles";
 import { getCaseTimeline, getDowntimeBoard } from "../services/maintenanceBoards";
 import { MaintenanceRecommendationAdapter } from "@shared/maintenance/recommendationAdapter";
+import { hasMaintenanceCapability } from "../services/maintenancePermissions";
+import { MAINTENANCE_CAPABILITIES, type MaintenanceCapability } from "@shared/maintenance/permissions";
+import { CASE_TYPES, RESOLUTION_CATEGORIES } from "@shared/tadis/caseTypes";
+import {
+  CONFIRMATION_EVIDENCE_TYPES,
+  VERIFICATION_METHODS,
+  EVIDENCE_SOURCES,
+} from "@shared/tadis/outcomeLifecycle";
+import { createShopCase as createShopCaseService } from "../services/shopCaseCapture";
+import {
+  confirmOutcome as confirmOutcomeService,
+  listOutcomesForCase,
+  markOutcomeFailed as markOutcomeFailedService,
+  recordOutcomeImpact as recordOutcomeImpactService,
+  reportOutcome as reportOutcomeService,
+  reviseVerifiedOutcome as reviseVerifiedOutcomeService,
+  verifyOutcome as verifyOutcomeService,
+} from "../services/outcomeVerification";
+import { ESTIMATE_SOURCES } from "@shared/tadis/roiImpact";
+import { isStaffAdminUser } from "../_core/trpc";
 
 const PAGE_DEFAULT = 25;
 const PAGE_MAX = 100;
 const caseStatusEnum = z.enum(CASE_STATUSES as unknown as [string, ...string[]]);
 const severityEnum = z.enum(MAINTENANCE_SEVERITIES as unknown as [string, ...string[]]);
 const actionEnum = z.enum(MAINTENANCE_ACTIONS as unknown as [string, ...string[]]);
+const caseTypeEnum = z.enum(CASE_TYPES as unknown as [string, ...string[]]);
+const resolutionCategoryEnum = z.enum(RESOLUTION_CATEGORIES as unknown as [string, ...string[]]);
+const verificationMethodEnum = z.enum(VERIFICATION_METHODS as unknown as [string, ...string[]]);
+const confirmationEvidenceEnum = z.enum(CONFIRMATION_EVIDENCE_TYPES as unknown as [string, ...string[]]);
+const evidenceSourceEnum = z.enum(EVIDENCE_SOURCES as unknown as [string, ...string[]]);
 
 async function gateManages(ctx: { user: { id: number; role: string } }, requestedFleetId?: number | null) {
   const fleetId = await resolveActiveFleetId({ user: ctx.user, requestedFleetId: requestedFleetId ?? null });
   await assertManagesFleet({ user: ctx.user, fleetId });
   await requireFleetFeature(fleetId, CAP.maintenanceCases);
+  return fleetId;
+}
+
+// Service Advisor / Technician gate (§4): resolves the caller's fleet,
+// requires the fleetFeatures flag, and requires the named maintenance
+// capability — owners/managers always pass implicitly (see
+// hasMaintenanceCapability), so this is strictly narrower than gateManages,
+// not an alternative tenant boundary.
+async function gateCapability(
+  ctx: { user: { id: number; role: string } },
+  requestedFleetId: number | null | undefined,
+  capability: MaintenanceCapability
+) {
+  const fleetId = await resolveActiveFleetId({ user: ctx.user, requestedFleetId: requestedFleetId ?? null });
+  await requireFleetFeature(fleetId, CAP.maintenanceCases);
+  const allowed = await hasMaintenanceCapability({ fleetId, user: ctx.user, capability });
+  if (!allowed) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "You do not have the capability required for this action.",
+    });
+  }
+  return fleetId;
+}
+
+// Revision-of-a-verified-outcome gate (§17): TruckFixr staff OR this fleet's
+// owner/manager. Deliberately NOT satisfiable by a bare capability grant —
+// correcting an already-verified technical fact is not an ordinary
+// technician action.
+async function gateReviseVerified(
+  ctx: { user: { id: number; role: string; internalAdminRole?: string | null; email?: string | null } },
+  requestedFleetId: number | null | undefined
+) {
+  const fleetId = await resolveActiveFleetId({ user: ctx.user, requestedFleetId: requestedFleetId ?? null });
+  if (isStaffAdminUser(ctx.user)) return fleetId;
+  await assertManagesFleet({ user: ctx.user, fleetId });
   return fleetId;
 }
 
@@ -78,13 +141,14 @@ export const maintenanceCasesRouter = router({
     .query(async ({ ctx, input }) => {
       const fleetId = await resolveActiveFleetId({ user: ctx.user, requestedFleetId: input.fleetId ?? null });
       await requireFleetFeature(fleetId, CAP.maintenanceCases);
-      const [caseRow, decisions, cycles, timeline] = await Promise.all([
+      const [caseRow, decisions, cycles, timeline, outcomes] = await Promise.all([
         getCaseForFleet(fleetId, input.caseId),
         listDecisions(fleetId, input.caseId),
         listCycles(fleetId, input.caseId),
         getCaseTimeline({ fleetId, caseId: input.caseId }),
+        listOutcomesForCase(fleetId, input.caseId),
       ]);
-      return { case: caseRow, decisions, cycles, timeline };
+      return { case: caseRow, decisions, cycles, timeline, outcomes };
     }),
 
   createManual: adminProcedure
@@ -360,5 +424,253 @@ export const maintenanceCasesRouter = router({
       const fleetId = await resolveActiveFleetId({ user: ctx.user, requestedFleetId: input?.fleetId ?? null });
       await requireFleetFeature(fleetId, CAP.maintenanceCases);
       return getDowntimeBoard({ fleetId });
+    }),
+
+  // ---- Mr Diesel shop workflow: Service Advisor / Technician capability-
+  // gated actions (§4-§10). None of these require owner/manager — a granted
+  // member passes gateCapability via hasMaintenanceCapability. ------------
+
+  // Fast VIN-first case capture (§5/§6). Creates the vehicle record if this
+  // is a new walk-in vehicle, then the case, then a lightweight "intake
+  // logged" first Resolution.
+  createShopCase: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().optional(),
+        caseType: caseTypeEnum,
+        complaint: z.string().min(1).max(4000),
+        symptoms: z.array(z.string().trim().min(1)).max(20).optional(),
+        faultCodes: z.array(z.string().trim().min(1)).max(20).optional(),
+        severity: severityEnum.optional(),
+        vehicle: z.object({
+          vin: z.string().trim().length(17).optional(),
+          unitNumber: z.string().trim().max(50).optional(),
+          licensePlate: z.string().trim().max(20).optional(),
+          make: z.string().trim().max(100).optional(),
+          model: z.string().trim().max(100).optional(),
+          year: z.number().int().min(1980).max(2100).optional(),
+          engineMake: z.string().trim().max(100).optional(),
+          assetType: z.enum(["tractor", "straight_truck", "trailer", "other"]).optional(),
+          vinSource: z.enum(["vin_decoder", "tenant_record", "technician_input", "historical_import", "ai_extraction"]),
+        }),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const fleetId = await gateCapability(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.createCase);
+      return createShopCaseService({
+        fleetId,
+        actorUserId: ctx.user.id,
+        vehicle: input.vehicle,
+        caseType: input.caseType as never,
+        complaint: input.complaint,
+        symptoms: input.symptoms,
+        faultCodes: input.faultCodes,
+        severity: input.severity as never,
+      });
+    }),
+
+  // Record a Resolution (§8) — likely cause, recommended test/repair,
+  // monitor, tow, etc. A Case may accumulate several of these; each becomes
+  // its own maintenanceDecisions version.
+  addResolution: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().optional(),
+        caseId: z.number(),
+        severity: severityEnum,
+        proposedAction: actionEnum,
+        resolutionCategory: resolutionCategoryEnum,
+        rationale: z.string().max(4000).optional(),
+        likelyCauses: z.array(z.string()).optional(),
+        immediateChecks: z.array(z.string()).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const fleetId = await gateCapability(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.recordResolution);
+      return addDecision({
+        fleetId,
+        caseId: input.caseId,
+        actorUserId: ctx.user.id,
+        source: "manual",
+        severity: input.severity as never,
+        proposedAction: input.proposedAction as never,
+        resolutionCategory: input.resolutionCategory,
+        rationale: input.rationale,
+        likelyCauses: input.likelyCauses,
+        immediateChecks: input.immediateChecks,
+      });
+    }),
+
+  // ---- Outcome lifecycle (§9/§10) ---------------------------------------
+  reportOutcome: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().optional(),
+        caseId: z.number(),
+        vehicleId: z.string().min(1),
+        repairCycleId: z.number().optional(),
+        confirmedFault: z.string().min(1).max(4000),
+        repairPerformed: z.string().min(1).max(4000),
+        partsReplaced: z.array(z.string()).optional(),
+        evidenceSource: evidenceSourceEnum,
+        repairNotes: z.string().max(4000).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const fleetId = await gateCapability(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.submitRepairOutcome);
+      return reportOutcomeService({
+        fleetId,
+        caseId: input.caseId,
+        vehicleId: input.vehicleId,
+        repairCycleId: input.repairCycleId ?? null,
+        actorUserId: ctx.user.id,
+        confirmedFault: input.confirmedFault,
+        repairPerformed: input.repairPerformed,
+        partsReplaced: input.partsReplaced,
+        evidenceSource: input.evidenceSource as never,
+        repairNotes: input.repairNotes,
+      });
+    }),
+
+  // Technician-only: the one action that turns a Reported outcome into a
+  // Verified one (§4/§9).
+  verifyOutcome: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().optional(),
+        outcomeId: z.number(),
+        verificationMethod: verificationMethodEnum,
+        verificationNotes: z.string().max(2000).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const fleetId = await gateCapability(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.verifyOutcome);
+      return verifyOutcomeService({
+        fleetId,
+        outcomeId: input.outcomeId,
+        actorUserId: ctx.user.id,
+        verificationMethod: input.verificationMethod as never,
+        verificationNotes: input.verificationNotes,
+      });
+    }),
+
+  confirmOutcome: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().optional(),
+        outcomeId: z.number(),
+        confirmationEvidenceType: confirmationEvidenceEnum,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const fleetId = await gateCapability(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.confirmOutcome);
+      return confirmOutcomeService({
+        fleetId,
+        outcomeId: input.outcomeId,
+        actorUserId: ctx.user.id,
+        confirmationEvidenceType: input.confirmationEvidenceType as never,
+      });
+    }),
+
+  markOutcomeFailed: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().optional(),
+        outcomeId: z.number(),
+        failureNotes: z.string().min(1).max(4000),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const fleetId = await gateCapability(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.submitRepairOutcome);
+      return markOutcomeFailedService({
+        fleetId,
+        outcomeId: input.outcomeId,
+        actorUserId: ctx.user.id,
+        failureNotes: input.failureNotes,
+      });
+    }),
+
+  // Optional downtime/financial impact (§20/§21). Never affects technical
+  // evidence quality — see shared/tadis/qualityScore.ts, which has no such
+  // input fields at all.
+  recordOutcomeImpact: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().optional(),
+        outcomeId: z.number(),
+        estimatedDowntimeAvoidedHours: z.number().min(0).max(10_000).optional(),
+        estimatedTowAvoidedCents: z.number().int().min(0).optional(),
+        estimatedRoadCallAvoidedCents: z.number().int().min(0).optional(),
+        estimateSource: z.enum(ESTIMATE_SOURCES),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const fleetId = await gateCapability(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.submitRepairOutcome);
+      return recordOutcomeImpactService({
+        fleetId,
+        outcomeId: input.outcomeId,
+        actorUserId: ctx.user.id,
+        estimatedDowntimeAvoidedHours: input.estimatedDowntimeAvoidedHours,
+        estimatedTowAvoidedCents: input.estimatedTowAvoidedCents,
+        estimatedRoadCallAvoidedCents: input.estimatedRoadCallAvoidedCents,
+        estimateSource: input.estimateSource,
+      });
+    }),
+
+  // Correct a technical fact on an already Verified/Confirmed outcome (§17).
+  // TruckFixr staff or this fleet's owner/manager only — never a bare
+  // capability grant. Always creates a revision; never overwrites in place.
+  reviseVerifiedOutcome: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().optional(),
+        outcomeId: z.number(),
+        reason: z.string().min(1).max(2000),
+        patch: z.object({
+          confirmedFault: z.string().max(4000).optional(),
+          repairPerformed: z.string().max(4000).optional(),
+          confirmedFaultCode: z.string().max(64).optional(),
+          systemCategory: z.string().max(64).optional(),
+          componentCategory: z.string().max(64).optional(),
+        }),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const fleetId = await gateReviseVerified(ctx, input.fleetId);
+      return reviseVerifiedOutcomeService({
+        fleetId,
+        outcomeId: input.outcomeId,
+        actorUserId: ctx.user.id,
+        reason: input.reason,
+        patch: input.patch,
+      });
+    }),
+
+  // Human override of the auto-suggested TADIS eligibility (§12). Owner/
+  // manager of the fleet or TruckFixr staff.
+  setTadisEligibilityOverride: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().optional(),
+        caseId: z.number(),
+        eligibility: z.enum([
+          "not_assessed",
+          "operational_record",
+          "tadis_candidate",
+          "tadis_learning_record",
+          "excluded",
+        ]),
+        reason: z.string().max(2000).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const fleetId = await gateReviseVerified(ctx, input.fleetId);
+      return setCaseTadisEligibilityOverride({
+        fleetId,
+        caseId: input.caseId,
+        eligibility: input.eligibility,
+        reason: input.reason ?? null,
+        actorUserId: ctx.user.id,
+      });
     }),
 });

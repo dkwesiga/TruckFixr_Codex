@@ -16,6 +16,15 @@ export const MAINTENANCE_CAPABILITIES = {
   submitTechnicianAssessment: "submit_technician_assessment",
   submitRepairOutcome: "submit_repair_outcome",
   recordReturnToService: "record_return_to_service",
+  // Mr Diesel / TADIS pipeline additions (Service Advisor / Technician split,
+  // §4). Owners/managers already implicitly hold all of these.
+  createCase: "create_case",
+  recordResolution: "record_resolution",
+  // The one capability that gates marking a technical Outcome Verified. A
+  // Service Advisor grant must never include this; only a Technician grant
+  // should (see SERVICE_ADVISOR_CAPABILITIES / TECHNICIAN_CAPABILITIES below).
+  verifyOutcome: "verify_outcome",
+  confirmOutcome: "confirm_outcome",
 } as const;
 
 export type MaintenanceCapability =
@@ -54,3 +63,30 @@ export function sanitizeMaintenanceCapabilities(
   }
   return Array.from(seen);
 }
+
+// Named capability presets for the two repair-shop staff roles described in
+// the Mr Diesel workflow (§4). These are NOT new membership roles — they are
+// just a convenient, reviewable starting grant a manager can hand to an
+// existing member via setMaintenanceGrant. A manager may still customize the
+// grant afterward; these are defaults, not an enforced role.
+export const SERVICE_ADVISOR_CAPABILITIES: MaintenanceCapability[] = [
+  MAINTENANCE_CAPABILITIES.viewAssignedCases,
+  MAINTENANCE_CAPABILITIES.createCase,
+  MAINTENANCE_CAPABILITIES.uploadDocuments,
+  MAINTENANCE_CAPABILITIES.updateRepairStatus,
+  MAINTENANCE_CAPABILITIES.recordExpectedCompletion,
+];
+
+// Technician capabilities are a superset of Service Advisor — a technician
+// can do everything a service advisor can, plus record diagnostic
+// Resolutions and verify/confirm technical Outcomes.
+export const TECHNICIAN_CAPABILITIES: MaintenanceCapability[] = [
+  ...SERVICE_ADVISOR_CAPABILITIES,
+  MAINTENANCE_CAPABILITIES.viewOperationalRepairDetails,
+  MAINTENANCE_CAPABILITIES.submitTechnicianAssessment,
+  MAINTENANCE_CAPABILITIES.recordResolution,
+  MAINTENANCE_CAPABILITIES.submitRepairOutcome,
+  MAINTENANCE_CAPABILITIES.verifyOutcome,
+  MAINTENANCE_CAPABILITIES.confirmOutcome,
+  MAINTENANCE_CAPABILITIES.recordReturnToService,
+];

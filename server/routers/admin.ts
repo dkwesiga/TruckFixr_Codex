@@ -14,6 +14,7 @@ import {
   updateAdminFleetFollowUp,
 } from "../services/adminMetrics";
 import { getObservabilitySummary } from "../services/observability";
+import { getTadisAdminMetrics } from "../services/tadisAdminMetrics";
 
 const accountTypeSchema = z.enum(["production", "demo", "internal_test", "archived"]);
 const riskStatusSchema = z.enum([
@@ -90,6 +91,24 @@ export const adminRouter = router({
         },
         ...(await getAdminMetrics(input)),
       };
+    }),
+
+  // Mr Diesel / TADIS pipeline analytics (§18): platform usage, TADIS
+  // learning growth, operational quality, and basic tenant analytics in one
+  // call. Read-only for every internal role, including read_only_viewer.
+  tadisMetrics: staffProcedure
+    .input(
+      z.object({
+        fromDate: z.string().optional(),
+        toDate: z.string().optional(),
+      }).optional()
+    )
+    .query(async ({ input, ctx }) => {
+      requireInternalRole(ctx.user);
+      return getTadisAdminMetrics({
+        fromDate: input?.fromDate ? new Date(input.fromDate) : undefined,
+        toDate: input?.toDate ? new Date(input.toDate) : undefined,
+      });
     }),
 
   fleets: staffProcedure

@@ -27,6 +27,8 @@ interface AddDecisionInput {
   diagnosticSessionId?: string | null;
   model?: string | null;
   promptVersion?: string | null;
+  // Resolution taxonomy tag (§8) — see shared/tadis/caseTypes.ts.
+  resolutionCategory?: string | null;
 }
 
 // Append a new decision version. Marks all prior versions not-current, points
@@ -84,6 +86,7 @@ export async function addDecision(input: AddDecisionInput) {
       promptVersion: input.promptVersion ?? null,
       isCurrent: true,
       createdByUserId: input.actorUserId,
+      resolutionCategory: input.resolutionCategory ?? null,
     })
     .returning();
 

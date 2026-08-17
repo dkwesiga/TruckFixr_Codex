@@ -723,9 +723,85 @@ export const repairOutcomes = pgTable("repairOutcomes", {
   vehicleReturnedToServiceAt: dateTimestamp(),
   technicianNotes: text("technicianNotes"),
   submittedByUserId: integer("submittedByUserId"),
+  // ---- Outcome lifecycle (§9/§10; all nullable, existing rows stay valid).
+  // outcomeState is the canonical field going forward; confirmationState
+  // above is retained for backward compatibility with existing readers.
+  // unknown|reported|verified|confirmed|failed — see
+  // shared/tadis/outcomeLifecycle.ts.
+  outcomeState: varchar("outcomeState", { length: 16 }).default("unknown").notNull(),
+  reportedAt: dateTimestamp(),
+  reportedByUserId: integer("reportedByUserId"),
+  evidenceSource: varchar("evidenceSource", { length: 24 }).default("unknown").notNull(),
+  verifiedAt: dateTimestamp(),
+  verifiedByUserId: integer("verifiedByUserId"),
+  verificationMethod: varchar("verificationMethod", { length: 32 }),
+  verificationNotes: text("verificationNotes"),
+  confirmedAt: dateTimestamp(),
+  confirmedByUserId: integer("confirmedByUserId"),
+  confirmationEvidenceType: varchar("confirmationEvidenceType", { length: 40 }),
+  failedAt: dateTimestamp(),
+  failedByUserId: integer("failedByUserId"),
+  failureNotes: text("failureNotes"),
+  // Revision control for verified/confirmed technical facts (§17). A
+  // correction after verification inserts a NEW row referencing the old one
+  // and supersedes it rather than overwriting it in place — see
+  // server/services/outcomeVerification.ts::reviseVerifiedOutcome and the
+  // append-only outcomeRevisions table below.
+  technicalRevisionOfId: integer("technicalRevisionOfId"),
+  supersededAt: dateTimestamp(),
+  supersededByOutcomeId: integer("supersededByOutcomeId"),
+  // ---- Evidence-quality scoring (§14). Computed by
+  // shared/tadis/qualityScore.ts and persisted so admin analytics and
+  // retrieval ranking don't recompute it on every read. ----
+  evidenceQualityScore: integer("evidenceQualityScore"),
+  evidenceQualityTier: varchar("evidenceQualityTier", { length: 16 }),
+  evidenceQualityBreakdownJson: jsonb("evidenceQualityBreakdownJson"),
+  evidenceQualityCalculatedAt: dateTimestamp(),
+  // ---- Optional financial/downtime impact (§20/§21). Never read by the
+  // quality scorer — see shared/tadis/roiImpact.ts. ----
+  estimatedDowntimeAvoidedHours: numeric("estimatedDowntimeAvoidedHours", {
+    precision: 10,
+    scale: 2,
+  }),
+  estimatedTowAvoidedCents: integer("estimatedTowAvoidedCents"),
+  estimatedRoadCallAvoidedCents: integer("estimatedRoadCallAvoidedCents"),
+  // customer_entered | system_estimate | actual
+  estimateSource: varchar("estimateSource", { length: 24 }),
   createdAt: dateTimestamp().defaultNow().notNull(),
   updatedAt: dateTimestamp().defaultNow().notNull(),
 });
+
+// Append-only audit trail for corrections to a repairOutcome made AFTER it
+// reached Verified/Confirmed. A TruckFixr platform admin (or anyone other
+// than the verifying technician) can never silently overwrite a verified
+// technical fact — every such change is recorded here with before/after
+// state, and a technical-fact change forces the outcome back to "reported"
+// pending re-verification (see reviseVerifiedOutcome). Non-technical
+// metadata corrections (category tags, quality flags) do not require
+// re-verification but are still logged here for traceability.
+export const outcomeRevisions = pgTable(
+  "outcomeRevisions",
+  {
+    id: serial("id").primaryKey(),
+    outcomeId: integer("outcomeId").notNull(),
+    fleetId: integer("fleetId").notNull(),
+    changedByUserId: integer("changedByUserId").notNull(),
+    // technical_correction | metadata_correction | quality_flag | exclusion
+    changeType: varchar("changeType", { length: 32 }).notNull(),
+    reason: text("reason").notNull(),
+    beforeStateJson: jsonb("beforeStateJson"),
+    afterStateJson: jsonb("afterStateJson"),
+    requiresReVerification: boolean("requiresReVerification").default(false).notNull(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("outcomeRevisions_outcome_idx").on(table.outcomeId),
+    index("outcomeRevisions_fleet_idx").on(table.fleetId),
+  ]
+);
+
+export type OutcomeRevision = typeof outcomeRevisions.$inferSelect;
+export type InsertOutcomeRevision = typeof outcomeRevisions.$inferInsert;
 
 export const inAppAlerts = pgTable("inAppAlerts", {
   id: serial("id").primaryKey(),
@@ -1535,6 +1611,25 @@ export const maintenanceCases = pgTable(
     openedAt: dateTimestamp().defaultNow().notNull(),
     closedAt: dateTimestamp(),
     createdByUserId: integer("createdByUserId"),
+    // ---- Mr Diesel / TADIS pipeline additions (all nullable; existing rows
+    // stay valid). See shared/tadis/{caseTypes,eligibility}.ts for the pure
+    // taxonomy/classification logic that populates these. ----
+    // diagnostic_troubleshooting|corrective_repair|preventive_maintenance|
+    // compliance_inspection|customer_inquiry|repeat_comeback|parts_only|
+    // administrative|other
+    caseType: varchar("caseType", { length: 32 }),
+    // not_assessed|operational_record|tadis_candidate|tadis_learning_record|excluded
+    tadisEligibility: varchar("tadisEligibility", { length: 32 })
+      .default("not_assessed")
+      .notNull(),
+    tadisEligibilityReason: text("tadisEligibilityReason"),
+    tadisEligibilityOverriddenByUserId: integer("tadisEligibilityOverriddenByUserId"),
+    tadisEligibilityOverriddenAt: dateTimestamp(),
+    // live | historical_import
+    recordOrigin: varchar("recordOrigin", { length: 24 }).default("live").notNull(),
+    // Per-field provenance for vehicle context: vin_decoder | tenant_record |
+    // technician_input | historical_import | ai_extraction.
+    vehicleContextProvenanceJson: jsonb("vehicleContextProvenanceJson"),
     createdAt: dateTimestamp().defaultNow().notNull(),
     updatedAt: dateTimestamp().defaultNow().notNull(),
   },
@@ -1544,6 +1639,7 @@ export const maintenanceCases = pgTable(
     index("maintenanceCases_fleet_vehicle_idx").on(table.fleetId, table.vehicleId),
     index("maintenanceCases_assigned_manager_idx").on(table.assignedManagerUserId),
     index("maintenanceCases_caseId_idx").on(table.caseId),
+    index("maintenanceCases_tadisEligibility_idx").on(table.tadisEligibility),
   ]
 );
 
@@ -1580,6 +1676,8 @@ export const maintenanceDecisions = pgTable(
     model: varchar("model", { length: 150 }),
     promptVersion: varchar("promptVersion", { length: 64 }),
     isCurrent: boolean("isCurrent").default(true).notNull(),
+    // Resolution taxonomy (§8); see shared/tadis/caseTypes.ts RESOLUTION_CATEGORIES.
+    resolutionCategory: varchar("resolutionCategory", { length: 32 }),
     createdByUserId: integer("createdByUserId"),
     createdAt: dateTimestamp().defaultNow().notNull(),
   },
@@ -2307,3 +2405,107 @@ export const partsOffers = pgTable(
 
 export type PartsOffer = typeof partsOffers.$inferSelect;
 export type InsertPartsOffer = typeof partsOffers.$inferInsert;
+
+// =====================================================================
+// Mr Diesel / TADIS closed-loop knowledge pipeline (§3, §12-16).
+// partnerProfiles models a repair-shop tenant's type + knowledge
+// contribution policy explicitly (fleets.isPartner remains the fast
+// boolean gate everywhere else; this table is the profile behind it).
+// This also fills a table scripts/verify/rls.ts already asserted RLS on
+// (POST_0012_RLS_TABLES included "partnerProfiles") without the table
+// existing — see drizzle/0048_mr_diesel_tadis_pipeline.sql.
+// =====================================================================
+export const partnerProfiles = pgTable(
+  "partnerProfiles",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    // repair_shop today; architected for other tenant types later without a
+    // migration (e.g. fleet_service_center, parts_supplier).
+    tenantType: varchar("tenantType", { length: 32 }).default("repair_shop").notNull(),
+    businessName: varchar("businessName", { length: 255 }),
+    // private_only | deidentified_learning | broad_contribution
+    contributionPolicy: varchar("contributionPolicy", { length: 32 })
+      .default("private_only")
+      .notNull(),
+    contributionPolicySetByUserId: integer("contributionPolicySetByUserId"),
+    contributionPolicySetAt: dateTimestamp(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("partnerProfiles_fleetId_unique").on(table.fleetId)]
+);
+
+export type PartnerProfile = typeof partnerProfiles.$inferSelect;
+export type InsertPartnerProfile = typeof partnerProfiles.$inferInsert;
+
+// De-identified TADIS learning records (§13/§15). Derived FROM a tenant's
+// private repairOutcome — never exposes customer/fleet-identifying fields.
+// originFleetId is kept for internal admin traceability/retraction only and
+// must never be surfaced in retrieval-facing responses. RLS denies all
+// access to "authenticated"; only the server's service_role connection and
+// staff-gated admin procedures may read this table (mirrors
+// supportRecoveryActions' staff-only pattern) — see
+// drizzle/0048_mr_diesel_tadis_pipeline.sql.
+export const tadisLearningRecords = pgTable(
+  "tadisLearningRecords",
+  {
+    id: serial("id").primaryKey(),
+    sourceOutcomeId: integer("sourceOutcomeId").notNull(),
+    sourceMaintenanceCaseId: integer("sourceMaintenanceCaseId"),
+    originFleetId: integer("originFleetId").notNull(),
+    // ---- Vehicle context ----
+    make: varchar("make", { length: 100 }),
+    model: varchar("model", { length: 100 }),
+    modelYear: integer("modelYear"),
+    engineMake: varchar("engineMake", { length: 100 }),
+    engineModel: varchar("engineModel", { length: 100 }),
+    assetType: varchar("assetType", { length: 32 }),
+    // ---- Symptom / fault context ----
+    symptomsJson: jsonb("symptomsJson"),
+    faultCodesJson: jsonb("faultCodesJson"),
+    affectedSystem: varchar("affectedSystem", { length: 64 }),
+    affectedSubsystem: varchar("affectedSubsystem", { length: 64 }),
+    // ---- Diagnosis / resolution / repair ----
+    diagnosticFindings: text("diagnosticFindings"),
+    rootCause: text("rootCause"),
+    resolutionCategory: varchar("resolutionCategory", { length: 32 }),
+    repairAction: text("repairAction"),
+    partsReplacedJson: jsonb("partsReplacedJson"),
+    // ---- Verification / outcome ----
+    verificationMethod: varchar("verificationMethod", { length: 32 }),
+    outcomeState: varchar("outcomeState", { length: 16 }).notNull(),
+    evidenceQualityScore: integer("evidenceQualityScore").notNull(),
+    evidenceQualityTier: varchar("evidenceQualityTier", { length: 16 }).notNull(),
+    // ---- Classification ----
+    caseType: varchar("caseType", { length: 32 }),
+    repairCategory: varchar("repairCategory", { length: 32 }),
+    recordOrigin: varchar("recordOrigin", { length: 24 }).default("live").notNull(),
+    // ---- Lifecycle ----
+    // candidate | promoted | excluded | retracted
+    eligibilityStatus: varchar("eligibilityStatus", { length: 16 })
+      .default("candidate")
+      .notNull(),
+    excludedReason: text("excludedReason"),
+    excludedByUserId: integer("excludedByUserId"),
+    excludedAt: dateTimestamp(),
+    promotedByUserId: integer("promotedByUserId"),
+    promotedAt: dateTimestamp(),
+    deidentifiedAt: dateTimestamp().defaultNow().notNull(),
+    createdByUserId: integer("createdByUserId"),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("tadisLearningRecords_sourceOutcome_unique").on(table.sourceOutcomeId),
+    index("tadisLearningRecords_eligibility_idx").on(table.eligibilityStatus),
+    index("tadisLearningRecords_make_model_idx").on(table.make, table.model, table.modelYear),
+    index("tadisLearningRecords_affectedSystem_idx").on(table.affectedSystem),
+    index("tadisLearningRecords_outcomeState_idx").on(table.outcomeState),
+  ]
+);
+
+export type TadisLearningRecord = typeof tadisLearningRecords.$inferSelect;
+export type InsertTadisLearningRecord = typeof tadisLearningRecords.$inferInsert;

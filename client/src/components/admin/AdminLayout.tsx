@@ -11,6 +11,7 @@ import {
   SearchCode,
   Settings2,
   ShieldCheck,
+  Sparkles,
   UserRound,
 } from "lucide-react";
 import AppLogo from "@/components/AppLogo";
@@ -35,6 +36,7 @@ const navItems = [
   { href: "/admin/metrics#compliance", label: "Compliance", icon: ClipboardCheck },
   { href: "/admin/metrics#diagnostics", label: "Diagnostics", icon: SearchCode },
   { href: "/admin/metrics#investor", label: "Investor Snapshot", icon: FileDown },
+  { href: "/admin/tadis", label: "TADIS Knowledge", icon: Sparkles },
 ];
 
 function getHash() {
