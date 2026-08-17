@@ -153,15 +153,23 @@ function PartnerKnowledgeStudioInner() {
             Every proposal is reviewed by a TruckFixr curator before it helps another fleet.
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => outcomesQuery.refetch()}
-          disabled={outcomesQuery.isFetching}
-        >
-          <RefreshCw className={`mr-2 h-4 w-4 ${outcomesQuery.isFetching ? "animate-spin" : ""}`} />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <a href="/partner/cases/new">
+            <Button size="sm">
+              <Wrench className="mr-2 h-4 w-4" />
+              New case
+            </Button>
+          </a>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => outcomesQuery.refetch()}
+            disabled={outcomesQuery.isFetching}
+          >
+            <RefreshCw className={`mr-2 h-4 w-4 ${outcomesQuery.isFetching ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <Card className="mb-6 border-amber-200 bg-amber-50/60">

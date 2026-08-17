@@ -31,10 +31,26 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   ArrowRight,
+  CheckCircle2,
   Loader2,
   ShieldAlert,
+  ShieldCheck,
   Wrench,
+  XCircle,
 } from "lucide-react";
+import {
+  CONFIRMATION_EVIDENCE_TYPES,
+  EVIDENCE_SOURCES,
+  VERIFICATION_METHODS,
+} from "@shared/tadis/outcomeLifecycle";
+
+const OUTCOME_STATE_BADGE: Record<string, string> = {
+  unknown: "bg-slate-100 text-slate-600 border-slate-200",
+  reported: "bg-blue-50 text-blue-700 border-blue-200",
+  verified: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  confirmed: "bg-emerald-100 text-emerald-800 border-emerald-300",
+  failed: "bg-red-50 text-red-700 border-red-200",
+};
 
 function caseIdFromPath(): number {
   const match = window.location.pathname.match(/\/app\/case\/(\d+)/);
@@ -104,6 +120,22 @@ function MaintenanceCaseDetailContent() {
     onSuccess: () => { toast.success("Assignment updated."); invalidate(); },
     onError: onErr,
   });
+  const reportOutcome = trpc.maintenanceCases.reportOutcome.useMutation({
+    onSuccess: () => { toast.success("Outcome reported."); invalidate(); setOutcomeForm({ confirmedFault: "", repairPerformed: "", evidenceSource: "shop_verified" }); },
+    onError: onErr,
+  });
+  const verifyOutcome = trpc.maintenanceCases.verifyOutcome.useMutation({
+    onSuccess: () => { toast.success("Outcome verified."); invalidate(); },
+    onError: onErr,
+  });
+  const confirmOutcome = trpc.maintenanceCases.confirmOutcome.useMutation({
+    onSuccess: () => { toast.success("Outcome confirmed."); invalidate(); },
+    onError: onErr,
+  });
+  const markOutcomeFailed = trpc.maintenanceCases.markOutcomeFailed.useMutation({
+    onSuccess: () => { toast.success("Outcome marked failed — kept as evidence for future diagnosis."); invalidate(); setFailureNotes(""); },
+    onError: onErr,
+  });
 
   const [nextStatus, setNextStatus] = useState<string>("");
   const [overrideAction, setOverrideAction] = useState<MaintenanceAction>("schedule_service");
@@ -112,6 +144,10 @@ function MaintenanceCaseDetailContent() {
   const [closure, setClosure] = useState<"resolved" | "partially_resolved" | "not_resolved">("resolved");
   const [manualSeverity, setManualSeverity] = useState("attention");
   const [manualAction, setManualAction] = useState<MaintenanceAction>("schedule_service");
+  const [outcomeForm, setOutcomeForm] = useState({ confirmedFault: "", repairPerformed: "", evidenceSource: "shop_verified" });
+  const [verificationMethod, setVerificationMethod] = useState<string>(VERIFICATION_METHODS[0]);
+  const [confirmationEvidenceType, setConfirmationEvidenceType] = useState<string>(CONFIRMATION_EVIDENCE_TYPES[0]);
+  const [failureNotes, setFailureNotes] = useState("");
 
   if (query.isLoading) {
     return <PageShell><Skeleton className="h-96 w-full" /></PageShell>;
@@ -306,6 +342,115 @@ function MaintenanceCaseDetailContent() {
             </CardContent>
           </Card>
 
+          {/* Outcome lifecycle: Unknown -> Reported -> Verified -> Confirmed, or -> Failed */}
+          <Card>
+            <CardHeader><CardTitle className="text-base">Outcome</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              {(data.outcomes ?? []).length === 0 ? null : (
+                <ul className="space-y-2">
+                  {(data.outcomes ?? []).map((o: any) => (
+                    <li key={o.id} className="space-y-2 rounded-lg border border-slate-200 p-3 text-sm">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline" className={OUTCOME_STATE_BADGE[o.outcomeState] ?? ""}>
+                          {o.outcomeState}
+                        </Badge>
+                        {o.evidenceQualityTier ? (
+                          <Badge variant="outline">
+                            quality: {o.evidenceQualityTier} ({o.evidenceQualityScore ?? "—"})
+                          </Badge>
+                        ) : null}
+                      </div>
+                      <p className="text-slate-700">
+                        <strong>Fault:</strong> {o.confirmedFault}
+                      </p>
+                      <p className="text-slate-700">
+                        <strong>Repair:</strong> {o.repairPerformed}
+                      </p>
+
+                      {(o.outcomeState === "unknown" || o.outcomeState === "reported") ? (
+                        <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-2">
+                          <Select value={verificationMethod} onValueChange={setVerificationMethod}>
+                            <SelectTrigger className="h-8 w-52"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {VERIFICATION_METHODS.map((m) => (
+                                <SelectItem key={m} value={m}>{m.replace(/_/g, " ")}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button size="sm" disabled={verifyOutcome.isPending}
+                            onClick={() => verifyOutcome.mutate({ outcomeId: o.id, verificationMethod: verificationMethod as never })}>
+                            <ShieldCheck className="mr-1 h-3.5 w-3.5" /> Verify (technician only)
+                          </Button>
+                        </div>
+                      ) : null}
+
+                      {o.outcomeState === "verified" ? (
+                        <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-2">
+                          <Select value={confirmationEvidenceType} onValueChange={setConfirmationEvidenceType}>
+                            <SelectTrigger className="h-8 w-56"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              {CONFIRMATION_EVIDENCE_TYPES.map((m) => (
+                                <SelectItem key={m} value={m}>{m.replace(/_/g, " ")}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button size="sm" disabled={confirmOutcome.isPending}
+                            onClick={() => confirmOutcome.mutate({ outcomeId: o.id, confirmationEvidenceType: confirmationEvidenceType as never })}>
+                            <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Confirm
+                          </Button>
+                        </div>
+                      ) : null}
+
+                      {o.outcomeState !== "failed" ? (
+                        <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-2">
+                          <Input
+                            className="h-8 flex-1"
+                            placeholder="Failure notes (e.g. comeback within a week)"
+                            value={failureNotes}
+                            onChange={(e) => setFailureNotes(e.target.value)}
+                          />
+                          <Button size="sm" variant="destructive" disabled={markOutcomeFailed.isPending || !failureNotes.trim()}
+                            onClick={() => markOutcomeFailed.mutate({ outcomeId: o.id, failureNotes })}>
+                            <XCircle className="mr-1 h-3.5 w-3.5" /> Mark failed
+                          </Button>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-red-700">{o.failureNotes}</p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <div className="space-y-2 rounded-lg border border-slate-200 p-3">
+                <p className="text-xs font-semibold text-slate-700">Report an outcome</p>
+                <Textarea placeholder="Confirmed fault" value={outcomeForm.confirmedFault}
+                  onChange={(e) => setOutcomeForm((f) => ({ ...f, confirmedFault: e.target.value }))} />
+                <Textarea placeholder="Repair performed" value={outcomeForm.repairPerformed}
+                  onChange={(e) => setOutcomeForm((f) => ({ ...f, repairPerformed: e.target.value }))} />
+                <Select value={outcomeForm.evidenceSource} onValueChange={(v) => setOutcomeForm((f) => ({ ...f, evidenceSource: v }))}>
+                  <SelectTrigger className="h-8 w-56"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {EVIDENCE_SOURCES.map((s) => <SelectItem key={s} value={s}>{s.replace(/_/g, " ")}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Button size="sm" variant="outline" disabled={reportOutcome.isPending || !outcomeForm.confirmedFault.trim() || !outcomeForm.repairPerformed.trim()}
+                  onClick={() => reportOutcome.mutate({
+                    caseId,
+                    vehicleId: c.vehicleId,
+                    confirmedFault: outcomeForm.confirmedFault,
+                    repairPerformed: outcomeForm.repairPerformed,
+                    evidenceSource: outcomeForm.evidenceSource as never,
+                  })}>
+                  Report outcome
+                </Button>
+                <p className="text-xs text-slate-400">
+                  Reporting does not require technician authority. Only an authorized technician can Verify.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Repair documents (Phase 4) */}
           <RepairDocumentsSection caseId={caseId} />
 
@@ -433,7 +578,11 @@ function PageShell({ children }: { children: React.ReactNode }) {
 
 export default function MaintenanceCaseDetail() {
   return (
-    <RoleBasedRoute requiredRoles={["owner", "manager"]}>
+    // "driver" is included because Service Advisors/Technicians are
+    // capability-granted driver-role members (§4) — the actual per-action
+    // authorization (e.g. only a Technician grant can Verify) is enforced
+    // server-side, not by this route guard.
+    <RoleBasedRoute requiredRoles={["owner", "manager", "driver"]}>
       <MaintenanceCaseDetailContent />
     </RoleBasedRoute>
   );

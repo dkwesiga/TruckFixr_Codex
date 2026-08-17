@@ -35,6 +35,11 @@ interface CreateCaseInput {
   sourceEventId?: number | null;
   createdByUserId: number | null;
   status?: CaseStatus;
+  // Mr Diesel / TADIS pipeline additions (§2/§12); all optional so existing
+  // callers (createAutomaticCaseFromDiagnosis, etc) are unaffected.
+  caseType?: string | null;
+  recordOrigin?: "live" | "historical_import";
+  vehicleContextProvenance?: Record<string, string> | null;
 }
 
 async function insertCase(db: Awaited<ReturnType<typeof getDb>>, input: CreateCaseInput) {
@@ -55,6 +60,9 @@ async function insertCase(db: Awaited<ReturnType<typeof getDb>>, input: CreateCa
       sourceInspectionId: input.sourceInspectionId ?? null,
       sourceEventId: input.sourceEventId ?? null,
       createdByUserId: input.createdByUserId,
+      caseType: input.caseType ?? null,
+      recordOrigin: input.recordOrigin ?? "live",
+      vehicleContextProvenanceJson: (input.vehicleContextProvenance ?? null) as never,
     })
     .returning();
 
@@ -284,6 +292,46 @@ export async function listCasesForFleet(input: {
     cases: hasMore ? rows.slice(0, input.limit) : rows,
     nextOffset: hasMore ? input.offset + input.limit : null,
   };
+}
+
+// Human override of the auto-suggested TADIS eligibility (§12). Once set,
+// evaluateAndUpsertCandidate (tadisLearningPromotion.ts) will not silently
+// overwrite it on the next Outcome-lifecycle event.
+export async function setCaseTadisEligibilityOverride(input: {
+  fleetId: number;
+  caseId: number;
+  eligibility: string;
+  reason: string | null;
+  actorUserId: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable." });
+
+  const current = await getCaseForFleet(input.fleetId, input.caseId);
+  if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Case not found in this fleet." });
+
+  await db
+    .update(maintenanceCases)
+    .set({
+      tadisEligibility: input.eligibility,
+      tadisEligibilityReason: input.reason,
+      tadisEligibilityOverriddenByUserId: input.actorUserId,
+      tadisEligibilityOverriddenAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(maintenanceCases.id, current.id));
+
+  await logMaintenanceActivity({
+    fleetId: input.fleetId,
+    userId: input.actorUserId,
+    action: "maintenance_case_status_changed",
+    entityType: "maintenanceCase",
+    entityId: current.id,
+    entityRef: current.reference,
+    details: { tadisEligibilityOverride: input.eligibility, reason: input.reason },
+  });
+
+  return { ok: true };
 }
 
 // Current decision for a case (for display / adapters).
