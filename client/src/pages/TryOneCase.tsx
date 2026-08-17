@@ -12,6 +12,7 @@ import { trpc } from "@/lib/trpc";
 import { useSeoMeta } from "@/lib/useSeoMeta";
 import { getFriendlyErrorMessage } from "@/lib/actionErrorMessages";
 import { decodeVin, normalizeVinInput, type DecodedVehicle } from "@/lib/vin";
+import VinPhotoCapture from "@/components/VinPhotoCapture";
 import { ReadinessPill, type Readiness } from "@/components/readiness/ReadinessPill";
 import {
   GUEST_RESULT_DISCLAIMER_TEXT,
@@ -160,6 +161,7 @@ export default function TryOneCase() {
   const [manualYear, setManualYear] = useState("");
   const [manualUnitNumber, setManualUnitNumber] = useState("");
   const [vehicleStepError, setVehicleStepError] = useState<string | null>(null);
+  const [vinFromPhoto, setVinFromPhoto] = useState(false);
 
   // Intake fields.
   const [concernText, setConcernText] = useState("");
@@ -245,6 +247,14 @@ export default function TryOneCase() {
       setVehicleDecodeError(result.error);
       setManualVehicleEntry(true);
     }
+  }
+
+  function handleVinPhotoCaptured(capturedVin: string) {
+    setVin(capturedVin);
+    setVinFromPhoto(true);
+    setDecodedVehicle(null);
+    setVehicleDecodeError(null);
+    trackEvent("vin_ocr_captured", { cta_location: "try_one_case" });
   }
 
   function buildVehicleIdentifier() {
@@ -495,7 +505,10 @@ export default function TryOneCase() {
                 <Input
                   id="vin"
                   value={vin}
-                  onChange={(e) => setVin(e.target.value)}
+                  onChange={(e) => {
+                    setVin(e.target.value);
+                    setVinFromPhoto(false);
+                  }}
                   placeholder="17-character VIN"
                   maxLength={17}
                   autoComplete="off"
@@ -510,11 +523,17 @@ export default function TryOneCase() {
                   {vinDecoding ? <Loader2 className="h-4 w-4 animate-spin" /> : "Decode"}
                 </Button>
               </div>
+              {vinFromPhoto && (
+                <p className="text-sm font-medium text-[#38465F]">
+                  Read from your photo — double-check it against the plate, then tap Decode.
+                </p>
+              )}
               {vehicleDecodeError && (
                 <p className="text-sm font-medium text-[#D81F2A]" role="alert">
                   {vehicleDecodeError}
                 </p>
               )}
+              <VinPhotoCapture onVinCaptured={handleVinPhotoCaptured} disabled={vinDecoding} />
             </div>
 
             {decodedVehicle && (decodedVehicle.make || decodedVehicle.model || decodedVehicle.year) && (
