@@ -99,6 +99,32 @@ export const CONFIDENCE_THRESHOLD = 85;
 // applies as a backstop regardless of confidence.
 export const CONFIDENCE_QUESTION_CAP = 3;
 
+/**
+ * Confidence is otherwise entirely LLM self-reported, which risks the model
+ * "inventing" a high number off a single thin sentence — task guidance is
+ * that confidence should be constrained by structured evidence features, not
+ * asserted independently by the model. This computes a ceiling from what is
+ * actually known about the case so far (never a floor — a thin case can
+ * still be reported as genuinely low-confidence by the model). The model's
+ * self-reported confidence is clamped to this ceiling before it is used for
+ * anything (the early-stop decision, the confidenceLow escalation flag, or
+ * display). A well-specified case (category known, status known, fault
+ * codes given) can still be confidently assessed on turn 1 — this isn't a
+ * fixed "must ask N questions" rule, it scales with actual evidence.
+ */
+export function evidenceCompletenessCeiling(ctx: {
+  input: GuestCaseInput;
+  answeredCount: number;
+}): number {
+  let ceiling = 60; // a single free-text description, nothing else, caps at "moderate"
+  if (ctx.input.concernCategory) ceiling += 15;
+  if (ctx.input.operatingStatus !== "unknown") ceiling += 10;
+  if (ctx.input.faultCodes && ctx.input.faultCodes.length > 0) ceiling += 10;
+  if (ctx.answeredCount >= 2) ceiling += 15;
+  else if (ctx.answeredCount >= 1) ceiling += 5;
+  return Math.min(100, ceiling);
+}
+
 function vehicleLine(vehicle?: GuestAiVehicleIdentifier | null): string {
   if (!vehicle) return "Not provided.";
   const parts = [vehicle.year, vehicle.make, vehicle.model].filter((v) => v && String(v).trim());
@@ -318,6 +344,10 @@ export async function generateGuestAssessment(
     const raw = result.choices[0]?.message.content;
     const text = typeof raw === "string" ? raw : "";
     const parsed = assessmentSchema.parse(JSON.parse(extractJsonObject(text)));
+    const confidence = Math.min(
+      parsed.confidence,
+      evidenceCompletenessCeiling({ input: ctx.input, answeredCount: Object.keys(ctx.answers).length })
+    );
 
     const aiWantsCritical = parsed.severity === "critical" || isCriticalAction(parsed.action);
 
@@ -348,7 +378,7 @@ export async function generateGuestAssessment(
         reviewCategory: "critical_safety",
         reviewStatus: "review_required",
         explanation: parsed.explanation,
-        confidence: parsed.confidence,
+        confidence,
         confidenceLow: false,
       };
     }
@@ -366,7 +396,7 @@ export async function generateGuestAssessment(
       reviewCategory: null,
       reviewStatus: "automated_guidance_only",
       explanation: parsed.explanation,
-      confidence: parsed.confidence,
+      confidence,
       confidenceLow: false,
     };
   } catch (error) {

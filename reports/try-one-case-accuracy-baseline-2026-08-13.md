@@ -87,6 +87,46 @@ avg confidence 70.7 (n=7 cases where the AI call succeeded).**
   that a blended approach would improve on the above numbers, and this
   benchmark is really the enabling artifact for evaluating that change next.
 
+## Update 2026-08-17: confidence-calibration fix (Category 2)
+
+Addressed the "confidence remains purely LLM self-reported" gap flagged above,
+using this benchmark as the validation artifact per task §41's requirement
+that medium-risk changes need benchmark evidence before shipping.
+
+**Change**: added `evidenceCompletenessCeiling()` in `guestCaseAi.ts` — a pure
+function that computes a confidence *ceiling* (never a floor) from structured
+signals already available on the case: base 60, +15 if `concernCategory` is
+set, +10 if `operatingStatus` isn't `"unknown"`, +10 if fault codes were
+given, +5/+15 for 1/2+ answered adaptive questions. The model's self-reported
+`confidence` is clamped to `min(reported, ceiling)` before it's used for
+anything — the early-stop decision, the `confidenceLow` escalation flag, or
+storage. This directly operationalizes task §20 ("confidence should be
+constrained by structured evidence features... the LLM may contribute
+judgment but should not invent confidence independently") without touching
+the question-flow control logic itself (the existing `CONFIDENCE_THRESHOLD`/
+`CONFIDENCE_QUESTION_CAP` gating is unchanged) — a thin, unstructured
+one-liner can no longer be reported as 90%+ confident regardless of what the
+model claims, while a well-specified case (category + known status + fault
+codes) can still be confidently assessed on turn 1, since the ceiling scales
+with actual evidence rather than imposing a fixed "must ask N questions"
+rule. 5 new tests added (3 for the pure ceiling function, 2 integration tests
+proving the clamp does/doesn't fire); all 32 `guestCaseAi.test.ts` tests pass.
+
+**Benchmark re-run (post-fix, same 12 cases)**: 12/12 critical-classification
+matches maintained, 0 rule-based/AI divergence maintained, avg confidence
+65.8 (n=6 successful calls this run — visibly pulled down from the prior
+run's 70.7, consistent with the clamp engaging on at least one case: C2's
+raw self-reported confidence was clamped down to exactly its 85 ceiling).
+No case's severity/action classification changed as a result of this
+change — confirms the clamp is acting on the reported number, not silently
+altering the underlying decision logic, matching the intended low blast
+radius.
+
+Not addressed this pass (still open, see above): AI-call reliability in this
+environment, and the deterministic-fallback default-to-stable behavior for
+ambiguous `symptom`-category free text (C4/C11 still fell back to the rule
+engine and showed the same "stable" severity-deflation flag both runs).
+
 ## Sample-size caveat
 
 12 synthetic golden cases, single run per case (barring the timeout-driven

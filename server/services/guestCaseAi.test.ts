@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { ENV } from "../_core/env";
-import { generateGuestAssessment, generateGuestNextQuestion } from "./guestCaseAi";
+import { evidenceCompletenessCeiling, generateGuestAssessment, generateGuestNextQuestion } from "./guestCaseAi";
 import { assessGuestCase } from "./guestCaseAssessment";
 import { nextAdaptiveQuestion, SAFETY_SWEEP_QUESTION } from "../../shared/maintenance/guestCaseFlow";
 import type { GuestCaseInput } from "../../shared/maintenance/guestCaseFlow";
@@ -417,5 +417,71 @@ describe("generateGuestAssessment — AI path", () => {
     const expected = assessGuestCase(benignInput, {});
     expect(a.customerReadiness).toBe(expected.customerReadiness);
     expect(a.explanation).toBeNull();
+  });
+
+  it("clamps an over-confident model score down to the evidence-completeness ceiling for a thin, unspecified case", async () => {
+    ENV.openRouterApiKey = "test-key";
+    const vagueInput: GuestCaseInput = { concernText: "truck's acting weird lately", operatingStatus: "unknown" };
+    const a = await generateGuestAssessment(
+      { input: vagueInput, answers: {} },
+      {
+        fetcher: async () =>
+          jsonResponse(
+            chatCompletion(
+              JSON.stringify({ severity: "attention", action: "schedule_service", explanation: "Needs a look.", confidence: 95 })
+            )
+          ),
+      }
+    );
+    // No category, unknown status, no fault codes, 0 answers -> ceiling 60, well below the model's claimed 95.
+    expect(a.confidence).toBe(60);
+  });
+
+  it("does not clamp a well-evidenced case even at turn 0 (category + known status + fault codes already push the ceiling to 95)", async () => {
+    ENV.openRouterApiKey = "test-key";
+    const wellSpecifiedInput: GuestCaseInput = {
+      concernText: "P0420 catalyst efficiency code, runs fine otherwise",
+      operatingStatus: "operating_normally",
+      concernCategory: "fault_code",
+      faultCodes: ["P0420"],
+    };
+    const a = await generateGuestAssessment(
+      { input: wellSpecifiedInput, answers: {} },
+      {
+        fetcher: async () =>
+          jsonResponse(
+            chatCompletion(
+              JSON.stringify({ severity: "attention", action: "schedule_service", explanation: "Catalyst code, schedule service.", confidence: 88 })
+            )
+          ),
+      }
+    );
+    expect(a.confidence).toBe(88); // below the 95 ceiling, so unclamped
+  });
+});
+
+describe("evidenceCompletenessCeiling", () => {
+  it("caps at 60 for a bare, unstructured description with nothing else known", () => {
+    expect(
+      evidenceCompletenessCeiling({ input: { concernText: "x", operatingStatus: "unknown" }, answeredCount: 0 })
+    ).toBe(60);
+  });
+
+  it("increases with each structured signal", () => {
+    const base = { concernText: "x", operatingStatus: "unknown" as const };
+    expect(evidenceCompletenessCeiling({ input: { ...base, concernCategory: "symptom" }, answeredCount: 0 })).toBe(75);
+    expect(evidenceCompletenessCeiling({ input: { ...base, operatingStatus: "operating_normally" }, answeredCount: 0 })).toBe(70);
+    expect(evidenceCompletenessCeiling({ input: { ...base, faultCodes: ["P0420"] }, answeredCount: 0 })).toBe(70);
+    expect(evidenceCompletenessCeiling({ input: base, answeredCount: 1 })).toBe(65);
+    expect(evidenceCompletenessCeiling({ input: base, answeredCount: 2 })).toBe(75);
+  });
+
+  it("never exceeds 100", () => {
+    expect(
+      evidenceCompletenessCeiling({
+        input: { concernText: "x", operatingStatus: "operating_normally", concernCategory: "fault_code", faultCodes: ["P0420"] },
+        answeredCount: 3,
+      })
+    ).toBe(100);
   });
 });
