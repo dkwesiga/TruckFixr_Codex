@@ -84,6 +84,55 @@ describe("aiOrchestrator", () => {
     expect(result.orchestration?.estimatedCostUsd).toBe(0);
   });
 
+  it("sends reasoning:{enabled:false} to OpenRouter when disableReasoning is set (measured to roughly halve latency and stop reasoning tokens from eating the completion budget)", async () => {
+    await invokeWithOrchestration(
+      {
+        preferredProvider: "openrouter",
+        messages: [{ role: "user", content: "Classify this." }],
+        responseFormat: { type: "json_object" },
+        maxTokens: 120,
+        disableReasoning: true,
+      },
+      {
+        fetcher: async (_url, init) => {
+          const body = JSON.parse(String(init?.body));
+          expect(body.reasoning).toEqual({ enabled: false });
+          return createJsonResponse({
+            id: "openrouter-response",
+            created: 123456,
+            model: "openrouter/free",
+            choices: [{ index: 0, message: { role: "assistant", content: "{}" }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+          });
+        },
+      }
+    );
+  });
+
+  it("omits the reasoning field for OpenRouter when disableReasoning is not set (default, unchanged behavior)", async () => {
+    await invokeWithOrchestration(
+      {
+        preferredProvider: "openrouter",
+        messages: [{ role: "user", content: "Classify this." }],
+        responseFormat: { type: "json_object" },
+        maxTokens: 120,
+      },
+      {
+        fetcher: async (_url, init) => {
+          const body = JSON.parse(String(init?.body));
+          expect(body.reasoning).toBeUndefined();
+          return createJsonResponse({
+            id: "openrouter-response",
+            created: 123456,
+            model: "openrouter/free",
+            choices: [{ index: 0, message: { role: "assistant", content: "{}" }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+          });
+        },
+      }
+    );
+  });
+
   it("supports Groq as a preferred provider for TADIS question generation", async () => {
     const result = await invokeWithOrchestration(
       {

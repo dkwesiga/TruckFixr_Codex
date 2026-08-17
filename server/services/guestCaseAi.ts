@@ -239,6 +239,7 @@ export async function generateGuestNextQuestion(
       maxTokens: 300,
       temperature: 0.4,
       timeoutMs: AI_TIMEOUT_MS,
+      disableReasoning: true,
     }, options?.fetcher ? { fetcher: options.fetcher } : undefined);
 
     const raw = result.choices[0]?.message.content;
@@ -339,6 +340,7 @@ export async function generateGuestAssessment(
       maxTokens: 400,
       temperature: 0.3,
       timeoutMs: AI_TIMEOUT_MS,
+      disableReasoning: true,
     }, options?.fetcher ? { fetcher: options.fetcher } : undefined);
 
     const raw = result.choices[0]?.message.content;

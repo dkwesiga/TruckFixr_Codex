@@ -127,6 +127,63 @@ environment, and the deterministic-fallback default-to-stable behavior for
 ambiguous `symptom`-category free text (C4/C11 still fell back to the rule
 engine and showed the same "stable" severity-deflation flag both runs).
 
+## Update 2026-08-17 (2): AI-call reliability root cause found and fixed
+
+Investigated the "AI call reliability in this environment" open item from the
+first update. Root cause found via `scripts/admin/probe-diagnosis-ai-health.ts`
+plus direct live requests against OpenRouter: **`deepseek/deepseek-v4-flash`
+(the default OpenRouter model) is a reasoning-token model, and the
+orchestrator never told OpenRouter to skip reasoning.** Reproduced directly
+against the real `ASSESSMENT_SYSTEM_PROMPT`:
+
+| | reasoning enabled (prior default) | `reasoning: {enabled: false}` |
+|---|---|---|
+| Latency (C4 prompt, live) | 8178ms | 4844ms |
+| `reasoning_tokens` used | 278 / 400 completion-token budget (70%) | 0 |
+
+Reasoning was eating up to 70% of the completion-token budget on a task that
+only needs a few hundred tokens of structured JSON out, and roughly doubling
+latency against the 12s `AI_TIMEOUT_MS` — a direct mechanism for both the
+timeouts and the truncated/unparseable-JSON fallbacks seen in the first
+benchmark run (this is likely why C4/C5/C11 fell back inconsistently across
+runs: reasoning-token consumption is non-deterministic per OpenRouter's
+upstream routing).
+
+**Fix**: added an OpenRouter-only `disableReasoning` option to
+`aiOrchestrator.ts`'s `OrchestratorInput` (`invokeOpenRouter` sends
+`reasoning: {enabled: false}` when set; every other provider is unaffected —
+scoped deliberately, not a global orchestrator default, since only this
+flow's prompts were benchmarked). Wired into both `guestCaseAi.ts` calls
+(`guest_case_next_question`, `guest_case_assessment`). 2 new tests in
+`aiOrchestrator.test.ts` assert the field is/isn't sent depending on the
+flag; 39/39 tests pass across both files, typecheck clean.
+
+**Benchmark re-run (post-fix, same 12 cases)**:
+
+- **AI-call fallback rate: 6/12 → 1/12** (C4 remains the sole outlier —
+  same case that fell back on every run so far; worth a closer look
+  separately, may be a different failure mode).
+- **Latency roughly halved across the board** (e.g. C1: 2.5s vs. the 3.5-10s
+  range seen previously; C7: 1.8s vs. up to 16s).
+- **C11 (recurring post-repair fault) — one of the two cases flagged for
+  severity-deflation in the first update — now succeeds and correctly
+  reports `attention/schedule_service`** instead of falling back to the
+  deterministic engine's lenient `stable` default. This is a direct, measured
+  fix for one of the two open severity-deflation concerns, not just a
+  latency win.
+- 0/12 critical-classification mismatches and 0 rule-based/AI divergence
+  held throughout — no accuracy regression from the change itself.
+- Avg confidence 71.3 (n=8 successful calls, up from n=6 in the prior run,
+  reflecting more calls actually succeeding rather than falling back).
+
+**Still open**: C4 (intermittent stall while driving) has now fallen back on
+every run regardless of the reasoning fix — worth investigating as its own,
+narrower issue rather than assuming it will resolve itself. Also unresolved:
+whether the deterministic engine's `stable` default for `symptom`-category
+free text is the right fallback severity when the AI *does* fail (still
+relevant for C4 and for production's inevitable occasional fallback, even at
+a much lower rate now).
+
 ## Sample-size caveat
 
 12 synthetic golden cases, single run per case (barring the timeout-driven

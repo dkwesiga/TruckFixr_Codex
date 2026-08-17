@@ -82,6 +82,16 @@ export type OrchestratorInput = {
   fallbackProviders?: AiProvider[];
   model?: string;
   timeoutMs?: number;
+  /**
+   * OpenRouter-only: ask the model to skip extended "reasoning" tokens
+   * before answering. Measured live against deepseek/deepseek-v4-flash (the
+   * default OpenRouter model): reasoning consumed up to ~70% of the
+   * completion-token budget on a plain classification prompt and roughly
+   * doubled latency, with no material change to the answer for tasks that
+   * just need structured JSON out (see guestCaseAi.ts). Ignored by other
+   * providers — only wired into the OpenRouter request.
+   */
+  disableReasoning?: boolean;
 };
 
 export type ToolCall = {
@@ -661,6 +671,10 @@ async function invokeOpenRouter(
   fetcher: FetchLike,
   timeoutMs: number
 ): Promise<ProviderResponse> {
+  const requestBody: Record<string, unknown> = buildOpenAiPayload(input, config.model);
+  if (input.disableReasoning) {
+    requestBody.reasoning = { enabled: false };
+  }
   const response = await fetchWithTimeout(
     fetcher,
     "https://openrouter.ai/api/v1/chat/completions",
@@ -672,7 +686,7 @@ async function invokeOpenRouter(
         "HTTP-Referer": ENV.appBaseUrl || "https://truckfixr.com",
         "X-Title": "TruckFixr Fleet AI",
       },
-      body: JSON.stringify(buildOpenAiPayload(input, config.model)),
+      body: JSON.stringify(requestBody),
     },
     timeoutMs
   );
