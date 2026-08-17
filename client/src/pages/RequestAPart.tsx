@@ -11,6 +11,7 @@ import { trpc } from "@/lib/trpc";
 import { useSeoMeta } from "@/lib/useSeoMeta";
 import { getFriendlyErrorMessage } from "@/lib/actionErrorMessages";
 import { decodeVin, normalizeVinInput, type DecodedVehicle } from "@/lib/vin";
+import VinPhotoCapture from "@/components/VinPhotoCapture";
 
 const shell = "mx-auto w-full max-w-[640px] px-4 sm:px-6";
 const cardClass =
@@ -46,6 +47,7 @@ export default function RequestAPart() {
   const [manualYear, setManualYear] = useState("");
   const [manualUnitNumber, setManualUnitNumber] = useState("");
   const [vehicleStepError, setVehicleStepError] = useState<string | null>(null);
+  const [vinFromPhoto, setVinFromPhoto] = useState(false);
 
   const submitMutation = trpc.partsRequests.submitPublic.useMutation();
 
@@ -68,6 +70,13 @@ export default function RequestAPart() {
       setVehicleDecodeError(result.error);
       setManualVehicleEntry(true);
     }
+  }
+
+  function handleVinPhotoCaptured(capturedVin: string) {
+    setVin(capturedVin);
+    setVinFromPhoto(true);
+    setDecodedVehicle(null);
+    setVehicleDecodeError(null);
   }
 
   function vehicleSummaryLabel() {
@@ -172,7 +181,10 @@ export default function RequestAPart() {
                 <Input
                   id="vin"
                   value={vin}
-                  onChange={(e) => setVin(e.target.value)}
+                  onChange={(e) => {
+                    setVin(e.target.value);
+                    setVinFromPhoto(false);
+                  }}
                   placeholder="17-character VIN"
                   maxLength={17}
                   autoComplete="off"
@@ -187,11 +199,17 @@ export default function RequestAPart() {
                   {vinDecoding ? <Loader2 className="h-4 w-4 animate-spin" /> : "Decode"}
                 </Button>
               </div>
+              {vinFromPhoto && (
+                <p className="text-sm font-medium text-[#38465F]">
+                  Read from your photo — double-check it against the plate, then tap Decode.
+                </p>
+              )}
               {vehicleDecodeError && (
                 <p className="text-sm font-medium text-[#D81F2A]" role="alert">
                   {vehicleDecodeError}
                 </p>
               )}
+              <VinPhotoCapture onVinCaptured={handleVinPhotoCaptured} disabled={vinDecoding} />
             </div>
 
             {decodedVehicle && (decodedVehicle.make || decodedVehicle.model || decodedVehicle.year) && (
