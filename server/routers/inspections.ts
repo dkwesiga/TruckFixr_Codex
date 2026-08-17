@@ -75,6 +75,7 @@ import {
   getInspectionStatusFromIntegrity,
 } from "../services/inspectionIntegrity";
 import { analyzeDiagnosticWithAi } from "../services/tadisCore";
+import { getSimilarCasesForDiagnosis } from "../services/tadisLearningRetrieval";
 import { evaluateEarlyWarnings } from "../services/earlyWarning";
 import {
   canInspectVehicle,
@@ -191,6 +192,19 @@ async function runInspectionTriage(input: {
   driverNotes?: string | null;
 }) {
   try {
+    const symptoms = [input.defectDescription, input.category].filter(Boolean);
+
+    // Evidence-weighted TADIS learning records (§15) — see
+    // aiTriage.ts::runDefectTriage for the equivalent manual-triage wiring.
+    // Never blocks triage on a lookup failure.
+    const similarCases = await getSimilarCasesForDiagnosis({
+      make: input.vehicle.make,
+      model: input.vehicle.model,
+      modelYear: input.vehicle.year,
+      symptoms,
+      faultCodes: [],
+    });
+
     const analysis = await analyzeDiagnosticWithAi({
       vehicleId: input.vehicleId,
       vehicle: {
@@ -201,9 +215,10 @@ async function runInspectionTriage(input: {
         year: input.vehicle.year ?? undefined,
         configuration: {},
       },
-      symptoms: [input.defectDescription, input.category].filter(Boolean),
+      symptoms,
       faultCodes: [],
       driverNotes: input.driverNotes ?? input.defectDescription,
+      similarCases,
     });
 
     const confidenceScore = Math.round(analysis.confidence_score ?? 0);
