@@ -80,7 +80,20 @@ function answersRevealCritical(answers: Answers): boolean {
 
 // Signals that push a stable report up to "attention".
 function answersRaiseAttention(input: GuestCaseInput, answers: Answers): boolean {
-  if (input.operatingStatus === "stopped" || input.operatingStatus === "reduced_power_derate") {
+  if (
+    input.operatingStatus === "stopped" ||
+    input.operatingStatus === "reduced_power_derate" ||
+    // The guest explicitly said the vehicle IS exhibiting a symptom right
+    // now, as opposed to "operating_normally" — this deterministic engine
+    // never reads concernText itself (only detectCriticalTrigger does), so
+    // operatingStatus is the only turn-0 signal it has that something is
+    // actually wrong. Excluding it meant a plainly concerning free-text
+    // description (e.g. "engine dies randomly while driving on the
+    // highway") defaulted to stable/continue_monitor whenever this rule-
+    // based engine was the one answering — either at turn 0 before any
+    // clarifying answer exists, or as the fallback on an AI failure.
+    input.operatingStatus === "operating_with_symptoms"
+  ) {
     return true;
   }
   if (answers.warning_light_color === "red" || answers.warning_light_color === "flashing") return true;

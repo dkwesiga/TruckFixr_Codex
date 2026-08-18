@@ -227,6 +227,55 @@ severity-classification logic affecting more than just this case, so it
 needs its own benchmark pass across a broader case set before touching it,
 not a one-off fix scoped to C4.
 
+## Update 2026-08-17 (4): the "stable default" open item, root-caused and fixed
+
+Investigated the still-open item from update (3): whether the rule-based
+engine's `stable` default is the right severity for `symptom`-category free
+text during the window a first-turn critical AI verdict is deferred (or any
+time the AI call fails and this engine is the fallback).
+
+**Root cause**: `answersRaiseAttention()` in `guestCaseAssessment.ts` never
+reads `concernText` at all — it only checks `input.operatingStatus` (only
+`stopped`/`reduced_power_derate` raised attention) and specific structured
+*answer* keys from later clarifying questions. `detectCriticalTrigger()` is
+the only place free text is examined, and only for the critical-keyword
+floor. So at turn 0, with zero answers, this deterministic engine's only
+real signal that something is wrong is `operatingStatus` — and
+`"operating_with_symptoms"` (the status literally meaning "yes, there's a
+symptom happening right now") was excluded from the raise-attention list,
+treated identically to `"operating_normally"`. Any free-text description
+under that status — however concerning — defaulted straight to
+`stable/continue_monitor` whenever this engine was the one answering.
+
+**Fix**: added `operating_with_symptoms` to the `answersRaiseAttention()`
+condition in `guestCaseAssessment.ts`, alongside the existing
+`stopped`/`reduced_power_derate` checks it was already logically grouped
+with. Maps to `attention + complete_trip_then_inspect` → customerReadiness
+`service_soon` (via the existing `readinessFromDecision()` table) — a
+graduated, non-alarming step up from `ready`, not an escalation to `stop`.
+1 new regression test in `guestCaseAssessment.test.ts` using C4's exact
+input; all pre-existing tests in that file and the wider guest-case suite
+were checked against the change and none asserted `stable` for this status
+(verified by grep before implementing), so no regressions.
+
+**Benchmark re-run**: C4's rule-based column changed from
+`stable/continue_monitor` to `attention/complete_trip_then_inspect` — and
+critically, this holds *even on the run where the AI call itself still
+failed*, which is exactly the scenario this was meant to fix: a degraded/
+fallback state should be at least as cautious as the working state, not
+more lenient. C10 (also `operating_with_symptoms`) improved the same way.
+0/12 critical-classification mismatches held. C11 (`operating_normally`,
+not `operating_with_symptoms`) is unaffected by this change, as intended —
+its rule-based fallback still reads `stable`, which is a separate, more
+nuanced "recurring fault after repair" case this fix doesn't address.
+
+This closes the last of the three open items flagged across updates (2) and
+(3) for this benchmark round. Remaining candidates for a future pass:
+growing the golden-case set with confirmed outcomes, and auditing whether
+`"unknown"` operating status deserves the same treatment (not changed here
+— no direct evidence for it in this benchmark, and vagueness isn't quite
+the same signal as an explicit "yes, there's a symptom").
+
 ## Sample-size caveat
 
 12 synthetic golden cases, single run per case (barring the timeout-driven
