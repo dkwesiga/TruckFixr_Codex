@@ -271,19 +271,28 @@ export async function startGuestCase(args: StartGuestCaseArgs) {
     concernCategory: args.concernCategory,
     faultCodes: args.faultCodes,
   };
-  const rawAssessment = await generateGuestAssessment({
-    input,
-    answers: {},
-    vehicleIdentifier: args.vehicleIdentifier ?? null,
-  });
+  // These two calls are independent on the very first turn (no answers yet,
+  // so generateGuestNextQuestion's confidence-driven stop never applies —
+  // see guestCaseAi.ts) — run them in parallel rather than sequentially so a
+  // guest isn't waiting on two back-to-back AI round-trips (up to 2x
+  // AI_TIMEOUT_MS) just to see the first question. If the assessment turns
+  // out critical, the next-question result is simply discarded below.
+  const [rawAssessment, firstTurnNextQuestion] = await Promise.all([
+    generateGuestAssessment({
+      input,
+      answers: {},
+      vehicleIdentifier: args.vehicleIdentifier ?? null,
+    }),
+    generateGuestNextQuestion({
+      input,
+      answers: {},
+      vehicleIdentifier: args.vehicleIdentifier ?? null,
+      confidence: null,
+    }),
+  ]);
   const nextQuestion: AdaptiveQuestion | null = rawAssessment.criticalTriggered
     ? null
-    : await generateGuestNextQuestion({
-        input,
-        answers: {},
-        vehicleIdentifier: args.vehicleIdentifier ?? null,
-        confidence: rawAssessment.confidence,
-      });
+    : firstTurnNextQuestion;
   const assessment = applyLowConfidenceEscalation(rawAssessment, nextQuestion);
   const now = new Date();
   const publicToken = generateOpaqueToken();

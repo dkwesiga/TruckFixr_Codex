@@ -4,6 +4,7 @@ import { getDb } from "../db";
 import {
   adminAlerts,
   aiUsageLogs,
+  analyticsEvents,
   companyMemberships,
   fleets,
   fleetQuoteRequests,
@@ -72,6 +73,7 @@ export type SubscriptionState = {
   aiSessionMonthlyLimit?: number | null;
   aiSessionsUsedCurrentPeriod?: number;
   aiSessionsResetAt?: Date | null;
+  aiUsageEnforcement?: "hard" | "soft";
 };
 
 type CompanyBillingRow = {
@@ -165,6 +167,7 @@ function getCompanyBillingPlan(row: CompanyBillingRow | null | undefined) {
     totalActiveTrailerLimit,
     aiSessionMonthlyLimit,
     aiSessionsUsedCurrentPeriod,
+    aiUsageEnforcement: plan.aiUsageEnforcement,
     aiSessionsResetAt: row?.aiSessionsResetAt ?? null,
     trialStartedAt: row?.trialStartedAt ?? null,
     trialEndsAt: row?.trialEndsAt ?? null,
@@ -369,6 +372,7 @@ export async function getSubscriptionState(userId: number): Promise<Subscription
     aiSessionMonthlyLimit: fleetRow ? companyBilling.aiSessionMonthlyLimit : undefined,
     aiSessionsUsedCurrentPeriod: fleetRow ? companyBilling.aiSessionsUsedCurrentPeriod : undefined,
     aiSessionsResetAt: fleetRow ? companyBilling.aiSessionsResetAt : undefined,
+    aiUsageEnforcement: fleetRow ? companyBilling.aiUsageEnforcement : undefined,
   };
 }
 
@@ -478,6 +482,17 @@ export async function syncSubscriptionState(input: {
       .where(eq(users.id, input.userId))
       .limit(1)
   )[0]?.subscriptionTier ?? "free");
+
+  if (currentTier !== input.tier) {
+    const tierRank: Record<SubscriptionTier, number> = { free: 0, pilot_access: 0, pro: 1, fleet: 2 };
+    const event = tierRank[input.tier] > tierRank[currentTier] ? "plan_upgraded" : "plan_downgraded";
+    await db.insert(analyticsEvents).values({
+      event,
+      funnelStep: "billing",
+      metadataJson: { fromTier: currentTier, toTier: input.tier, userId: input.userId, fleetId: input.fleetId ?? null },
+      at: now,
+    });
+  }
 
   if (existing) {
     await db.update(subscriptions).set(snapshot).where(eq(subscriptions.id, existing.id));
@@ -640,6 +655,25 @@ export async function getUsageSummary(userId: number, fleetId?: number) {
   };
 }
 
+/**
+ * Pure decision function for AI diagnostic access, kept separate from getEntitlementState
+ * so it can be unit-tested without a database. "soft" plans (all paid tiers) treat
+ * diagnosticLimit as a fair-use guideline: AI cost per case is negligible, and blocking
+ * usage past it works against growing confirmed TADIS outcomes. Only "hard" plans (the
+ * no-card free trial) actually cut usage off once the limit is reached.
+ */
+export function computeDiagnosticsAccess(params: {
+  diagnosticsThisMonth: number;
+  diagnosticLimit: number | null;
+  aiUsageEnforcement: "hard" | "soft";
+}) {
+  const aiFairUseExceeded =
+    params.diagnosticLimit !== null && params.diagnosticsThisMonth >= params.diagnosticLimit;
+  const canRunDiagnostics =
+    params.aiUsageEnforcement === "soft" || params.diagnosticLimit === null || !aiFairUseExceeded;
+  return { aiFairUseExceeded, canRunDiagnostics };
+}
+
 export async function getEntitlementState(input: { userId: number; fleetId: number }) {
   const subscription = await getSubscriptionState(input.userId);
   const plan = SUBSCRIPTION_PLANS[subscription.effectiveTier];
@@ -657,10 +691,13 @@ export async function getEntitlementState(input: { userId: number; fleetId: numb
   const canInviteDriver =
     driverLimit === null || usage.managedDriverCount < driverLimit;
   const diagnosticLimit = subscription.aiSessionMonthlyLimit ?? plan.limits.diagnosticsPerMonth;
-  const canRunDiagnostics =
-    input.fleetId > 0 &&
-    (diagnosticLimit === null ||
-      usage.diagnosticsThisMonth < (diagnosticLimit ?? Number.MAX_SAFE_INTEGER));
+  const aiUsageEnforcement = subscription.aiUsageEnforcement ?? "hard";
+  const { aiFairUseExceeded, canRunDiagnostics: canRunDiagnosticsForUsage } = computeDiagnosticsAccess({
+    diagnosticsThisMonth: usage.diagnosticsThisMonth,
+    diagnosticLimit,
+    aiUsageEnforcement,
+  });
+  const canRunDiagnostics = input.fleetId > 0 && canRunDiagnosticsForUsage;
 
   const trialActive =
     subscription.billingStatus === "trialing" &&
@@ -686,6 +723,8 @@ export async function getEntitlementState(input: { userId: number; fleetId: numb
     canAddTrailer,
     canInviteDriver,
     canRunDiagnostics,
+    aiFairUseExceeded,
+    aiUsageEnforcement,
     canRunInspections: true,
     canAccessPaidFeatures: subscription.effectiveTier === "pro" || subscription.effectiveTier === "fleet",
     canSelfServeUpgradeToPro:
@@ -749,7 +788,45 @@ export async function assertDiagnosticsWithinPlan(input: { userId: number; fleet
     });
   }
 
+  if (entitlement.aiFairUseExceeded && entitlement.aiUsageEnforcement === "soft") {
+    await flagAiFairUseExceeded(input.userId, input.fleetId);
+  }
+
   return entitlement;
+}
+
+/** Records an internal, non-blocking signal when a soft-cap plan exceeds its fair-use
+ * AI diagnostic guideline. Deduped to one open alert per fleet per calendar month. */
+async function flagAiFairUseExceeded(userId: number, fleetId: number) {
+  const db = await getDb();
+  if (!db) return;
+
+  const monthStart = getMonthStart();
+  const [existing] = await db
+    .select({ id: adminAlerts.id })
+    .from(adminAlerts)
+    .where(
+      and(
+        eq(adminAlerts.fleetId, fleetId),
+        eq(adminAlerts.type, "ai_usage_soft_cap_reached"),
+        gte(adminAlerts.createdAt, monthStart)
+      )
+    )
+    .limit(1);
+
+  if (existing) return;
+
+  const now = new Date();
+  await db.insert(adminAlerts).values({
+    userId,
+    fleetId,
+    type: "ai_usage_soft_cap_reached",
+    title: `Fleet #${fleetId} exceeded its AI diagnostic fair-use guideline`,
+    body: "Usage continues to be served (soft cap, no customer-facing block) — informational only.",
+    metadata: { fleetId, userId },
+    createdAt: now,
+    updatedAt: now,
+  });
 }
 
 export async function assertUsersWithinPlan(input: { userId: number; fleetId: number }) {

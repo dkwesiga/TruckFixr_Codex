@@ -18,24 +18,55 @@ import {
   TRUCKFIXR_PLANS,
   type BillingInterval,
   type PlanKey,
+  type TruckFixrPlan,
 } from "../../../shared/truckfixrPricing";
 
 type PricingAction = "signup" | "pilot" | "checkout" | "quote";
 
-const featureRows = [
-  ["Powered vehicles included", "1", "Up to 5", "Up to 10", "Up to 20", "Custom"],
-  ["Active trailers included", "1", "Up to 5", "Up to 10", "Up to 20", "Custom"],
-  ["Extra active trailers", "$5/month each", "$5/month each", "$5/month each", "$5/month each", "$5/month each"],
-  ["Unlimited users", "Yes", "Yes", "Yes", "Yes", "Yes"],
-  ["Unlimited inspections", "Yes", "Yes", "Yes", "Yes", "Yes"],
-  ["AI diagnostic sessions / month", "20", "75", "150", "300", "Custom"],
-  ["VIN decoding", "Yes", "Yes", "Yes", "Yes", "Yes"],
-  ["Trailer linking", "Yes", "Yes", "Yes", "Yes", "Yes"],
-  ["Driver assignments", "Basic", "Yes", "Yes", "Yes", "Yes"],
-  ["Fleet dashboard", "Basic", "Basic", "Full", "Advanced", "Custom"],
-  ["CSV/exportable data", "No", "No", "Yes", "Yes", "Yes"],
-  ["Priority support", "No", "No", "No", "Yes", "Yes"],
-] as const;
+const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+
+/**
+ * Derives the comparison-table rows directly from TRUCKFIXR_PLANS so this table
+ * can never drift from the actual plan config (it previously duplicated these
+ * numbers as a separate hardcoded array).
+ */
+function buildFeatureRows(plans: readonly TruckFixrPlan[]) {
+  const vehicleLimit = (plan: TruckFixrPlan) =>
+    plan.poweredVehicleLimit === null
+      ? "Custom"
+      : plan.planKey === "owner_operator"
+        ? String(plan.poweredVehicleLimit)
+        : `Up to ${plan.poweredVehicleLimit}`;
+  const trailerLimit = (plan: TruckFixrPlan) =>
+    plan.includedTrailerLimit === null
+      ? "Custom"
+      : plan.planKey === "owner_operator"
+        ? String(plan.includedTrailerLimit)
+        : `Up to ${plan.includedTrailerLimit}`;
+
+  return [
+    ["Powered vehicles included", ...plans.map(vehicleLimit)],
+    ["Active trailers included", ...plans.map(trailerLimit)],
+    [
+      "Extra active trailers",
+      ...plans.map((plan) =>
+        plan.extraTrailerPriceCadMonthly === null ? "Custom" : `$${plan.extraTrailerPriceCadMonthly}/month each`
+      ),
+    ],
+    ["Unlimited users", ...plans.map((plan) => (plan.unlimitedUsers ? "Yes" : "No"))],
+    ["Unlimited inspections", ...plans.map((plan) => (plan.unlimitedInspections ? "Yes" : "No"))],
+    [
+      "AI diagnostic sessions / month (fair-use)",
+      ...plans.map((plan) => (plan.aiDiagnosticSessionLimit === null ? "Custom" : String(plan.aiDiagnosticSessionLimit))),
+    ],
+    ["VIN decoding", ...plans.map(() => "Yes")],
+    ["Trailer linking", ...plans.map(() => "Yes")],
+    ["Driver assignments", ...plans.map((plan) => (plan.driverAssignments === true ? "Yes" : "Basic"))],
+    ["Fleet dashboard", ...plans.map((plan) => capitalize(plan.fleetDashboard))],
+    ["CSV/exportable data", ...plans.map((plan) => (plan.csvExport ? "Yes" : "No"))],
+    ["Priority support", ...plans.map((plan) => (plan.prioritySupport ? "Yes" : "No"))],
+  ] as const;
+}
 
 const faqItems = [
   {
@@ -70,6 +101,7 @@ const faqItems = [
 
 const publicPricingPlans = getPublicTruckFixrPlans();
 const comparisonPricingPlans = publicPricingPlans.filter((plan) => plan.planKey !== "free_trial");
+const featureRows = buildFeatureRows(comparisonPricingPlans);
 
 export default function Pricing() {
   const { user, logout } = useAuthContext();
@@ -317,6 +349,11 @@ export default function Pricing() {
                     <p className="mt-2 text-sm text-slate-600">
                       Includes {plan.poweredVehicleLimit} powered vehicle{plan.poweredVehicleLimit === 1 ? "" : "s"} and {plan.includedTrailerLimit} active trailer{plan.includedTrailerLimit === 1 ? "" : "s"}.
                     </p>
+                    {plan.planKey === "fleet_growth" ? (
+                      <p className="mt-1 text-xs font-medium text-red-700">
+                        Starts with a CAD $99, one-time 30-day pilot — credited to your first month if you continue.
+                      </p>
+                    ) : null}
                     <div className="mt-4 flex flex-wrap gap-2">
                       <Button
                         className="rounded-full bg-slate-950 px-4"
@@ -513,7 +550,7 @@ export default function Pricing() {
             <div className="max-w-3xl">
               <p className="text-sm font-semibold uppercase tracking-[0.22em] text-red-300">Ready to start?</p>
               <h2 className="mt-3 text-3xl font-black tracking-tight sm:text-4xl">
-                Start with a free trial, move into Fleet Pilot, and scale powered vehicles + trailers as you grow.
+                Start with a free trial, then choose the Core Fleet plan and scale powered vehicles + trailers as you grow.
               </h2>
               <p className="mt-4 text-slate-300">
                 All prices are CAD, taxes are separate, and every plan includes unlimited users and unlimited inspections for active assets.
@@ -524,7 +561,7 @@ export default function Pricing() {
                 Start Free Trial
               </Button>
               <Button variant="outline" className="rounded-full border-slate-700 px-5 text-white hover:bg-white/10" onClick={() => handleCheckout("fleet_growth")}>
-                Start 30-Day Fleet Pilot
+                Choose Core Fleet
               </Button>
             </div>
           </div>

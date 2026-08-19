@@ -3,7 +3,7 @@
 // authenticated owner. Payment alone never activates a pilot.
 
 import { TRPCError } from "@trpc/server";
-import { eq } from "drizzle-orm";
+import { and, desc, eq, gt } from "drizzle-orm";
 import { getDb } from "../db";
 import { analyticsEvents, pilotApplications } from "../../drizzle/schema";
 import {
@@ -196,13 +196,17 @@ export async function activatePilot(params: { applicationId: number }) {
   }
   const now = new Date();
   const endDate = new Date(now.getTime() + PILOT_DURATION_DAYS * 24 * 60 * 60 * 1000);
-  return transition(db, params.applicationId, "active", { startDate: now, endDate });
+  const result = await transition(db, params.applicationId, "active", { startDate: now, endDate });
+  await emit(db, "pilot_started");
+  return result;
 }
 
 export async function completePilot(params: { applicationId: number }) {
   const db = await getDb();
   requireDb(db);
-  return transition(db, params.applicationId, "completed");
+  const result = await transition(db, params.applicationId, "completed");
+  await emit(db, "pilot_completed");
+  return result;
 }
 
 /** Credit CAD $99 toward the first subscription if converting within 14 days of pilot end. */
@@ -222,5 +226,40 @@ export async function recordConversionCredit(params: { applicationId: number; no
     pilotCreditAmountCents: PILOT_PRICE_CAD_CENTS,
     pilotCreditAppliedAt: now,
   });
+  await emit(db, "pilot_converted");
   return { credited: true, amountCents: PILOT_PRICE_CAD_CENTS };
+}
+
+/**
+ * Finds an unconsumed pilot conversion credit for a fleet, if any. A credit is
+ * "unconsumed" as long as pilotCreditAmountCents is still positive — consumePilotCredit
+ * zeroes it out once it's actually been applied to a Stripe checkout session, which
+ * prevents the same $99 credit from being applied twice across repeated checkout attempts.
+ */
+export async function getUnconsumedPilotCredit(fleetId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db
+    .select({ id: pilotApplications.id, amountCents: pilotApplications.pilotCreditAmountCents })
+    .from(pilotApplications)
+    .where(
+      and(
+        eq(pilotApplications.fleetId, fleetId),
+        eq(pilotApplications.state, "converted"),
+        gt(pilotApplications.pilotCreditAmountCents, 0)
+      )
+    )
+    .orderBy(desc(pilotApplications.updatedAt))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Marks a pilot credit as consumed after it has been applied to a Stripe checkout session. */
+export async function consumePilotCredit(applicationId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(pilotApplications)
+    .set({ pilotCreditAmountCents: 0, updatedAt: new Date() })
+    .where(eq(pilotApplications.id, applicationId));
 }
