@@ -1199,6 +1199,8 @@ function DriverDashboardContent() {
                     <option value="steering_axle">Steering &amp; Axle</option>
                     <option value="electrical_electronic">Electrical/electronic</option>
                     <option value="exhaust_emissions">Exhaust &amp; Emissions</option>
+                    <option value="unknown">Not sure</option>
+                    <option value="other">Other</option>
                   </select>
                 </div>
                 <div>
@@ -1218,6 +1220,10 @@ function DriverDashboardContent() {
                     <option value="medium">Report to manager</option>
                     <option value="high">Stop and request help</option>
                     <option value="critical">Do not drive</option>
+                    {/* Same underlying value as "Report to manager" — the safe
+                        default when the driver can't judge severity themselves;
+                        a manager reviews and reclassifies it either way. */}
+                    <option value="medium">Not sure / let manager decide</option>
                   </select>
                 </div>
               </div>
