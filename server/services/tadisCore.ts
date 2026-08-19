@@ -3619,8 +3619,15 @@ function buildSimpleTadisFallbackRanking(
     ? toRankedCause(matchedRanking, baselineStage.candidateUniverse, baselineStage.evidence)
     : buildNovelSimpleRankedCause(topLikelyCause, baselineStage);
 
+  // Only surface a rule-library cause as an additional hypothesis when it has
+  // actual evidence behind it (a matched symptom/note/fault-code/history
+  // keyword or LLM intake hint). Every cause starts from the same baseline
+  // score, so with zero real matches (e.g. an unrecognized fault code and no
+  // descriptive symptom text) the "ranking" is just CAUSE_LIBRARY declaration
+  // order — showing those as low-confidence hypotheses is misleading rather
+  // than informative (see SPN 3216 surfacing an unrelated coolant hypothesis).
   const rest = baselineStage.ranked
-    .filter((item) => item.cause.cause !== topEntry.cause_name)
+    .filter((item) => item.cause.cause !== topEntry.cause_name && item.evidenceMatches > 0)
     .slice(0, 3)
     .map((item) => toRankedCause(item, baselineStage.candidateUniverse, baselineStage.evidence));
 
