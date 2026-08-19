@@ -1526,7 +1526,8 @@ function nextAffordableTokenBudget(error: Error, requestedMaxTokens: number) {
 }
 
 function buildDiagnosticProviderPlan(
-  config: DiagnosticRuntimeConfig
+  config: DiagnosticRuntimeConfig,
+  modelOverride?: string
 ): DiagnosticProviderPlan | null {
   const enabledProviders = getEnabledProviders();
   const primaryProvider: AiProvider = ENV.openRouterApiKey
@@ -1535,14 +1536,18 @@ function buildDiagnosticProviderPlan(
   const fallbackProviders =
     primaryProvider === "openrouter" ? [] : getFallbackProviders(primaryProvider);
   const primaryModel = config.openRouterModel.trim() || DEFAULT_DEEPSEEK_OPENROUTER_MODEL;
+  // modelOverride (when given) is tried first — e.g. the higher-accuracy tier
+  // simple mode requests for fault codes / evidence-bearing cases — with the
+  // existing cheap-tier chain kept as the fallback if it fails or is unset.
   const primaryModels =
     primaryProvider === "openrouter"
       ? uniqueNonEmptyModels([
+          modelOverride,
           DEFAULT_DEEPSEEK_OPENROUTER_MODEL,
           primaryModel,
           config.openRouterFallbackModel,
         ])
-      : uniqueNonEmptyModels([primaryModel, config.openRouterFallbackModel]);
+      : uniqueNonEmptyModels([modelOverride, primaryModel, config.openRouterFallbackModel]);
 
   if (enabledProviders.length > 0) {
     return {
@@ -2131,8 +2136,11 @@ export type DiagnosticSimpleDiagnosisResult =
       raw: InvokeResult | null;
     };
 
-function buildSimpleProviderPlan(config: DiagnosticRuntimeConfig): DiagnosticProviderPlan | null {
-  return buildDiagnosticProviderPlan(config);
+function buildSimpleProviderPlan(
+  config: DiagnosticRuntimeConfig,
+  modelOverride?: string
+): DiagnosticProviderPlan | null {
+  return buildDiagnosticProviderPlan(config, modelOverride);
 }
 
 export function buildSimpleClassificationPrompt(request: Record<string, unknown>) {
@@ -2182,9 +2190,10 @@ function validateSimpleDiagnosis(parsed: SimpleDiagnosticDiagnosisResult) {
 
 export async function classifyDiagnosticIssueWithLlm(
   request: DiagnosticIntakeInterpretationRequest,
-  config: DiagnosticRuntimeConfig
+  config: DiagnosticRuntimeConfig,
+  modelOverride?: string
 ): Promise<DiagnosticSimpleClassificationResult> {
-  const providerPlan = buildSimpleProviderPlan(config);
+  const providerPlan = buildSimpleProviderPlan(config, modelOverride);
   if (!providerPlan) {
     return {
       status: "not_configured",
@@ -2280,9 +2289,10 @@ export async function classifyDiagnosticIssueWithLlm(
 
 export async function diagnoseDiagnosticIssueWithLlm(
   request: DiagnosticReviewRequest,
-  config: DiagnosticRuntimeConfig
+  config: DiagnosticRuntimeConfig,
+  modelOverride?: string
 ): Promise<DiagnosticSimpleDiagnosisResult> {
-  const providerPlan = buildSimpleProviderPlan(config);
+  const providerPlan = buildSimpleProviderPlan(config, modelOverride);
   if (!providerPlan) {
     return {
       status: "not_configured",

@@ -30,7 +30,7 @@ import { LOW_CONFIDENCE_NOTICE, SAFETY_DISCLAIMERS } from "../../shared/maintena
 import type { GuestAssessment } from "./guestCaseAssessment";
 import { CONFIDENCE_THRESHOLD, generateGuestAssessment, generateGuestNextQuestion } from "./guestCaseAi";
 import { generateOpaqueToken, hashIdentifier } from "./guestTokens";
-import { enqueueReview } from "./caseReviewQueue";
+import { enqueueReview, notifyPendingReviewForGuestCase } from "./caseReviewQueue";
 import { recordObservabilityEvent } from "./observability";
 import { issueVerificationCode, verifyCode } from "./verificationCodes";
 import { sendEmail } from "./email";
@@ -577,6 +577,17 @@ export async function submitGuestContact(params: {
     disclaimerAcknowledgedAt: new Date(),
     capturedAt: new Date(),
   });
+
+  // Non-critical review-queue items enqueued before contact existed (e.g. the
+  // technical_uncertainty trigger at case start/answer) were deferred until
+  // now so the reviewer alert email actually includes a way to reach the
+  // guest — send it now that contact is on file. Non-fatal: the queue item
+  // still exists and is visible in the admin UI if this fails.
+  try {
+    await notifyPendingReviewForGuestCase(row.id);
+  } catch (error) {
+    console.error("[GuestCaseService] failed to send deferred reviewer alert:", error);
+  }
 
   if (!eligibility.limitReached) {
     await recordFreeCaseKeys(db, row.id, { email, phone });

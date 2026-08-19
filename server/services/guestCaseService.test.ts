@@ -35,6 +35,11 @@ vi.mock("../db", () => ({
           // Return copies so a later update() cannot alias an already-read row
           // (mirrors real DB read-then-write semantics).
           limit: async () => rowsFor(name).slice(-1).map((r) => ({ ...r })),
+          // A real drizzle query builder is awaitable without a trailing
+          // .limit()/.orderBy() (e.g. `await db.select().from(t).where(x)`);
+          // mirror that so callers using that form don't await a bare object.
+          then: (resolve: any, reject: any) =>
+            Promise.resolve(rowsFor(name).map((r) => ({ ...r }))).then(resolve, reject),
         };
         return chain;
       },
