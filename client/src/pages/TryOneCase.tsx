@@ -147,6 +147,9 @@ export default function TryOneCase() {
   const [preliminary, setPreliminary] = useState<Preliminary | null>(null);
   const [question, setQuestion] = useState<AdaptiveQuestion | null>(null);
   const [answered, setAnswered] = useState(0);
+  // Which option the user just tapped, so it stays visibly selected while the
+  // next question loads instead of every option dimming uniformly.
+  const [selectedAnswerValue, setSelectedAnswerValue] = useState<string | null>(null);
   const [decision, setDecision] = useState<DecisionCard | null>(null);
   const [freeCaseLimitReached, setFreeCaseLimitReached] = useState(false);
 
@@ -360,6 +363,7 @@ export default function TryOneCase() {
 
   async function handleAnswer(value: string) {
     if (!publicToken || !question) return;
+    setSelectedAnswerValue(value);
     trackEvent("adaptive_question_answered", { questionId: question.id });
     try {
       const res = await answerMutation.mutateAsync({
@@ -371,6 +375,8 @@ export default function TryOneCase() {
       applyStep(res);
     } catch {
       /* keep the current question on transient failure */
+    } finally {
+      setSelectedAnswerValue(null);
     }
   }
 
@@ -824,17 +830,26 @@ export default function TryOneCase() {
               <StepDots current={Math.min(answered + 1, 3)} total={3} />
               <h2 className={cn(displayClass, "text-xl sm:text-2xl")}>{question.prompt}</h2>
               <div className="grid gap-2">
-                {question.options.map((o) => (
-                  <button
-                    key={o.value}
-                    type="button"
-                    onClick={() => handleAnswer(o.value)}
-                    disabled={answerMutation.isPending}
-                    className="min-h-[48px] rounded-md border border-[#C3C7CE] bg-white px-4 text-left text-sm font-medium text-[#0A1A2E] hover:border-[#0A1A2E] disabled:opacity-60"
-                  >
-                    {o.label}
-                  </button>
-                ))}
+                {question.options.map((o) => {
+                  const isSelected = answerMutation.isPending && selectedAnswerValue === o.value;
+                  return (
+                    <button
+                      key={o.value}
+                      type="button"
+                      onClick={() => handleAnswer(o.value)}
+                      disabled={answerMutation.isPending}
+                      aria-pressed={isSelected}
+                      className={cn(
+                        "min-h-[48px] rounded-md border px-4 text-left text-sm font-medium hover:border-[#0A1A2E] disabled:opacity-60",
+                        isSelected
+                          ? "border-[#D81F2A] bg-[#FDEAEB] text-[#0A1A2E] opacity-100"
+                          : "border-[#C3C7CE] bg-white text-[#0A1A2E]"
+                      )}
+                    >
+                      {o.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
