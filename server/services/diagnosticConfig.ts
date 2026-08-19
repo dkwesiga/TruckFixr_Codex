@@ -14,7 +14,12 @@ const DEFAULT_DIAGNOSIS_MAX_TOKENS = 900;
 const DEFAULT_NORMAL_DIAGNOSIS_MODEL = "deepseek/deepseek-v4-flash";
 const DEFAULT_ADVANCED_DIAGNOSIS_MODEL = "openai/gpt-4.1-mini";
 const DEFAULT_SAFETY_CRITICAL_MODEL = "openai/gpt-4.1-mini";
-const DEFAULT_COMPLEX_FAULT_CODE_MODEL = "google/gemini-2.5-flash";
+// Used as the model-override tier for fault-code/evidence interpretation in
+// simple TADIS mode (see tadisCore.ts's analyzeDiagnosticSimpleMode) — the
+// highest-accuracy model available, not the cheap default, while the
+// rule-engine baseline isn't reliable enough to trust on its own. Override
+// via COMPLEX_FAULT_CODE_MODEL if a different flagship model is preferred.
+const DEFAULT_COMPLEX_FAULT_CODE_MODEL = "openai/gpt-5";
 const DEFAULT_JSON_REPAIR_MODEL = "openai/gpt-4.1-mini";
 const DEFAULT_FALLBACK_MODEL_2 = "openai/gpt-4.1-mini";
 const MIN_TIMEOUT_MS = 10_000;

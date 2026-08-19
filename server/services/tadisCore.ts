@@ -3957,6 +3957,14 @@ function buildAiUnavailableOutput(
 
 async function analyzeDiagnosticSimpleMode(input: DiagnosticInputRequest) {
   const config = getDiagnosticRuntimeConfig();
+  // Both LLM calls below pass config.complexFaultCodeModel as a model
+  // override so fault codes and other driver-reported evidence are
+  // interpreted by the strongest configured model rather than the cheap
+  // default (deepseek-v4-flash) — the rule-engine baseline (CAUSE_LIBRARY)
+  // isn't reliable enough on its own yet (see e.g. SPN 3216 surfacing an
+  // unrelated coolant hypothesis) to trust the cheap tier here. The existing
+  // cheap-tier chain still runs as a fallback if the override is unset or
+  // the call fails, so this never fully blocks diagnosis.
   const normalizedInput = DiagnosticInputSchema.parse(input);
   const diagnosticSessionId = randomUUID();
   const classifierInput = buildSimpleCategoryInput(normalizedInput);
@@ -3983,7 +3991,11 @@ async function analyzeDiagnosticSimpleMode(input: DiagnosticInputRequest) {
     fallbackUsed: false,
   });
 
-  const classifierAttempt = await classifyDiagnosticIssueWithLlm({ intakePackage: classifierInput }, config);
+  const classifierAttempt = await classifyDiagnosticIssueWithLlm(
+    { intakePackage: classifierInput },
+    config,
+    config.complexFaultCodeModel
+  );
   const classifierFallbackUsed = classifierAttempt.status !== "ok";
   const classifier =
     classifierAttempt.parsed ?? {
@@ -4078,7 +4090,11 @@ async function analyzeDiagnosticSimpleMode(input: DiagnosticInputRequest) {
     status: "failed",
     fallbackUsed: false,
   });
-  const diagnosisAttempt = await diagnoseDiagnosticIssueWithLlm({ evidencePackage: diagnosisInput }, config);
+  const diagnosisAttempt = await diagnoseDiagnosticIssueWithLlm(
+    { evidencePackage: diagnosisInput },
+    config,
+    config.complexFaultCodeModel
+  );
   const diagnosisFallbackUsed = diagnosisAttempt.status !== "ok";
   const diagnosis = diagnosisAttempt.parsed;
 
