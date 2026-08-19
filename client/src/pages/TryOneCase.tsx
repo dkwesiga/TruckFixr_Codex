@@ -200,10 +200,37 @@ export default function TryOneCase() {
   const reviewCheckoutMutation = trpc.technicianReviews.startCheckout.useMutation();
   const [reviewCheckoutError, setReviewCheckoutError] = useState<string | null>(null);
 
-  // Evidence photos (optional, image-only for now).
+  // Evidence photos (optional, image-only for now). The guest can attach
+  // these right after describing the concern, before a case even exists yet
+  // (publicToken is only issued once the intake form is submitted) — so a
+  // photo picked at that point is staged locally (id: null, dataUrl kept for
+  // upload) and only actually uploaded once startGuestCase returns a token;
+  // see uploadStagedPhotos below. Photos picked later, once a token already
+  // exists, upload immediately as before.
   const uploadPhotoMutation = trpc.guestCases.uploadEvidencePhoto.useMutation();
-  const [photos, setPhotos] = useState<Array<{ id: number; url: string }>>([]);
+  const [photos, setPhotos] = useState<Array<{ id: number | null; url: string; dataUrl?: string }>>([]);
   const [photoError, setPhotoError] = useState<string | null>(null);
+  const [uploadingStaged, setUploadingStaged] = useState(false);
+
+  async function uploadStagedPhotos(token: string) {
+    const staged = photos.filter((p) => p.id === null && p.dataUrl);
+    if (staged.length === 0) return;
+    setUploadingStaged(true);
+    try {
+      for (const p of staged) {
+        try {
+          const res = await uploadPhotoMutation.mutateAsync({ publicToken: token, dataUrl: p.dataUrl! });
+          setPhotos((prev) =>
+            prev.map((x) => (x === p ? { id: res.id, url: res.url } : x))
+          );
+        } catch (err) {
+          setPhotoError(getFriendlyErrorMessage(err, "Couldn't upload a photo. Please try again."));
+        }
+      }
+    } finally {
+      setUploadingStaged(false);
+    }
+  }
 
   function applyStep(res: {
     criticalTriggered: boolean;
@@ -312,6 +339,7 @@ export default function TryOneCase() {
       } as never);
       setPublicToken(res.publicToken);
       applyStep(res);
+      void uploadStagedPhotos(res.publicToken);
     } catch (err) {
       const raw = getFriendlyErrorMessage(err);
       // Fail-safe UX: if the client is in public mode but the server hasn't
@@ -408,7 +436,7 @@ export default function TryOneCase() {
   async function handlePhotoSelect(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = ""; // allow re-selecting the same file
-    if (!file || !publicToken) return;
+    if (!file) return;
     setPhotoError(null);
     if (photos.length >= 5) {
       setPhotoError("You can attach up to 5 photos.");
@@ -429,6 +457,12 @@ export default function TryOneCase() {
         reader.onerror = () => reject(reader.error);
         reader.readAsDataURL(file);
       });
+      if (!publicToken) {
+        // No case yet — stage locally, uploaded automatically once the
+        // intake form is submitted (see uploadStagedPhotos).
+        setPhotos((prev) => [...prev, { id: null, url: dataUrl, dataUrl }]);
+        return;
+      }
       const res = await uploadPhotoMutation.mutateAsync({ publicToken, dataUrl });
       setPhotos((prev) => [...prev, { id: res.id, url: res.url }]);
     } catch (err) {
@@ -482,7 +516,8 @@ export default function TryOneCase() {
               <span className="font-bold uppercase tracking-wide">Invite-only preview</span> · provisional.{" "}
             </>
           ) : null}
-          Decision support only — not a confirmed diagnosis, roadworthiness certification, or emergency service.
+          Decision support only — not a confirmed diagnosis, roadworthiness certification, or emergency service.{" "}
+          <strong className="font-bold">Do not use this while driving.</strong> Pull over and park safely first.
         </div>
 
         {phase === "vehicle" && (
@@ -677,6 +712,46 @@ export default function TryOneCase() {
               />
             </div>
 
+            <div className="space-y-2 border-t border-[#E2E6EC] pt-4">
+              <Label htmlFor="evidencePhoto">Add photos (optional)</Label>
+              <p className="text-xs text-[#73777E]">
+                A photo helps with the AI read and a technician later — dashboard lights, leaks, or the affected area. Up to 5, JPEG/PNG/WebP.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {photos.map((p) => (
+                  <img
+                    key={p.id}
+                    src={p.url}
+                    alt="Uploaded evidence"
+                    className="h-14 w-14 rounded-md border border-[#E2E6EC] object-cover"
+                  />
+                ))}
+                {photos.length < 5 && (
+                  <label
+                    htmlFor="evidencePhoto"
+                    className="flex h-14 w-14 cursor-pointer items-center justify-center rounded-md border border-dashed border-[#C3C7CE] text-[#73777E] hover:border-[#38465F] hover:text-[#38465F]"
+                  >
+                    {uploadPhotoMutation.isPending ? (
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    ) : (
+                      <ImagePlus className="h-5 w-5" aria-hidden="true" />
+                    )}
+                    <input
+                      id="evidencePhoto"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="sr-only"
+                      onChange={handlePhotoSelect}
+                      disabled={uploadPhotoMutation.isPending}
+                    />
+                  </label>
+                )}
+              </div>
+              {photoError && (
+                <p className="text-xs font-medium text-[#D81F2A]" role="alert">{photoError}</p>
+              )}
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="concernCategory" className="text-sm font-semibold">
                 Concern type <span className="font-normal text-[#73777E]">(optional)</span>
@@ -790,12 +865,8 @@ export default function TryOneCase() {
               Add one contact method to see the full decision card — reasoning, what to check next, and how to share it.
             </div>
 
-            <div className="space-y-2 border-t border-[#E2E6EC] pt-4">
-              <Label htmlFor="evidencePhoto">Add photos (optional)</Label>
-              <p className="text-xs text-[#73777E]">
-                A photo helps a technician later — dashboard lights, leaks, or the affected area. Up to 5, JPEG/PNG/WebP.
-              </p>
-              <div className="flex flex-wrap items-center gap-2">
+            {photos.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 border-t border-[#E2E6EC] pt-4">
                 {photos.map((p) => (
                   <img
                     key={p.id}
@@ -804,31 +875,8 @@ export default function TryOneCase() {
                     className="h-14 w-14 rounded-md border border-[#E2E6EC] object-cover"
                   />
                 ))}
-                {photos.length < 5 && (
-                  <label
-                    htmlFor="evidencePhoto"
-                    className="flex h-14 w-14 cursor-pointer items-center justify-center rounded-md border border-dashed border-[#C3C7CE] text-[#73777E] hover:border-[#38465F] hover:text-[#38465F]"
-                  >
-                    {uploadPhotoMutation.isPending ? (
-                      <Loader2 className="h-5 w-5 animate-spin" />
-                    ) : (
-                      <ImagePlus className="h-5 w-5" aria-hidden="true" />
-                    )}
-                    <input
-                      id="evidencePhoto"
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      className="sr-only"
-                      onChange={handlePhotoSelect}
-                      disabled={uploadPhotoMutation.isPending}
-                    />
-                  </label>
-                )}
               </div>
-              {photoError && (
-                <p className="text-xs font-medium text-[#D81F2A]" role="alert">{photoError}</p>
-              )}
-            </div>
+            )}
 
             <Button onClick={() => setPhase("contact")} className={cn("h-12 w-full text-[15px] font-bold", redBtn)}>
               See the full decision

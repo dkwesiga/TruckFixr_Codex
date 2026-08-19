@@ -1144,6 +1144,7 @@ function buildSimpleCategoryPrompt(request: Record<string, unknown>) {
     "Cats: critical_engine_internal, engine_performance, oil_lubrication_system, cooling_system, aftertreatment_dpf_def_scr, electrical_battery_alternator, starting_charging, air_brake_system, fuel_system, transmission_driveline, hydraulics_pto, suspension_steering, trailer_lighting, abs_wheel_end, tires_wheels, unknown_triage.",
     "risk: low|medium|high|critical. If unsure primary_category=unknown_triage.",
     "Oil/coolant contamination => critical_engine_internal, critical.",
+    "A FLASHING or blinking check-engine/MIL/emissions light (not steady/solid) => engine_performance, high (active misfire risking catalytic converter damage) - not cooling_system or oil_lubrication_system unless a separate coolant/oil symptom is also reported.",
     "classification_confidence must be an integer from 0 to 100 (a percentage, e.g. 95 for 95% confident). Never use a 0-1 decimal.",
     `Shape: ${JSON.stringify(template)}`,
     safePromptStringify(request),

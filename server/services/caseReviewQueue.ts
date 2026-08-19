@@ -8,7 +8,7 @@ import { TRPCError } from "@trpc/server";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../db";
 import { ENV } from "../_core/env";
-import { caseReviewQueueItems, caseSlaConfig, guestCases } from "../../drizzle/schema";
+import { caseReviewQueueItems, caseSlaConfig, guestCaseContacts, guestCases } from "../../drizzle/schema";
 import {
   CRITICAL_SLA_TARGET_MINUTES,
   computeSlaTarget,
@@ -62,12 +62,40 @@ async function notifyReviewer(params: {
   const { primary, backup } = reviewerEmails();
   const to = params.escalation && backup ? backup : primary;
   if (!to) return;
+
+  // The guest's contact details may not exist yet — contact capture happens
+  // later in the flow than the critical/low-confidence triggers that queue
+  // most reviews — but include them whenever they're already on file (e.g. a
+  // manual technician escalation, which typically happens well after contact
+  // was submitted) so the reviewer doesn't have to open the admin queue just
+  // to get in touch with the guest.
+  let contactLine = "Contact: not yet provided.";
+  if (params.guestCaseId) {
+    try {
+      const db = await getDb();
+      if (db) {
+        const [contact] = await db
+          .select()
+          .from(guestCaseContacts)
+          .where(eq(guestCaseContacts.guestCaseId, params.guestCaseId))
+          .orderBy(desc(guestCaseContacts.id))
+          .limit(1);
+        if (contact?.email || contact?.phone) {
+          contactLine = `Contact: ${contact.email ?? "no email"} / ${contact.phone ?? "no phone"}`;
+        }
+      }
+    } catch (error) {
+      console.error("[CaseReview] failed to look up guest contact for reviewer alert:", error);
+    }
+  }
+
   const subject = `${params.escalation ? "[ESCALATION] " : ""}TruckFixr case review — ${params.category}`;
   const text = [
     `A case requires review.`,
     `Category: ${params.category}`,
     `Queue item: #${params.itemId}`,
     params.guestCaseId ? `Guest case id: ${params.guestCaseId}` : "",
+    contactLine,
     `After hours: ${params.afterHours ? "yes" : "no"}`,
     `SLA due: ${params.slaDueAt.toISOString()}`,
     ``,
