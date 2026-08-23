@@ -46,6 +46,7 @@ import {
   type BillingStatus as TruckFixrBillingStatus,
   type PlanKey,
 } from "../../shared/truckfixrPricing";
+import { legacyTierToDefaultPlanKey, planKeyToLegacyTier } from "../../shared/planTierMapping";
 
 export type SubscriptionState = {
   tier: SubscriptionTier;
@@ -99,20 +100,6 @@ type CompanyBillingRow = {
   paidPilotEndsAt?: Date | null;
 };
 
-function mapPlanKeyToLegacyTier(planKey: PlanKey): SubscriptionTier {
-  switch (planKey) {
-    case "owner_operator":
-    case "small_fleet":
-    case "fleet_growth":
-      return "pro";
-    case "fleet_pro":
-    case "custom_fleet":
-      return "fleet";
-    default:
-      return "free";
-  }
-}
-
 function normalizePlanKey(value: string | null | undefined): PlanKey {
   if (value === "owner_operator") return "owner_operator";
   if (value === "small_fleet") return "small_fleet";
@@ -143,7 +130,7 @@ function normalizeBillingStatus(value: string | null | undefined): TruckFixrBill
 function getCompanyBillingPlan(row: CompanyBillingRow | null | undefined) {
   const planKey = normalizePlanKey(row?.planName ?? null);
   const plan = getTruckFixrPlan(planKey);
-  const legacyTier = mapPlanKeyToLegacyTier(planKey);
+  const legacyTier = planKeyToLegacyTier(planKey);
   const billingInterval = normalizeBillingInterval(row?.billingInterval ?? null);
   const billingStatus = normalizeBillingStatus(row?.billingStatus ?? null);
   const limits = getTruckFixrPlanLimits(planKey);
@@ -523,7 +510,7 @@ export async function syncSubscriptionState(input: {
     .where(eq(users.id, input.userId));
 
   if (input.fleetId != null) {
-    const companyPlanKey = input.companyPlanKey ?? (input.tier === "free" ? "free_trial" : input.tier === "fleet" ? "custom_fleet" : "fleet_growth");
+    const companyPlanKey = input.companyPlanKey ?? legacyTierToDefaultPlanKey(input.tier);
     const companyPlan = getTruckFixrPlan(companyPlanKey);
     const companyLimits = getTruckFixrPlanLimits(companyPlanKey);
     await db
@@ -1148,8 +1135,10 @@ export async function getAdminBillingDashboard(input: { query?: string | null })
 }
 
 export function getPlanSummary(state: SubscriptionState) {
-  const effectivePlan = SUBSCRIPTION_PLANS[state.effectiveTier];
-  const selectedPlan = SUBSCRIPTION_PLANS[state.tier];
+  // selectedPlan/effectivePlan (the legacy billing.ts plan objects) used to be
+  // returned here alongside currentTruckFixrPlan — confirmed unread by every
+  // caller (client and server) except this function's own test mock, so they
+  // were dropped rather than kept as a second, unused plan-object shape.
   const currentPlanKey = state.companyPlanKey ?? "free_trial";
   const currentTruckFixrPlan = getTruckFixrPlan(currentPlanKey);
   const pricing =
@@ -1162,8 +1151,6 @@ export function getPlanSummary(state: SubscriptionState) {
 
   return {
     ...state,
-    selectedPlan,
-    effectivePlan,
     currentPlanKey,
     currentTruckFixrPlan,
     pricing,

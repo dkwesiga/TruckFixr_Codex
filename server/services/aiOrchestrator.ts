@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { ENV } from "../_core/env";
 import { recordObservabilityEvent } from "./observability";
+import { extractJsonCandidate } from "./aiResponseParsing";
 
 export type AiProvider = "openai" | "anthropic" | "gemini" | "openrouter" | "groq";
 
@@ -218,20 +219,9 @@ const normalizeText = (value: string) => value.replace(/\s+/g, " ").trim();
 // this first; a strict parse on non-conforming output otherwise fails on
 // every call and silently falls back to whatever non-AI path exists, which
 // is indistinguishable from "AI isn't configured" without checking logs.
-// (Mirrors the private helper of the same name in diagnosisWorkflow.ts,
-// hoisted here so new AI features don't have to rediscover this.)
-export function extractJsonObject(text: string): string {
-  const trimmed = text.trim();
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed;
-
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced?.[1]?.trim().startsWith("{")) return fenced[1].trim();
-
-  const start = trimmed.indexOf("{");
-  const end = trimmed.lastIndexOf("}");
-  if (start >= 0 && end > start) return trimmed.slice(start, end + 1);
-  return trimmed;
-}
+// Re-exported from aiResponseParsing.ts, which is also where parseAiJson
+// lives for callers that want schema validation, not just string extraction.
+export const extractJsonObject = extractJsonCandidate;
 
 const ensureArray = (value: MessageContent | MessageContent[]): MessageContent[] =>
   Array.isArray(value) ? value : [value];

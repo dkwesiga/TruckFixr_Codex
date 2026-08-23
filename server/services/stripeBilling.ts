@@ -3,7 +3,6 @@ import { ENV } from "../_core/env";
 import {
   BillingCadence,
   BillingStatus,
-  PRO_MINIMUM_BILLABLE_ACTIVE_VEHICLES,
   SubscriptionTier,
 } from "../../shared/billing";
 import {
@@ -17,7 +16,6 @@ import {
 import {
   formatMissingStripePriceMessage,
   getStripePriceResolutionTarget,
-  resolveLegacyTierPrice,
   resolveTruckFixrPrice,
 } from "./stripeReadiness";
 
@@ -194,10 +192,6 @@ export function isStripeConfigured() {
   return Boolean(ENV.stripeSecretKey && ENV.stripeWebhookSecret);
 }
 
-export function getPriceIdForTier(tier: SubscriptionTier, cadence: BillingCadence = "monthly") {
-  return resolveLegacyTierPrice(tier, cadence).value;
-}
-
 function getTruckFixrPriceId(planKey: PlanKey, billingInterval: Exclude<TruckFixrBillingInterval, "trial" | "pilot" | "custom">) {
   return resolveTruckFixrPrice(planKey, billingInterval).value;
 }
@@ -351,46 +345,6 @@ export async function createStripeCustomer(input: {
   });
 }
 
-export async function createStripeCheckoutSession(input: {
-  customerId: string;
-  userId: number;
-  tier: SubscriptionTier;
-  billingCadence: BillingCadence;
-  activeVehicleCount: number;
-  successUrl: string;
-  cancelUrl: string;
-}) {
-  const priceResolution = resolveLegacyTierPrice(input.tier, input.billingCadence);
-  const priceId = priceResolution.value || getPriceIdForTier(input.tier, input.billingCadence);
-  if (!priceId) {
-    throw new Error(
-      formatMissingStripePriceMessage(`${input.tier} (${input.billingCadence})`, priceResolution)
-    );
-  }
-
-  const quantity =
-    input.tier === "pro"
-      ? Math.max(PRO_MINIMUM_BILLABLE_ACTIVE_VEHICLES, Math.max(0, Math.floor(input.activeVehicleCount || 0)))
-      : 1;
-
-  return stripeRequest<StripeCheckoutSession>("/v1/checkout/sessions", {
-    form: {
-      mode: "subscription",
-      customer: input.customerId,
-      success_url: input.successUrl,
-      cancel_url: input.cancelUrl,
-      client_reference_id: input.userId,
-      "line_items[0][price]": priceId,
-      "line_items[0][quantity]": quantity,
-      "subscription_data[trial_period_days]": input.tier === "pro" ? 14 : undefined,
-      "metadata[userId]": input.userId,
-      "metadata[tier]": input.tier,
-      "metadata[billingCadence]": input.billingCadence,
-      "metadata[quantity]": quantity,
-      allow_promotion_codes: true,
-    },
-  });
-}
 
 export async function createStripePortalSession(input: {
   customerId: string;
