@@ -69,6 +69,36 @@ vi.mock("./email", () => ({
   }),
 }));
 
+// This suite exercises guestCaseService.ts's own orchestration (persistence,
+// contact verification, free-case limits) — not the AI-augmented severity
+// classification, which is covered separately in guestCaseAi.test.ts. Without
+// this mock, generateGuestAssessment/generateGuestNextQuestion would make
+// real network calls to a live OpenRouter key (present in this repo's .env),
+// making every test slow and non-deterministic depending on live LLM output
+// and network conditions. Delegating straight to the same deterministic
+// engine guestCaseAi.ts itself falls back to on any AI failure reproduces
+// exactly what these tests were implicitly (and flakily) already exercising.
+vi.mock("./guestCaseAi", async () => {
+  const { assessGuestCase } = await import("./guestCaseAssessment");
+  const { nextAdaptiveQuestion } = await import("../../shared/maintenance/guestCaseFlow");
+  return {
+    CONFIDENCE_THRESHOLD: 85,
+    generateGuestAssessment: async (ctx: { input: any; answers: Record<string, string> }) =>
+      assessGuestCase(ctx.input, ctx.answers),
+    generateGuestNextQuestion: async (ctx: { input: any; answers: Record<string, string> }) =>
+      nextAdaptiveQuestion(ctx.input, Object.keys(ctx.answers)),
+  };
+});
+
+// Same reasoning as the ./guestCaseAi mock above: generateGuestLikelyCauses
+// is a second, independent AI call (submitGuestContact's "possible causes"
+// enrichment) that would otherwise also hit the live network. No causes
+// available is exactly the pre-existing "AI unavailable" fallback shape these
+// tests already assert on (possibleCausesSuppressed: true).
+vi.mock("./guestCaseAiReport", () => ({
+  generateGuestLikelyCauses: vi.fn(async () => []),
+}));
+
 import {
   answerGuestQuestion,
   getGuestCase,
