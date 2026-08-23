@@ -14,10 +14,10 @@ import {
   type FaultCodeReferenceContext,
   type FaultCodeReferenceMatchStatus,
 } from "./faultCodeReferences";
+import { parseAiJson } from "./aiResponseParsing";
 
 const MAX_CLARIFICATION_QUESTIONS = 3;
 const CONFIDENCE_CLARIFICATION_THRESHOLD = 80;
-const PRIMARY_PROVIDER_MAX_ATTEMPTS = 1;
 
 export const safetyComplexitySchema = z.enum([
   "normal",
@@ -487,19 +487,6 @@ function extractMessageText(result: InvokeResult) {
   return "";
 }
 
-function extractJsonObject(text: string) {
-  const trimmed = text.trim();
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed;
-
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced?.[1]?.trim().startsWith("{")) return fenced[1].trim();
-
-  const start = trimmed.indexOf("{");
-  const end = trimmed.lastIndexOf("}");
-  if (start >= 0 && end > start) return trimmed.slice(start, end + 1);
-  return trimmed;
-}
-
 function hasSuccessfulAttempt(result: InvokeResult) {
   return (result.orchestration?.attempts ?? []).some((attempt) => attempt.success);
 }
@@ -579,13 +566,6 @@ function failedCallHistory(input: {
     latencyMs: null,
     errorMessage: errorMessage(input.error),
   };
-}
-
-function shouldRetryCandidate(error: unknown) {
-  const message = errorMessage(error).toLowerCase();
-  return /timed out|aborterror|network|fetch failed|503|502|504|service unavailable/.test(
-    message
-  );
 }
 
 function buildFallbackClarification(input: {
@@ -913,22 +893,24 @@ function coerceRoutingClassification(
   return obj;
 }
 
-function parseDiagnosisJson(
-  text: string,
-  report?: { count: number; defaulted: number; fields: Set<string> }
-) {
-  const parsed = JSON.parse(extractJsonObject(text)) as unknown;
-  return diagnosisOutputSchema.parse(coerceDiagnosisOutput(parsed, report));
-}
+type EnumCoercionReport = { count: number; defaulted: number; fields: Set<string> };
 
-function parseRoutingJson(
-  text: string,
-  report?: { count: number; defaulted: number; fields: Set<string> }
-) {
-  const parsed = JSON.parse(extractJsonObject(text)) as unknown;
-  return diagnosticRoutingClassificationSchema.parse(
-    coerceRoutingClassification(parsed, report)
-  );
+/**
+ * Wraps a coerce*(value, report) helper so parseAiJson's coerce callback can
+ * create a fresh report per candidate it tries internally — otherwise a
+ * report shared across multiple failed candidates would double-count fields
+ * that never made it into the winning parse. lastReport() is only meaningful
+ * once parseAiJson has returned "ok": at that point no further candidates
+ * were tried, so the last report pushed is the one for the winning attempt.
+ */
+function makeEnumCoercionTracker(coerceFn: (value: unknown, report?: EnumCoercionReport) => unknown) {
+  const reports: EnumCoercionReport[] = [];
+  const coerce = (candidate: unknown) => {
+    const report = createEnumCoercionReport();
+    reports.push(report);
+    return coerceFn(candidate, report);
+  };
+  return { coerce, lastReport: () => reports[reports.length - 1] };
 }
 
 function codeTypeFromPreprocessing(preprocessing: DiagnosticPreprocessingResult) {
@@ -1464,6 +1446,242 @@ function buildSafeFallbackDiagnosis(input: {
   });
 }
 
+/**
+ * Routing-classification stage: AI classification with a local heuristic
+ * fallback. Returns rather than mutates so runDiagnosisWorkflow doesn't need
+ * to know how routing was determined.
+ */
+async function classifyDiagnosisRouting(input: {
+  context: MinimalDiagnosisContext;
+  preprocessing: DiagnosticPreprocessingResult;
+  referenceLookup: FaultCodeReferenceContext;
+  clarificationHistory: DiagnosisClarificationTurn[];
+  localRouting: DiagnosticRoutingClassification;
+  config: ReturnType<typeof getDiagnosticRuntimeConfig>;
+}): Promise<{
+  routing: DiagnosticRoutingClassification;
+  historyEntries: AiCallHistoryEntry[];
+  providerErrors: RunDiagnosisWorkflowResult["providerErrors"];
+}> {
+  const historyEntries: AiCallHistoryEntry[] = [];
+  const providerErrors: RunDiagnosisWorkflowResult["providerErrors"] = [];
+  const isClarificationRound = input.clarificationHistory.length > 0;
+
+  if (
+    isClarificationRound ||
+    !shouldUseAiClassification({ preprocessing: input.preprocessing, localClassification: input.localRouting })
+  ) {
+    return { routing: input.localRouting, historyEntries, providerErrors };
+  }
+
+  try {
+    const rawRouting = await invokeRoutingClassification({
+      context: input.context,
+      preprocessing: input.preprocessing,
+      referenceLookup: input.referenceLookup,
+      clarificationHistory: input.clarificationHistory,
+    });
+    historyEntries.push(
+      ...aiCallHistoryFromResult(
+        "classifier",
+        rawRouting,
+        (rawRouting.orchestration?.attempts?.length ?? 0) > 1
+      )
+    );
+    if (isControlledFallbackResponse(rawRouting)) {
+      throw new Error("Controlled fallback returned by routing classifier");
+    }
+    const rawText = ensureNonEmptyAiText(rawRouting, "routing classifier");
+    const tracker = makeEnumCoercionTracker(coerceRoutingClassification);
+
+    const result = await parseAiJson(rawText, diagnosticRoutingClassificationSchema, {
+      coerce: tracker.coerce,
+      repairViaLlm: async (raw) => {
+        const repaired = await repairRoutingJson({
+          rawText: raw,
+          localClassification: input.localRouting,
+        });
+        historyEntries.push(...aiCallHistoryFromResult("classification_repair", repaired, true));
+        if (isControlledFallbackResponse(repaired)) {
+          throw new Error("Controlled fallback returned during routing JSON repair");
+        }
+        return extractMessageText(repaired);
+      },
+    });
+
+    if (result.status !== "ok") {
+      throw new Error("Unable to parse routing classification JSON");
+    }
+
+    attachEnumCoercions(historyEntries, tracker.lastReport());
+    return { routing: result.data, historyEntries, providerErrors };
+  } catch (error) {
+    providerErrors.push({
+      provider: "openrouter",
+      model: input.config.defaultClassificationModel,
+      message: errorMessage(error),
+    });
+    historyEntries.push(
+      failedCallHistory({
+        callType: "classifier",
+        provider: "openrouter",
+        model: input.config.defaultClassificationModel,
+        error,
+      })
+    );
+
+    const routing =
+      input.localRouting.confidence_score < input.config.confidenceThreshold ||
+      input.localRouting.case_type === "safety_critical"
+        ? {
+            ...input.localRouting,
+            recommended_model_tier: "advanced" as const,
+            escalation_required: true,
+            reason_for_escalation:
+              input.localRouting.reason_for_escalation ||
+              "Routing classifier unavailable; local routing requires cautious handling.",
+          }
+        : input.localRouting;
+
+    return { routing, historyEntries, providerErrors };
+  }
+}
+
+type CandidateLoopResult =
+  | {
+      status: "ok";
+      diagnosis: DiagnosisOutput;
+      historyEntries: AiCallHistoryEntry[];
+    }
+  | {
+      status: "failed";
+      historyEntries: AiCallHistoryEntry[];
+      providerErrors: RunDiagnosisWorkflowResult["providerErrors"];
+      lastCandidate: ModelCandidate | undefined;
+    };
+
+/**
+ * Tries each model-route candidate in order until one produces a valid
+ * diagnosis. Each candidate gets exactly one attempt (no inner retry loop —
+ * the previous per-candidate attempt count was hardcoded to 1, so the retry
+ * loop it lived in never actually retried anything).
+ */
+async function runDiagnosisCandidateLoop(input: {
+  route: ModelCandidate[];
+  caseId: string;
+  vehicleId: string;
+  classification: SafetyComplexity;
+  routing: DiagnosticRoutingClassification;
+  context: MinimalDiagnosisContext;
+  clarificationHistory: DiagnosisClarificationTurn[];
+}): Promise<CandidateLoopResult> {
+  const historyEntries: AiCallHistoryEntry[] = [];
+  const providerErrors: RunDiagnosisWorkflowResult["providerErrors"] = [];
+  const isClarificationTurn = input.clarificationHistory.length > 0 && input.routing.needs_clarification;
+
+  for (let candidateIndex = 0; candidateIndex < input.route.length; candidateIndex += 1) {
+    const candidate = input.route[candidateIndex];
+
+    try {
+      const raw = await invokeDiagnosisCandidate({
+        candidate,
+        caseId: input.caseId,
+        vehicleId: input.vehicleId,
+        classification: input.classification,
+        routing: input.routing,
+        context: input.context,
+        clarificationHistory: input.clarificationHistory,
+      });
+      const calledAsFallback = candidateIndex > 0 || (raw.orchestration?.attempts?.length ?? 0) > 1;
+      historyEntries.push(
+        ...aiCallHistoryFromResult(isClarificationTurn ? "clarification" : "diagnosis", raw, calledAsFallback)
+      );
+
+      if (isControlledFallbackResponse(raw)) {
+        throw new Error(
+          `Controlled fallback returned by ${candidate.provider}:${candidate.model ?? candidate.label}`
+        );
+      }
+
+      const rawText = ensureNonEmptyAiText(raw, `${candidate.provider}:${candidate.model ?? candidate.label}`);
+      let fallbackUsed = calledAsFallback;
+      let modelUsed = raw.orchestration?.model ?? raw.model ?? candidate.model ?? candidate.label;
+      let repairedResult: InvokeResult | null = null;
+
+      const tracker = makeEnumCoercionTracker(coerceDiagnosisOutput);
+      const result = await parseAiJson(rawText, diagnosisOutputSchema, {
+        coerce: tracker.coerce,
+        repairViaLlm: async (raw2) => {
+          const repaired = await repairDiagnosisJson({
+            candidate,
+            rawText: raw2,
+            caseId: input.caseId,
+            vehicleId: input.vehicleId,
+          });
+          historyEntries.push(...aiCallHistoryFromResult("json_repair", repaired, true));
+          if (isControlledFallbackResponse(repaired)) {
+            throw new Error(
+              `Controlled fallback returned during JSON repair by ${candidate.provider}:${candidate.model ?? candidate.label}`
+            );
+          }
+          repairedResult = repaired;
+          return extractMessageText(repaired);
+        },
+      });
+
+      if (result.status !== "ok") {
+        throw new Error(
+          `Unable to parse diagnosis JSON for ${candidate.provider}:${candidate.model ?? candidate.label}`
+        );
+      }
+
+      attachEnumCoercions(historyEntries, tracker.lastReport());
+      if (repairedResult) {
+        fallbackUsed = true;
+        modelUsed = (repairedResult as InvokeResult).orchestration?.model ?? (repairedResult as InvokeResult).model ?? modelUsed;
+      }
+
+      return {
+        status: "ok",
+        diagnosis: enforceDiagnosisRules({
+          diagnosis: result.data,
+          caseId: input.caseId,
+          vehicleId: input.vehicleId,
+          classification: input.classification,
+          routing: input.routing,
+          context: input.context,
+          clarificationHistory: input.clarificationHistory,
+          modelUsed,
+          fallbackUsed,
+          advancedReviewUsed: candidate.tier === "advanced",
+        }),
+        historyEntries,
+      };
+    } catch (error) {
+      historyEntries.push(
+        failedCallHistory({
+          callType: isClarificationTurn ? "clarification" : "diagnosis",
+          provider: candidate.provider,
+          model: candidate.model,
+          error,
+        })
+      );
+      providerErrors.push({
+        provider: candidate.provider,
+        model: candidate.model ?? candidate.label,
+        message: errorMessage(error),
+      });
+    }
+  }
+
+  return {
+    status: "failed",
+    historyEntries,
+    providerErrors,
+    lastCandidate: input.route[input.route.length - 1],
+  };
+}
+
 export async function runDiagnosisWorkflow(
   rawInput: RunDiagnosisWorkflowInput
 ): Promise<RunDiagnosisWorkflowResult> {
@@ -1505,76 +1723,18 @@ export async function runDiagnosisWorkflow(
     preprocessing,
     referenceMatchStatus: referenceLookup.match_status,
   });
-  const aiCallHistory: AiCallHistoryEntry[] = [];
-  let routing = localRouting;
-  const providerErrors: RunDiagnosisWorkflowResult["providerErrors"] = [];
 
-  const isClarificationRound = clarificationHistory.length > 0;
-
-  if (!isClarificationRound && shouldUseAiClassification({ preprocessing, localClassification: localRouting })) {
-    try {
-      const rawRouting = await invokeRoutingClassification({
-        context: promptContext,
-        preprocessing,
-        referenceLookup,
-        clarificationHistory,
-      });
-      aiCallHistory.push(
-        ...aiCallHistoryFromResult(
-          "classifier",
-          rawRouting,
-          (rawRouting.orchestration?.attempts?.length ?? 0) > 1
-        )
-      );
-      if (isControlledFallbackResponse(rawRouting)) {
-        throw new Error("Controlled fallback returned by routing classifier");
-      }
-      const rawText = ensureNonEmptyAiText(rawRouting, "routing classifier");
-      try {
-        const enumReport = createEnumCoercionReport();
-        routing = parseRoutingJson(rawText, enumReport);
-        attachEnumCoercions(aiCallHistory, enumReport);
-      } catch (parseError) {
-        const repaired = await repairRoutingJson({
-          rawText,
-          localClassification: localRouting,
-        });
-        aiCallHistory.push(
-          ...aiCallHistoryFromResult("classification_repair", repaired, true)
-        );
-        const enumReport = createEnumCoercionReport();
-        routing = parseRoutingJson(extractMessageText(repaired), enumReport);
-        attachEnumCoercions(aiCallHistory, enumReport);
-      }
-    } catch (error) {
-      providerErrors.push({
-        provider: "openrouter",
-        model: config.defaultClassificationModel,
-        message: errorMessage(error),
-      });
-      aiCallHistory.push(
-        failedCallHistory({
-          callType: "classifier",
-          provider: "openrouter",
-          model: config.defaultClassificationModel,
-          error,
-        })
-      );
-      if (
-        localRouting.confidence_score < config.confidenceThreshold ||
-        localRouting.case_type === "safety_critical"
-      ) {
-        routing = {
-          ...localRouting,
-          recommended_model_tier: "advanced",
-          escalation_required: true,
-          reason_for_escalation:
-            localRouting.reason_for_escalation ||
-            "Routing classifier unavailable; local routing requires cautious handling.",
-        };
-      }
-    }
-  }
+  const routingResult = await classifyDiagnosisRouting({
+    context: promptContext,
+    preprocessing,
+    referenceLookup,
+    clarificationHistory,
+    localRouting,
+    config,
+  });
+  const routing = routingResult.routing;
+  const aiCallHistory: AiCallHistoryEntry[] = [...routingResult.historyEntries];
+  const providerErrors: RunDiagnosisWorkflowResult["providerErrors"] = [...routingResult.providerErrors];
 
   const classification: SafetyComplexity =
     routing.case_type === "safety_critical"
@@ -1627,118 +1787,32 @@ export async function runDiagnosisWorkflow(
     };
   }
 
-  for (let candidateIndex = 0; candidateIndex < route.length; candidateIndex += 1) {
-    const candidate = route[candidateIndex];
-    const attempts = candidateIndex === 0 ? PRIMARY_PROVIDER_MAX_ATTEMPTS : 1;
+  const loopResult = await runDiagnosisCandidateLoop({
+    route,
+    caseId,
+    vehicleId,
+    classification,
+    routing,
+    context: promptContext,
+    clarificationHistory,
+  });
 
-    for (let attemptIndex = 0; attemptIndex < attempts; attemptIndex += 1) {
-      try {
-        const raw = await invokeDiagnosisCandidate({
-          candidate,
-          caseId,
-          vehicleId,
-          classification,
-          routing,
-          context: promptContext,
-          clarificationHistory,
-        });
-        aiCallHistory.push(
-          ...aiCallHistoryFromResult(
-            clarificationHistory.length > 0 && routing.needs_clarification
-              ? "clarification"
-              : "diagnosis",
-            raw,
-            candidateIndex > 0 ||
-              attemptIndex > 0 ||
-              (raw.orchestration?.attempts?.length ?? 0) > 1
-          )
-        );
-        if (isControlledFallbackResponse(raw)) {
-          throw new Error(
-            `Controlled fallback returned by ${candidate.provider}:${candidate.model ?? candidate.label}`
-          );
-        }
-        const rawText = ensureNonEmptyAiText(
-          raw,
-          `${candidate.provider}:${candidate.model ?? candidate.label}`
-        );
-        let parsed: DiagnosisOutput;
-        let fallbackUsed =
-          candidateIndex > 0 ||
-          attemptIndex > 0 ||
-          (raw.orchestration?.attempts?.length ?? 0) > 1;
-        let modelUsed = raw.orchestration?.model ?? raw.model ?? candidate.model ?? candidate.label;
+  aiCallHistory.push(...loopResult.historyEntries);
 
-        try {
-          const enumReport = createEnumCoercionReport();
-          parsed = parseDiagnosisJson(rawText, enumReport);
-          attachEnumCoercions(aiCallHistory, enumReport);
-        } catch (parseError) {
-          const repaired = await repairDiagnosisJson({
-            candidate,
-            rawText,
-            caseId,
-            vehicleId,
-          });
-          aiCallHistory.push(
-            ...aiCallHistoryFromResult("json_repair", repaired, true)
-          );
-          if (isControlledFallbackResponse(repaired)) {
-            throw new Error(
-              `Controlled fallback returned during JSON repair by ${candidate.provider}:${candidate.model ?? candidate.label}`
-            );
-          }
-          const enumReport = createEnumCoercionReport();
-          parsed = parseDiagnosisJson(extractMessageText(repaired), enumReport);
-          attachEnumCoercions(aiCallHistory, enumReport);
-          fallbackUsed = true;
-          modelUsed = repaired.orchestration?.model ?? repaired.model ?? modelUsed;
-        }
-
-        return {
-          diagnosis: enforceDiagnosisRules({
-            diagnosis: parsed,
-            caseId,
-            vehicleId,
-            classification,
-            routing,
-            context: promptContext,
-            clarificationHistory,
-            modelUsed,
-            fallbackUsed,
-            advancedReviewUsed: candidate.tier === "advanced",
-          }),
-          classification,
-          routing,
-          preprocessing,
-          referenceLookup,
-          aiCallHistory,
-          promptContext,
-          providerErrors,
-        };
-      } catch (error) {
-        aiCallHistory.push(
-          failedCallHistory({
-            callType:
-              clarificationHistory.length > 0 && routing.needs_clarification
-                ? "clarification"
-                : "diagnosis",
-            provider: candidate.provider,
-            model: candidate.model,
-            error,
-          })
-        );
-        providerErrors.push({
-          provider: candidate.provider,
-          model: candidate.model ?? candidate.label,
-          message: errorMessage(error),
-        });
-        if (!shouldRetryCandidate(error)) {
-          break;
-        }
-      }
-    }
+  if (loopResult.status === "ok") {
+    return {
+      diagnosis: loopResult.diagnosis,
+      classification,
+      routing,
+      preprocessing,
+      referenceLookup,
+      aiCallHistory,
+      promptContext,
+      providerErrors,
+    };
   }
+
+  providerErrors.push(...loopResult.providerErrors);
 
   return {
     diagnosis: buildSafeFallbackDiagnosis({
@@ -1748,7 +1822,7 @@ export async function runDiagnosisWorkflow(
       context: promptContext,
       clarificationHistory,
       fallbackUsed: true,
-      modelUsed: route[route.length - 1]?.model ?? "fallback_unavailable",
+      modelUsed: loopResult.lastCandidate?.model ?? "fallback_unavailable",
     }),
     classification,
     routing,
@@ -1758,8 +1832,8 @@ export async function runDiagnosisWorkflow(
       ...aiCallHistory,
       {
         callType: "fallback",
-        provider: route[route.length - 1]?.provider ?? null,
-        model: route[route.length - 1]?.model ?? "fallback_unavailable",
+        provider: loopResult.lastCandidate?.provider ?? null,
+        model: loopResult.lastCandidate?.model ?? "fallback_unavailable",
         fallbackUsed: true,
         status: "fallback",
         promptTokens: 0,

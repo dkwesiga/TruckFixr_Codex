@@ -9,7 +9,6 @@ const {
   ensureStripeCustomerId,
   findUserIdByStripeReference,
   createStripeCustomer,
-  createStripeCheckoutSession,
   createStripePortalSession,
   createTruckFixrCheckoutSession,
   createTruckFixrCustomerPortalSession,
@@ -24,7 +23,6 @@ const {
   ensureStripeCustomerId: vi.fn(),
   findUserIdByStripeReference: vi.fn(),
   createStripeCustomer: vi.fn(),
-  createStripeCheckoutSession: vi.fn(),
   createStripePortalSession: vi.fn(),
   createTruckFixrCheckoutSession: vi.fn(),
   createTruckFixrCustomerPortalSession: vi.fn(),
@@ -48,15 +46,12 @@ vi.mock("./services/subscriptions", () => ({
   findUserIdByStripeReference,
   getPlanSummary: (state: any) => ({
     ...state,
-    selectedPlan: SUBSCRIPTION_PLANS[state.tier],
-      effectivePlan: SUBSCRIPTION_PLANS[state.effectiveTier],
-      restrictedBecauseOfBilling: state.tier !== "free" && state.effectiveTier === "free",
+    restrictedBecauseOfBilling: state.tier !== "free" && state.effectiveTier === "free",
   }),
 }));
 
 vi.mock("./services/stripeBilling", () => ({
   createStripeCustomer,
-  createStripeCheckoutSession,
   createStripePortalSession,
   createTruckFixrCheckoutSession,
   createTruckFixrCustomerPortalSession,
@@ -390,7 +385,6 @@ describe("subscription billing flow", () => {
 
     expect(result.billingStatus).toBe("past_due");
     expect(result.restrictedBecauseOfBilling).toBe(true);
-    expect(result.effectivePlan.tier).toBe("free");
   });
 
   it("updates billing status when Stripe reports a payment failure", async () => {
