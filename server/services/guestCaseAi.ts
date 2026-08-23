@@ -345,7 +345,17 @@ export async function generateGuestAssessment(
 
     const raw = result.choices[0]?.message.content;
     const text = typeof raw === "string" ? raw : "";
-    const parsed = assessmentSchema.parse(JSON.parse(extractJsonObject(text)));
+    const rawParsed = JSON.parse(extractJsonObject(text));
+    // Live-observed failure: the model occasionally writes an explanation a
+    // few characters past the 400-char schema cap, which used to reject the
+    // ENTIRE response — discarding an otherwise-valid severity/action/
+    // confidence over cosmetic prose length and falling all the way back to
+    // the deterministic engine's default. Truncate defensively before
+    // validation instead of failing closed on it.
+    if (typeof rawParsed?.explanation === "string" && rawParsed.explanation.length > 400) {
+      rawParsed.explanation = `${rawParsed.explanation.slice(0, 397).trimEnd()}...`;
+    }
+    const parsed = assessmentSchema.parse(rawParsed);
     const confidence = Math.min(
       parsed.confidence,
       evidenceCompletenessCeiling({ input: ctx.input, answeredCount: Object.keys(ctx.answers).length })

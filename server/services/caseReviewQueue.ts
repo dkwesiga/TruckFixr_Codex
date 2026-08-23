@@ -5,7 +5,7 @@
 // escalation. The audit trail lives in caseReviewQueueItems timestamps.
 
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { getDb } from "../db";
 import { ENV } from "../_core/env";
 import { caseReviewQueueItems, caseSlaConfig, guestCaseContacts, guestCases } from "../../drizzle/schema";
@@ -51,6 +51,25 @@ function reviewerEmails(): { primary: string; backup: string } {
   };
 }
 
+async function loadLatestGuestContact(
+  guestCaseId: number
+): Promise<{ email: string | null; phone: string | null } | null> {
+  try {
+    const db = await getDb();
+    if (!db) return null;
+    const [contact] = await db
+      .select()
+      .from(guestCaseContacts)
+      .where(eq(guestCaseContacts.guestCaseId, guestCaseId))
+      .orderBy(desc(guestCaseContacts.id))
+      .limit(1);
+    return contact ?? null;
+  } catch (error) {
+    console.error("[CaseReview] failed to look up guest contact:", error);
+    return null;
+  }
+}
+
 async function notifyReviewer(params: {
   itemId: number;
   category: ReviewCategory;
@@ -63,29 +82,16 @@ async function notifyReviewer(params: {
   const to = params.escalation && backup ? backup : primary;
   if (!to) return;
 
-  // The guest's contact details may not exist yet — contact capture happens
-  // later in the flow than the critical/low-confidence triggers that queue
-  // most reviews — but include them whenever they're already on file (e.g. a
-  // manual technician escalation, which typically happens well after contact
-  // was submitted) so the reviewer doesn't have to open the admin queue just
-  // to get in touch with the guest.
+  // Contact capture happens later in the flow than the critical/low-confidence
+  // triggers that queue most reviews, so this is normally only reached once
+  // contact is on file (enqueueReview defers non-critical alerts until then;
+  // see notifyPendingReviewForGuestCase). Still guarded here for the
+  // critical-safety and manual-escalation paths that notify immediately.
   let contactLine = "Contact: not yet provided.";
   if (params.guestCaseId) {
-    try {
-      const db = await getDb();
-      if (db) {
-        const [contact] = await db
-          .select()
-          .from(guestCaseContacts)
-          .where(eq(guestCaseContacts.guestCaseId, params.guestCaseId))
-          .orderBy(desc(guestCaseContacts.id))
-          .limit(1);
-        if (contact?.email || contact?.phone) {
-          contactLine = `Contact: ${contact.email ?? "no email"} / ${contact.phone ?? "no phone"}`;
-        }
-      }
-    } catch (error) {
-      console.error("[CaseReview] failed to look up guest contact for reviewer alert:", error);
+    const contact = await loadLatestGuestContact(params.guestCaseId);
+    if (contact?.email || contact?.phone) {
+      contactLine = `Contact: ${contact.email ?? "no email"} / ${contact.phone ?? "no phone"}`;
     }
   }
 
@@ -128,7 +134,19 @@ export async function enqueueReview(params: EnqueueReviewParams) {
   const submittedAt = params.submittedAt ?? now;
   const minutes = await targetMinutesFor(db, params.category);
   const { afterHours, slaDueAt } = computeSlaTarget(submittedAt, minutes);
-  const notify = params.notifyReviewer !== false;
+
+  // A non-critical review isn't actionable until the reviewer can reach the
+  // guest, and contact capture happens later in the guest-case flow than
+  // these triggers fire. Rather than send an alert reviewers can't act on
+  // (see notifyReviewer's "Contact: not yet provided." fallback), defer it —
+  // the queue item and its SLA clock still start now — and let
+  // notifyPendingReviewForGuestCase send it once contact is submitted.
+  // critical_safety always notifies immediately: it's an active emergency.
+  const hasContact =
+    params.guestCaseId && params.category !== "critical_safety"
+      ? (await loadLatestGuestContact(params.guestCaseId)) !== null
+      : true;
+  const notify = params.notifyReviewer !== false && hasContact;
 
   const [item] = await db
     .insert(caseReviewQueueItems)
@@ -166,6 +184,38 @@ export async function enqueueReview(params: EnqueueReviewParams) {
   });
 
   return item;
+}
+
+/**
+ * Sends the reviewer alert for any queue items on this guest case that were
+ * deferred by enqueueReview (no contact on file yet). Call this once contact
+ * is captured (submitGuestContact) so the reviewer gets an actionable email
+ * instead of having to open the admin queue.
+ */
+export async function notifyPendingReviewForGuestCase(guestCaseId: number): Promise<void> {
+  const db = await getDb();
+  requireDb(db);
+  const pending = await db
+    .select()
+    .from(caseReviewQueueItems)
+    .where(
+      and(eq(caseReviewQueueItems.guestCaseId, guestCaseId), isNull(caseReviewQueueItems.reviewerNotifiedAt))
+    );
+
+  for (const item of pending) {
+    await notifyReviewer({
+      itemId: item.id,
+      category: item.category as ReviewCategory,
+      afterHours: item.afterHours,
+      slaDueAt: item.slaDueAt ? new Date(item.slaDueAt) : new Date(),
+      guestCaseId: item.guestCaseId,
+    });
+    const now = new Date();
+    await db
+      .update(caseReviewQueueItems)
+      .set({ reviewerNotifiedAt: now, updatedAt: now })
+      .where(eq(caseReviewQueueItems.id, item.id));
+  }
 }
 
 export async function listReviewQueue(filter?: { status?: ReviewQueueStatus }) {

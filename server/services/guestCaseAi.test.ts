@@ -458,6 +458,30 @@ describe("generateGuestAssessment — AI path", () => {
     );
     expect(a.confidence).toBe(88); // below the 95 ceiling, so unclamped
   });
+
+  it("truncates an over-length explanation instead of discarding the whole classification (live-observed failure: model wrote 400+ chars, schema max is 400)", async () => {
+    ENV.openRouterApiKey = "test-key";
+    const longExplanation = "This is a detailed explanation. ".repeat(15); // > 400 chars
+    expect(longExplanation.length).toBeGreaterThan(400);
+    const a = await generateGuestAssessment(
+      { input: benignInput, answers: {} },
+      {
+        fetcher: async () =>
+          jsonResponse(
+            chatCompletion(
+              JSON.stringify({ severity: "attention", action: "schedule_service", explanation: longExplanation, confidence: 70 })
+            )
+          ),
+      }
+    );
+    // Classification survives (would previously have been discarded entirely, falling back to the rule engine).
+    expect(a.internalSeverity).toBe("attention");
+    expect(a.operatingAction).toBe("schedule_service");
+    expect(a.confidence).not.toBeNull();
+    expect(a.explanation).not.toBeNull();
+    expect(a.explanation!.length).toBeLessThanOrEqual(400);
+    expect(a.explanation!.endsWith("...")).toBe(true);
+  });
 });
 
 describe("evidenceCompletenessCeiling", () => {

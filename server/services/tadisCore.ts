@@ -3619,8 +3619,15 @@ function buildSimpleTadisFallbackRanking(
     ? toRankedCause(matchedRanking, baselineStage.candidateUniverse, baselineStage.evidence)
     : buildNovelSimpleRankedCause(topLikelyCause, baselineStage);
 
+  // Only surface a rule-library cause as an additional hypothesis when it has
+  // actual evidence behind it (a matched symptom/note/fault-code/history
+  // keyword or LLM intake hint). Every cause starts from the same baseline
+  // score, so with zero real matches (e.g. an unrecognized fault code and no
+  // descriptive symptom text) the "ranking" is just CAUSE_LIBRARY declaration
+  // order — showing those as low-confidence hypotheses is misleading rather
+  // than informative (see SPN 3216 surfacing an unrelated coolant hypothesis).
   const rest = baselineStage.ranked
-    .filter((item) => item.cause.cause !== topEntry.cause_name)
+    .filter((item) => item.cause.cause !== topEntry.cause_name && item.evidenceMatches > 0)
     .slice(0, 3)
     .map((item) => toRankedCause(item, baselineStage.candidateUniverse, baselineStage.evidence));
 
@@ -3950,6 +3957,14 @@ function buildAiUnavailableOutput(
 
 async function analyzeDiagnosticSimpleMode(input: DiagnosticInputRequest) {
   const config = getDiagnosticRuntimeConfig();
+  // Both LLM calls below pass config.complexFaultCodeModel as a model
+  // override so fault codes and other driver-reported evidence are
+  // interpreted by the strongest configured model rather than the cheap
+  // default (deepseek-v4-flash) — the rule-engine baseline (CAUSE_LIBRARY)
+  // isn't reliable enough on its own yet (see e.g. SPN 3216 surfacing an
+  // unrelated coolant hypothesis) to trust the cheap tier here. The existing
+  // cheap-tier chain still runs as a fallback if the override is unset or
+  // the call fails, so this never fully blocks diagnosis.
   const normalizedInput = DiagnosticInputSchema.parse(input);
   const diagnosticSessionId = randomUUID();
   const classifierInput = buildSimpleCategoryInput(normalizedInput);
@@ -3976,7 +3991,11 @@ async function analyzeDiagnosticSimpleMode(input: DiagnosticInputRequest) {
     fallbackUsed: false,
   });
 
-  const classifierAttempt = await classifyDiagnosticIssueWithLlm({ intakePackage: classifierInput }, config);
+  const classifierAttempt = await classifyDiagnosticIssueWithLlm(
+    { intakePackage: classifierInput },
+    config,
+    config.complexFaultCodeModel
+  );
   const classifierFallbackUsed = classifierAttempt.status !== "ok";
   const classifier =
     classifierAttempt.parsed ?? {
@@ -4071,7 +4090,11 @@ async function analyzeDiagnosticSimpleMode(input: DiagnosticInputRequest) {
     status: "failed",
     fallbackUsed: false,
   });
-  const diagnosisAttempt = await diagnoseDiagnosticIssueWithLlm({ evidencePackage: diagnosisInput }, config);
+  const diagnosisAttempt = await diagnoseDiagnosticIssueWithLlm(
+    { evidencePackage: diagnosisInput },
+    config,
+    config.complexFaultCodeModel
+  );
   const diagnosisFallbackUsed = diagnosisAttempt.status !== "ok";
   const diagnosis = diagnosisAttempt.parsed;
 

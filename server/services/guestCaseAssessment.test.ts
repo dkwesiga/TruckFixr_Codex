@@ -58,6 +58,21 @@ describe("assessGuestCase — non-critical mapping", () => {
     expect(a.customerReadiness).toBe("service_soon");
   });
 
+  it("raises to attention when operating_with_symptoms, even at turn 0 with no clarifying answers (regression: this engine never reads concernText, so operatingStatus was the only signal it had that something is actually wrong — 'operating_with_symptoms' was previously treated the same as 'operating_normally')", () => {
+    const a = assessGuestCase(
+      input({
+        concernText: "Engine dies randomly a couple times a week while driving on the highway, then restarts on its own after a minute.",
+        concernCategory: "symptom",
+        operatingStatus: "operating_with_symptoms",
+      }),
+      {}
+    );
+    expect(a.criticalTriggered).toBe(false);
+    expect(a.internalSeverity).toBe("attention");
+    expect(a.operatingAction).toBe("complete_trip_then_inspect");
+    expect(a.customerReadiness).toBe("service_soon");
+  });
+
   it("a red warning light raises attention but stays drivable => monitor/service soon", () => {
     const a = assessGuestCase(input({ operatingStatus: "operating_with_symptoms" }), { warning_light_color: "red" });
     expect(a.internalSeverity).toBe("attention");

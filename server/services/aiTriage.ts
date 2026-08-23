@@ -9,6 +9,7 @@
 // are configured via environment variables (see aiOrchestrator.ts).
 
 import { analyzeDiagnosticWithAi } from "./tadisCore";
+import { getSimilarCasesForDiagnosis } from "./tadisLearningRetrieval";
 
 export type TriageVehicleContext = {
   id: string | number;
@@ -68,6 +69,18 @@ export async function runDefectTriage(input: RunTriageInput): Promise<TriageResu
       : [input.defectDescription, input.category ?? ""].filter(Boolean);
 
   try {
+    // Evidence-weighted TADIS learning records (§15) — promoted, de-identified
+    // prior repair outcomes from any contributing tenant, ranked against this
+    // vehicle/symptom/fault-code context. Never blocks triage: an empty
+    // knowledge base or a lookup failure just yields no similar cases.
+    const similarCases = await getSimilarCasesForDiagnosis({
+      make: input.vehicle.make,
+      model: input.vehicle.model,
+      modelYear: input.vehicle.year,
+      symptoms,
+      faultCodes: input.faultCodes ?? [],
+    });
+
     const analysis = await analyzeDiagnosticWithAi({
       vehicleId: input.vehicleId,
       vehicle: {
@@ -81,6 +94,7 @@ export async function runDefectTriage(input: RunTriageInput): Promise<TriageResu
       symptoms,
       faultCodes: input.faultCodes ?? [],
       driverNotes: input.driverNotes ?? input.defectDescription,
+      similarCases,
     });
 
     const confidenceScore = Math.round(analysis.confidence_score ?? 0);
