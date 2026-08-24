@@ -5,6 +5,8 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../server/db";
 import { fleets, users } from "../drizzle/schema";
 import { hashPassword } from "../server/_core/localUsers";
+import { setFleetFeature } from "../server/services/fleetFeatures";
+import { ALL_FLEET_MAINTENANCE_FEATURE_KEYS } from "../shared/maintenance/featureKeys";
 
 /**
  * Seed the flagship partner repair shop (Mr Diesel Inc).
@@ -25,6 +27,24 @@ const PARTNER_PASSWORD = process.env.PARTNER_PASSWORD ?? "";
 const PARTNER_NAME = "Mr Diesel";
 const PARTNER_FLEET_NAME = "Mr Diesel Inc";
 const PARTNER_OPEN_ID = "seed_partner_mrdiesel";
+
+// Partner shops are free-to-partner but bounded (docs/repair-shop-partner-mvp.md
+// §5.4) — reuse the existing "custom_fleet" plan (uncapped vehicle/trailer/AI
+// limits, no card required) rather than inventing a new PlanKey, and mark
+// billing "active" so the fleet never reads as trialing in the UI.
+const PARTNER_PLAN_FIELDS = {
+  planName: "custom_fleet",
+  billingInterval: "custom",
+  billingStatus: "active",
+  poweredVehicleLimit: null,
+  includedTrailerLimit: null,
+  paidExtraTrailerQuantity: 0,
+  totalActiveTrailerLimit: null,
+  aiSessionMonthlyLimit: null,
+  isTrial: false,
+  isPaidPilot: false,
+  salesStatus: "partner_active",
+} as const;
 
 async function main() {
   const db = await getDb();
@@ -89,7 +109,12 @@ async function main() {
   if (existingFleet) {
     const [updated] = await db
       .update(fleets)
-      .set({ name: PARTNER_FLEET_NAME, isPartner: true, updatedAt: new Date() })
+      .set({
+        name: PARTNER_FLEET_NAME,
+        isPartner: true,
+        ...PARTNER_PLAN_FIELDS,
+        updatedAt: new Date(),
+      })
       .where(eq(fleets.id, existingFleet.id))
       .returning();
     fleetId = updated.id;
@@ -100,10 +125,18 @@ async function main() {
         name: PARTNER_FLEET_NAME,
         ownerId: userId,
         isPartner: true,
-        planName: "partner",
+        ...PARTNER_PLAN_FIELDS,
       })
       .returning();
     fleetId = created.id;
+  }
+
+  // Fleet Health & Maintenance capabilities (issue capture, repair outcomes,
+  // etc.) fail closed with no fleetFeatures row — enable the full pilot flag
+  // set so the shop's vehicle -> issue -> repair-outcome loop actually works,
+  // mirroring how scripts/seed-maintenance-demo.ts provisions a demo fleet.
+  for (const key of ALL_FLEET_MAINTENANCE_FEATURE_KEYS) {
+    await setFleetFeature({ fleetId, featureKey: key, enabled: true, actorUserId: userId });
   }
 
   console.log(
@@ -120,9 +153,11 @@ async function main() {
           isPartner: true,
         },
         signInAt: "/login",
+        newCasePath: "/partner/cases/new",
+        casesPath: "/app/fleet-health",
         studioPath: "/partner/knowledge",
         nextStep:
-          "Sign in as the partner owner, run triage, record an outcome, then propose it to the knowledge base at /partner/knowledge.",
+          "Sign in as the partner owner, open /partner/cases/new to add a vehicle and issue, record the repair outcome on the case page, then propose confirmed outcomes to the knowledge base at /partner/knowledge.",
       },
       null,
       2

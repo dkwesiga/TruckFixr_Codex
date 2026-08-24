@@ -160,6 +160,11 @@ function PartnerKnowledgeStudioInner() {
               New case
             </Button>
           </a>
+          <a href="/app/fleet-health">
+            <Button size="sm" variant="outline">
+              Cases &amp; repair outcomes
+            </Button>
+          </a>
           <Button
             variant="outline"
             size="sm"
