@@ -47,6 +47,15 @@ function emptyVehicle(): VehicleState {
   return { vin: "", unitNumber: "", make: "", model: "", year: "", engineMake: "", vinSource: "technician_input" };
 }
 
+const NEW_VEHICLE_VALUE = "__new__";
+
+function existingVehicleLabel(v: { unitNumber?: string | null; vin?: string | null; make?: string | null; model?: string | null; year?: number | null }) {
+  const parts = [v.year, v.make, v.model].filter(Boolean).join(" ").trim();
+  const identifier = v.unitNumber?.trim() ? `Unit ${v.unitNumber.trim()}` : v.vin?.trim() ? v.vin.trim() : null;
+  if (parts && identifier) return `${identifier} — ${parts}`;
+  return identifier || parts || "Vehicle";
+}
+
 function ShopCaseCaptureInner() {
   const [, setLocation] = useLocation();
   const fleetsQuery = trpc.fleet.list.useQuery();
@@ -56,6 +65,13 @@ function ShopCaseCaptureInner() {
   );
   const fleetId = partnerFleet?.id as number | undefined;
 
+  const vehiclesQuery = trpc.vehicles.listByFleet.useQuery(
+    { fleetId: fleetId as number },
+    { enabled: Boolean(fleetId) }
+  );
+  const existingVehicles = vehiclesQuery.data ?? [];
+
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string>(NEW_VEHICLE_VALUE);
   const [vehicle, setVehicle] = useState<VehicleState>(emptyVehicle());
   const [decoding, setDecoding] = useState(false);
   const [caseType, setCaseType] = useState<string>("diagnostic_troubleshooting");
@@ -105,21 +121,26 @@ function ShopCaseCaptureInner() {
       toast.error("Enter the customer complaint or inquiry.");
       return;
     }
+    const usingExistingVehicle = selectedVehicleId !== NEW_VEHICLE_VALUE;
     createCase.mutate({
       fleetId,
       caseType: caseType as never,
       complaint,
       symptoms: symptomsText.split("\n").map((s) => s.trim()).filter(Boolean),
       faultCodes: faultCodesText.split(/[,\n]/).map((s) => s.trim()).filter(Boolean),
-      vehicle: {
-        vin: vehicle.vin ? normalizeVinInput(vehicle.vin) : undefined,
-        unitNumber: vehicle.unitNumber || undefined,
-        make: vehicle.make || undefined,
-        model: vehicle.model || undefined,
-        year: vehicle.year ? Number(vehicle.year) : undefined,
-        engineMake: vehicle.engineMake || undefined,
-        vinSource: vehicle.vinSource,
-      },
+      ...(usingExistingVehicle
+        ? { vehicleId: selectedVehicleId }
+        : {
+            vehicle: {
+              vin: vehicle.vin ? normalizeVinInput(vehicle.vin) : undefined,
+              unitNumber: vehicle.unitNumber || undefined,
+              make: vehicle.make || undefined,
+              model: vehicle.model || undefined,
+              year: vehicle.year ? Number(vehicle.year) : undefined,
+              engineMake: vehicle.engineMake || undefined,
+              vinSource: vehicle.vinSource,
+            },
+          }),
     });
   }
 
@@ -166,39 +187,64 @@ function ShopCaseCaptureInner() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="flex gap-2">
-              <Input
-                placeholder="17-character VIN"
-                value={vehicle.vin}
-                maxLength={17}
-                onChange={(e) => setVehicle((v) => ({ ...v, vin: e.target.value, vinSource: "technician_input" }))}
-                className="font-mono uppercase"
-              />
-              <Button type="button" variant="outline" disabled={decoding} onClick={handleDecode}>
-                {decoding ? <Loader2 className="h-4 w-4 animate-spin" /> : "Decode"}
-              </Button>
+            <div className="space-y-1.5">
+              <Label>Vehicle on file</Label>
+              <Select value={selectedVehicleId} onValueChange={setSelectedVehicleId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a vehicle" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NEW_VEHICLE_VALUE}>+ Add a new vehicle</SelectItem>
+                  {existingVehicles.map((v: any) => (
+                    <SelectItem key={v.id} value={String(v.id)}>
+                      {existingVehicleLabel(v)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label>Unit #</Label>
-                <Input value={vehicle.unitNumber} onChange={(e) => setVehicle((v) => ({ ...v, unitNumber: e.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Year</Label>
-                <Input inputMode="numeric" value={vehicle.year} onChange={(e) => setVehicle((v) => ({ ...v, year: e.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Make</Label>
-                <Input value={vehicle.make} onChange={(e) => setVehicle((v) => ({ ...v, make: e.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Model</Label>
-                <Input value={vehicle.model} onChange={(e) => setVehicle((v) => ({ ...v, model: e.target.value }))} />
-              </div>
-            </div>
-            <p className="text-xs text-slate-400">
-              Vehicle context source: {vehicle.vinSource === "vin_decoder" ? "VIN decoder" : "technician input"}
-            </p>
+
+            {selectedVehicleId === NEW_VEHICLE_VALUE ? (
+              <>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="17-character VIN"
+                    value={vehicle.vin}
+                    maxLength={17}
+                    onChange={(e) => setVehicle((v) => ({ ...v, vin: e.target.value, vinSource: "technician_input" }))}
+                    className="font-mono uppercase"
+                  />
+                  <Button type="button" variant="outline" disabled={decoding} onClick={handleDecode}>
+                    {decoding ? <Loader2 className="h-4 w-4 animate-spin" /> : "Decode"}
+                  </Button>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label>Unit #</Label>
+                    <Input value={vehicle.unitNumber} onChange={(e) => setVehicle((v) => ({ ...v, unitNumber: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Year</Label>
+                    <Input inputMode="numeric" value={vehicle.year} onChange={(e) => setVehicle((v) => ({ ...v, year: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Make</Label>
+                    <Input value={vehicle.make} onChange={(e) => setVehicle((v) => ({ ...v, make: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Model</Label>
+                    <Input value={vehicle.model} onChange={(e) => setVehicle((v) => ({ ...v, model: e.target.value }))} />
+                  </div>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Vehicle context source: {vehicle.vinSource === "vin_decoder" ? "VIN decoder" : "technician input"}
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-slate-500">
+                Using the vehicle already on file — no need to re-enter its details.
+              </p>
+            )}
           </CardContent>
         </Card>
 
