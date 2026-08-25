@@ -1,4 +1,7 @@
 import { TRPCError } from "@trpc/server";
+import { eq, and } from "drizzle-orm";
+import { getDb } from "../db";
+import { vehicles } from "../../drizzle/schema";
 import { ensureShopVehicle, type VehicleProvenanceSource } from "./shopVehicleIntake";
 import { createManualCase } from "./maintenanceCases";
 import { addDecision } from "./maintenanceDecisions";
@@ -16,7 +19,10 @@ import type { MaintenanceSeverity } from "@shared/maintenance/caseWorkflow";
 export async function createShopCase(input: {
   fleetId: number;
   actorUserId: number;
-  vehicle: {
+  // Exactly one of these: an existing vehicle already on file for this shop
+  // (a returning customer), or intake details for a new/walk-in vehicle.
+  vehicleId?: string | null;
+  vehicle?: {
     vin?: string | null;
     unitNumber?: string | null;
     licensePlate?: string | null;
@@ -37,19 +43,44 @@ export async function createShopCase(input: {
     throw new TRPCError({ code: "BAD_REQUEST", message: "A complaint or inquiry description is required." });
   }
 
-  const { vehicle, provenance } = await ensureShopVehicle({
-    fleetId: input.fleetId,
-    vin: input.vehicle.vin,
-    unitNumber: input.vehicle.unitNumber,
-    licensePlate: input.vehicle.licensePlate,
-    make: input.vehicle.make,
-    model: input.vehicle.model,
-    year: input.vehicle.year,
-    engineMake: input.vehicle.engineMake,
-    assetType: input.vehicle.assetType,
-    vinSource: input.vehicle.vinSource,
-    createdByUserId: input.actorUserId,
-  });
+  let vehicle: typeof vehicles.$inferSelect;
+  let provenance: VehicleProvenanceSource;
+
+  if (input.vehicleId) {
+    const db = await getDb();
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable." });
+    const [existing] = await db
+      .select()
+      .from(vehicles)
+      .where(and(eq(vehicles.id, input.vehicleId), eq(vehicles.fleetId, input.fleetId)))
+      .limit(1);
+    if (!existing) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "That vehicle was not found in your shop." });
+    }
+    vehicle = existing;
+    provenance = "tenant_record";
+  } else if (input.vehicle) {
+    const ensured = await ensureShopVehicle({
+      fleetId: input.fleetId,
+      vin: input.vehicle.vin,
+      unitNumber: input.vehicle.unitNumber,
+      licensePlate: input.vehicle.licensePlate,
+      make: input.vehicle.make,
+      model: input.vehicle.model,
+      year: input.vehicle.year,
+      engineMake: input.vehicle.engineMake,
+      assetType: input.vehicle.assetType,
+      vinSource: input.vehicle.vinSource,
+      createdByUserId: input.actorUserId,
+    });
+    vehicle = ensured.vehicle;
+    provenance = ensured.provenance;
+  } else {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Either an existing vehicleId or new vehicle details are required.",
+    });
+  }
 
   const caseRow = await createManualCase({
     fleetId: input.fleetId,
@@ -82,4 +113,21 @@ export async function createShopCase(input: {
   });
 
   return { case: caseRow, vehicle, decision };
+}
+
+// Vehicles this shop has already captured, for the "existing vehicle" picker
+// on the new-case form. Deliberately every vehicle in the fleet, not scoped
+// to the caller's own driver assignments: shop staff (Service Advisor /
+// Technician) are granted the createCase capability, not per-vehicle
+// assignments (those are for fleet customers' own drivers), so the
+// assignment-scoped vehicles.listByFleet query would return nothing for them.
+export async function listShopVehicles(input: { fleetId: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db
+    .select()
+    .from(vehicles)
+    .where(eq(vehicles.fleetId, input.fleetId))
+    .orderBy(vehicles.createdAt);
 }

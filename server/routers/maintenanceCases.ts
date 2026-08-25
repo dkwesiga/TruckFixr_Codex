@@ -46,7 +46,10 @@ import {
   VERIFICATION_METHODS,
   EVIDENCE_SOURCES,
 } from "@shared/tadis/outcomeLifecycle";
-import { createShopCase as createShopCaseService } from "../services/shopCaseCapture";
+import {
+  createShopCase as createShopCaseService,
+  listShopVehicles,
+} from "../services/shopCaseCapture";
 import {
   confirmOutcome as confirmOutcomeService,
   listOutcomesForCase,
@@ -430,36 +433,59 @@ export const maintenanceCasesRouter = router({
   // gated actions (§4-§10). None of these require owner/manager — a granted
   // member passes gateCapability via hasMaintenanceCapability. ------------
 
+  // Every vehicle this shop has on file, for the "existing vehicle" picker on
+  // the new-case form. Every capability-granted member sees the whole shop's
+  // vehicle list — vehicles.listByFleet is scoped to a caller's own driver
+  // assignments for non-owner/manager roles, which capability-granted shop
+  // staff (Service Advisor / Technician) never have.
+  listShopVehicles: protectedProcedure
+    .input(z.object({ fleetId: z.number().optional() }))
+    .query(async ({ ctx, input }) => {
+      const fleetId = await gateCapability(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.createCase);
+      return listShopVehicles({ fleetId });
+    }),
+
   // Fast VIN-first case capture (§5/§6). Creates the vehicle record if this
   // is a new walk-in vehicle, then the case, then a lightweight "intake
   // logged" first Resolution.
   createShopCase: protectedProcedure
     .input(
-      z.object({
-        fleetId: z.number().optional(),
-        caseType: caseTypeEnum,
-        complaint: z.string().min(1).max(4000),
-        symptoms: z.array(z.string().trim().min(1)).max(20).optional(),
-        faultCodes: z.array(z.string().trim().min(1)).max(20).optional(),
-        severity: severityEnum.optional(),
-        vehicle: z.object({
-          vin: z.string().trim().length(17).optional(),
-          unitNumber: z.string().trim().max(50).optional(),
-          licensePlate: z.string().trim().max(20).optional(),
-          make: z.string().trim().max(100).optional(),
-          model: z.string().trim().max(100).optional(),
-          year: z.number().int().min(1980).max(2100).optional(),
-          engineMake: z.string().trim().max(100).optional(),
-          assetType: z.enum(["tractor", "straight_truck", "trailer", "other"]).optional(),
-          vinSource: z.enum(["vin_decoder", "tenant_record", "technician_input", "historical_import", "ai_extraction"]),
-        }),
-      })
+      z
+        .object({
+          fleetId: z.number().optional(),
+          caseType: caseTypeEnum,
+          complaint: z.string().min(1).max(4000),
+          symptoms: z.array(z.string().trim().min(1)).max(20).optional(),
+          faultCodes: z.array(z.string().trim().min(1)).max(20).optional(),
+          severity: severityEnum.optional(),
+          // A returning customer's vehicle already on file for this shop.
+          vehicleId: z.string().trim().min(1).optional(),
+          // New/walk-in vehicle intake — required unless vehicleId is given.
+          vehicle: z
+            .object({
+              vin: z.string().trim().length(17).optional(),
+              unitNumber: z.string().trim().max(50).optional(),
+              licensePlate: z.string().trim().max(20).optional(),
+              make: z.string().trim().max(100).optional(),
+              model: z.string().trim().max(100).optional(),
+              year: z.number().int().min(1980).max(2100).optional(),
+              engineMake: z.string().trim().max(100).optional(),
+              assetType: z.enum(["tractor", "straight_truck", "trailer", "other"]).optional(),
+              vinSource: z.enum(["vin_decoder", "tenant_record", "technician_input", "historical_import", "ai_extraction"]),
+            })
+            .optional(),
+        })
+        .refine((val) => Boolean(val.vehicleId) !== Boolean(val.vehicle), {
+          message: "Provide either an existing vehicleId or new vehicle details, not both.",
+          path: ["vehicle"],
+        })
     )
     .mutation(async ({ ctx, input }) => {
       const fleetId = await gateCapability(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.createCase);
       return createShopCaseService({
         fleetId,
         actorUserId: ctx.user.id,
+        vehicleId: input.vehicleId,
         vehicle: input.vehicle,
         caseType: input.caseType as never,
         complaint: input.complaint,

@@ -64,6 +64,7 @@ import {
   BookOpenCheck,
   CarFront,
   ChevronRight,
+  ClipboardList,
   Clock3,
   LayoutDashboard,
   LogOut,
@@ -915,6 +916,20 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
             {isPartnerShop ? (
               <>
                 <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="cursor-pointer rounded-xl"
+                  onClick={() => navigate("/partner/cases/new")}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  New case
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="cursor-pointer rounded-xl"
+                  onClick={() => navigate("/app/fleet-health")}
+                >
+                  <ClipboardList className="mr-2 h-4 w-4" />
+                  Cases &amp; repair outcomes
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   className="cursor-pointer rounded-xl"
                   onClick={() => navigate("/partner/knowledge")}

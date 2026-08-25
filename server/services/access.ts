@@ -238,6 +238,28 @@ export async function createPendingTrialFleet(input: {
 
   const now = new Date();
   const [existing] = await db.select().from(fleets).where(eq(fleets.ownerId, input.userId)).limit(1);
+
+  // Partner repair shops (fleets.isPartner) are provisioned with their own
+  // uncapped plan (scripts/seed-partner-mr-diesel.ts) and must never be
+  // downgraded back onto the trial plan/limits just because the owner also
+  // walks through the normal onboarding form.
+  const contactOnlyPayload = {
+    name: input.companyName.trim(),
+    companyEmail: input.companyEmail ?? null,
+    companyPhone: input.companyPhone ?? null,
+    address: input.location ?? null,
+    updatedAt: now,
+  } as const;
+
+  if (existing?.isPartner) {
+    const [updated] = await db
+      .update(fleets)
+      .set(contactOnlyPayload)
+      .where(eq(fleets.id, existing.id))
+      .returning();
+    return updated ?? existing;
+  }
+
   const payload = {
     name: input.companyName.trim(),
     ownerId: input.userId,
@@ -295,6 +317,8 @@ export async function markPendingAccessVerified(input: { userId: number; emailVe
   if (!fleet) return null;
 
   const now = new Date();
+
+  if (fleet.isPartner) return fleet;
 
   if (fleet.salesStatus === "trial_pending_verification") {
     const trialEndsAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
