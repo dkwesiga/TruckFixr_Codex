@@ -28,10 +28,14 @@ const PARTNER_NAME = "Mr Diesel";
 const PARTNER_FLEET_NAME = "Mr Diesel Inc";
 const PARTNER_OPEN_ID = "seed_partner_mrdiesel";
 
-// Partner shops are free-to-partner but bounded (docs/repair-shop-partner-mvp.md
-// §5.4) — reuse the existing "custom_fleet" plan (uncapped vehicle/trailer/AI
-// limits, no card required) rather than inventing a new PlanKey, and mark
-// billing "active" so the fleet never reads as trialing in the UI.
+// Partner shops are free-to-partner but BOUNDED on AI usage specifically
+// (docs/repair-shop-partner-mvp.md §5.4 — reuse fleets.aiSessionMonthlyLimit
+// to keep model cost predictable). Reuse the existing "custom_fleet" plan for
+// vehicle/trailer capacity (a shop's customer-vehicle count isn't a cost
+// driver) and mark billing "active" so the fleet never reads as trialing —
+// but override the plan's own null AI limit with a finite monthly allowance;
+// custom_fleet's "soft" enforcement means this is fair-use, not a hard cutoff.
+const PARTNER_AI_SESSION_MONTHLY_LIMIT = 300;
 const PARTNER_PLAN_FIELDS = {
   planName: "custom_fleet",
   billingInterval: "custom",
@@ -40,7 +44,7 @@ const PARTNER_PLAN_FIELDS = {
   includedTrailerLimit: null,
   paidExtraTrailerQuantity: 0,
   totalActiveTrailerLimit: null,
-  aiSessionMonthlyLimit: null,
+  aiSessionMonthlyLimit: PARTNER_AI_SESSION_MONTHLY_LIMIT,
   isTrial: false,
   isPaidPilot: false,
   salesStatus: "partner_active",

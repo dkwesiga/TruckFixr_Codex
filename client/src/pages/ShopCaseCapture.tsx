@@ -65,8 +65,8 @@ function ShopCaseCaptureInner() {
   );
   const fleetId = partnerFleet?.id as number | undefined;
 
-  const vehiclesQuery = trpc.vehicles.listByFleet.useQuery(
-    { fleetId: fleetId as number },
+  const vehiclesQuery = trpc.maintenanceCases.listShopVehicles.useQuery(
+    { fleetId },
     { enabled: Boolean(fleetId) }
   );
   const existingVehicles = vehiclesQuery.data ?? [];

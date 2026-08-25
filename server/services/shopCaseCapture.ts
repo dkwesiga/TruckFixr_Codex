@@ -114,3 +114,20 @@ export async function createShopCase(input: {
 
   return { case: caseRow, vehicle, decision };
 }
+
+// Vehicles this shop has already captured, for the "existing vehicle" picker
+// on the new-case form. Deliberately every vehicle in the fleet, not scoped
+// to the caller's own driver assignments: shop staff (Service Advisor /
+// Technician) are granted the createCase capability, not per-vehicle
+// assignments (those are for fleet customers' own drivers), so the
+// assignment-scoped vehicles.listByFleet query would return nothing for them.
+export async function listShopVehicles(input: { fleetId: number }) {
+  const db = await getDb();
+  if (!db) return [];
+
+  return db
+    .select()
+    .from(vehicles)
+    .where(eq(vehicles.fleetId, input.fleetId))
+    .orderBy(vehicles.createdAt);
+}

@@ -46,7 +46,10 @@ import {
   VERIFICATION_METHODS,
   EVIDENCE_SOURCES,
 } from "@shared/tadis/outcomeLifecycle";
-import { createShopCase as createShopCaseService } from "../services/shopCaseCapture";
+import {
+  createShopCase as createShopCaseService,
+  listShopVehicles,
+} from "../services/shopCaseCapture";
 import {
   confirmOutcome as confirmOutcomeService,
   listOutcomesForCase,
@@ -429,6 +432,18 @@ export const maintenanceCasesRouter = router({
   // ---- Mr Diesel shop workflow: Service Advisor / Technician capability-
   // gated actions (§4-§10). None of these require owner/manager — a granted
   // member passes gateCapability via hasMaintenanceCapability. ------------
+
+  // Every vehicle this shop has on file, for the "existing vehicle" picker on
+  // the new-case form. Every capability-granted member sees the whole shop's
+  // vehicle list — vehicles.listByFleet is scoped to a caller's own driver
+  // assignments for non-owner/manager roles, which capability-granted shop
+  // staff (Service Advisor / Technician) never have.
+  listShopVehicles: protectedProcedure
+    .input(z.object({ fleetId: z.number().optional() }))
+    .query(async ({ ctx, input }) => {
+      const fleetId = await gateCapability(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.createCase);
+      return listShopVehicles({ fleetId });
+    }),
 
   // Fast VIN-first case capture (§5/§6). Creates the vehicle record if this
   // is a new walk-in vehicle, then the case, then a lightweight "intake
