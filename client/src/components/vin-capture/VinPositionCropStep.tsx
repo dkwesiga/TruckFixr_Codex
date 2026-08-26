@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Loader2, RotateCcw, ZoomIn } from "lucide-react";
+import { CheckCircle2, Loader2, RotateCcw, ZoomIn } from "lucide-react";
 import {
   computePreviewDimensions,
   decodeImageFile,
@@ -214,6 +214,27 @@ export default function VinPositionCropStep({ file, onConfirm, onCancel }: Props
     };
   }
 
+  // Live estimate of the source-resolution crop this transform would produce, recomputed as
+  // the user pans/zooms so they get feedback *before* confirming instead of only after a
+  // failed OCR round trip. Pure math (see previewCropToSourceCrop) — no canvas work here.
+  function computeLiveCropLongEdge(): number {
+    if (status !== "ready" && status !== "preparing") return 0;
+    const crop = previewCropToSourceCrop(
+      guideRect(),
+      { container: containerSize, image: previewDims },
+      sourceDims,
+      transform
+    );
+    return Math.max(crop.width, crop.height);
+  }
+  const liveCropLongEdge = computeLiveCropLongEdge();
+  const cropQuality: "low" | "ok" | "good" =
+    liveCropLongEdge < VIN_IMAGE_PIPELINE_CONFIG.MIN_VIN_CROP_LONG_EDGE
+      ? "low"
+      : liveCropLongEdge < VIN_IMAGE_PIPELINE_CONFIG.RECOMMENDED_VIN_CROP_LONG_EDGE
+        ? "ok"
+        : "good";
+
   async function handleConfirm() {
     const decoded = decodedRef.current;
     if (!decoded || status !== "ready") return;
@@ -355,6 +376,21 @@ export default function VinPositionCropStep({ file, onConfirm, onCancel }: Props
             <RotateCcw className="h-4 w-4" />
           </Button>
         </div>
+      ) : null}
+
+      {status === "ready" || status === "preparing" ? (
+        cropQuality === "good" ? (
+          <p className="flex items-center gap-1.5 text-sm font-medium text-emerald-700">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            Good framing — this should read clearly.
+          </p>
+        ) : (
+          <p className="text-sm font-medium text-amber-700">
+            {cropQuality === "low"
+              ? "Zoom in until the VIN fills the box, or move closer and retake the photo."
+              : "Zoom in a bit more for the sharpest read."}
+          </p>
+        )
       ) : null}
 
       {cropWarning ? (

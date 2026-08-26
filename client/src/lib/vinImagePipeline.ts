@@ -37,6 +37,11 @@ export const VIN_IMAGE_PIPELINE_CONFIG = {
   MAX_ROI_LONG_EDGE: 1600,
   /** Below this long edge, the crop is considered too small to reliably contain readable VIN text. */
   MIN_VIN_CROP_LONG_EDGE: 280,
+  /**
+   * Advisory (not enforced) threshold: below this, the live "position" step nudges the user
+   * to zoom in further, since a crop this small is still valid but marginal for OCR.
+   */
+  RECOMMENDED_VIN_CROP_LONG_EDGE: 720,
   OUTPUT_MIME: "image/jpeg" as const,
   JPEG_QUALITY: 0.92,
   MAX_OUTPUT_BYTES: 3 * 1024 * 1024,

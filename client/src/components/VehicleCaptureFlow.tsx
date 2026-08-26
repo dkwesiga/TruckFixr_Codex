@@ -433,6 +433,9 @@ export default function VehicleCaptureFlow({
                 <div>
                   <p className="font-semibold">Couldn't read VIN clearly.</p>
                   <p className="mt-1">{ocrWarning || "Try another photo or continue with manual VIN entry."}</p>
+                  <p className="mt-1 text-amber-800">
+                    Tip: fill the box with just the VIN, keep the plate flat and well-lit, and avoid glare.
+                  </p>
                 </div>
               </div>
             </div>
