@@ -326,8 +326,19 @@ export function registerVehicleLookupRoutes(app: Express) {
       return;
     }
 
+    // Diagnostics only (see ENV.enableVinOcrDiagnostics) — the server never trusts these for
+    // any decision, just logs them alongside the model's response when debugging OCR misses.
+    const roiWidth = Number(req.body?.roiWidth);
+    const roiHeight = Number(req.body?.roiHeight);
+    const roiByteSize = Number(req.body?.roiByteSize);
+
     const result = await extractVinFromImage({
       imageDataUrl,
+      roiMetadata: {
+        width: Number.isFinite(roiWidth) ? roiWidth : undefined,
+        height: Number.isFinite(roiHeight) ? roiHeight : undefined,
+        byteSize: Number.isFinite(roiByteSize) ? roiByteSize : undefined,
+      },
     });
 
     if (result.status !== "completed" || !result.vin) {

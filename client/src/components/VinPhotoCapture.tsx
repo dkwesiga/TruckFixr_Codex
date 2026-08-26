@@ -38,7 +38,12 @@ export default function VinPhotoCapture({ onVinCaptured, disabled, className, la
       const response = await fetch(getApiUrl("/api/vehicles/extract-vin"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageDataUrl: image.dataUrl }),
+        body: JSON.stringify({
+          imageDataUrl: image.dataUrl,
+          roiWidth: image.roiWidth,
+          roiHeight: image.roiHeight,
+          roiByteSize: image.roiByteSize,
+        }),
       });
       const payload = await readApiPayload<Record<string, any>>(response, {
         htmlErrorMessage: "TruckFixr received an HTML page instead of the VIN extraction API response.",

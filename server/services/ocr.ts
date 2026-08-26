@@ -1,4 +1,5 @@
 import { invokeWithOrchestration } from "./aiOrchestrator";
+import { ENV } from "../_core/env";
 
 type OcrDependency = typeof invokeWithOrchestration;
 
@@ -18,7 +19,36 @@ type ExtractVinInput = {
   imageDataUrl: string;
   invoke?: OcrDependency;
   timeoutMs?: number;
+  /**
+   * Client-reported dimensions/byte size of the prepared ROI, for diagnostic logging only —
+   * never trusted for any decision-making. The server doesn't decode images itself.
+   */
+  roiMetadata?: { width?: number; height?: number; byteSize?: number };
 };
+
+/**
+ * Structured, non-image VIN OCR diagnostics: which provider/model actually handled the call,
+ * how long it took, the ROI size the client reported preparing, the model's raw/parsed
+ * response, and how TruckFixr's own extraction interpreted it. Gated behind
+ * ENV.enableVinOcrDiagnostics (opt-in, off by default) — never logs the image itself.
+ */
+function logVinOcrDiagnostics(data: {
+  provider?: string;
+  model?: string;
+  latencyMs?: number;
+  roiWidth?: number;
+  roiHeight?: number;
+  roiByteSize?: number;
+  rawModelResponse?: string;
+  parsedVinCandidate?: string;
+  parsedRawText?: string;
+  normalizedVin?: string;
+  fallbackReason?: string;
+}) {
+  if (!ENV.enableVinOcrDiagnostics) return;
+  // eslint-disable-next-line no-console
+  console.info("[VIN OCR diagnostics]", data);
+}
 
 function normalizeOcrText(value: string) {
   return value
@@ -149,10 +179,15 @@ export async function extractVinFromImage(
           content:
             "You extract heavy-duty truck VINs from images. Return strict JSON with {\"vinCandidate\": string, \"rawText\": string}. " +
             "Rules: VINs are exactly 17 alphanumeric characters. " +
-            "Common OCR errors to correct: O→0, Q→0, I→1, l→1, B→8, S→5, Z→2. " +
-            "The VIN never contains letters I, O, or Q. " +
-            "In vinCandidate return only the 17 corrected characters with no spaces or dashes. " +
-            "In rawText preserve exactly what you see in the image.",
+            "The VIN never contains the letters I, O, or Q — if you see what looks like one of " +
+            "those letters in the VIN, it is always a misread digit: I/l→1, O→0, Q→0. Apply that " +
+            "correction. " +
+            "B, S, and Z ARE valid, real VIN characters — do not convert them to 8, 5, or 2. " +
+            "Transcribe each character exactly as it visually appears; only report a character " +
+            "you are reasonably confident about. If a character is genuinely illegible, keep your " +
+            "best single guess in vinCandidate but note the uncertainty in rawText. " +
+            "In vinCandidate return only the 17 characters with no spaces or dashes. " +
+            "In rawText preserve exactly what you see in the image, including any uncertainty.",
         },
         {
           role: "user",
@@ -193,9 +228,22 @@ export async function extractVinFromImage(
     // length, punctuation it forgot to strip) fall back to searching the verbatim rawText —
     // it's common for the raw transcription to contain a clean 17-char run even when the
     // model's own "cleaned up" candidate field doesn't.
-    const vin =
-      extractCandidateVin(typeof parsed.vinCandidate === "string" ? parsed.vinCandidate : "") ||
-      extractCandidateVin(rawText);
+    const vinCandidateRaw = typeof parsed.vinCandidate === "string" ? parsed.vinCandidate : "";
+    const vin = extractCandidateVin(vinCandidateRaw) || extractCandidateVin(rawText);
+
+    logVinOcrDiagnostics({
+      provider: result.orchestration?.provider,
+      model: result.orchestration?.model,
+      latencyMs: result.orchestration?.latencyMs,
+      roiWidth: input.roiMetadata?.width,
+      roiHeight: input.roiMetadata?.height,
+      roiByteSize: input.roiMetadata?.byteSize,
+      rawModelResponse: textContent.slice(0, 500),
+      parsedVinCandidate: vinCandidateRaw,
+      parsedRawText: rawText,
+      normalizedVin: vin || undefined,
+      fallbackReason: vin ? undefined : "no_valid_17char_candidate",
+    });
 
     if (!vin) {
       return {
@@ -211,6 +259,12 @@ export async function extractVinFromImage(
       rawText,
     };
   } catch (error) {
+    logVinOcrDiagnostics({
+      roiWidth: input.roiMetadata?.width,
+      roiHeight: input.roiMetadata?.height,
+      roiByteSize: input.roiMetadata?.byteSize,
+      fallbackReason: error instanceof Error ? error.message : String(error),
+    });
     return {
       status: "fallback",
       warning:

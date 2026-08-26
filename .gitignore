@@ -128,6 +128,10 @@ truckfixr-leads/
 .gstack/
 .claude/launch.json
 
+# Local-only VIN photo fixtures for OCR investigation/benchmarking. Never commit real
+# customer VIN images — this directory exists purely for a developer's own local testing.
+test-assets/vin-ocr-local/
+
 # Accidentally committed nested checkout of this same repo (a separate
 # local clone of origin, apparently used for deploy tooling), plus a
 # 19MB git-bundle export of it — landed via a broad `git add` in

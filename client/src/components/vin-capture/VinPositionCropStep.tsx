@@ -29,6 +29,10 @@ const MAX_ZOOM_MULTIPLIER = 4;
 export type VinPositionCropResult = {
   dataUrl: string;
   blob: Blob;
+  /** For server-side diagnostic logging only — never used for OCR decision-making itself. */
+  roiWidth: number;
+  roiHeight: number;
+  roiByteSize: number;
 };
 
 type Props = {
@@ -307,7 +311,13 @@ export default function VinPositionCropStep({ file, onConfirm, onCancel }: Props
         return;
       }
 
-      onConfirm({ dataUrl: prepared.dataUrl, blob: prepared.blob });
+      onConfirm({
+        dataUrl: prepared.dataUrl,
+        blob: prepared.blob,
+        roiWidth: prepared.outputDimensions.width,
+        roiHeight: prepared.outputDimensions.height,
+        roiByteSize: prepared.byteSize,
+      });
     } catch (err) {
       setStatus("ready");
       setCropWarning(err instanceof Error ? err.message : "Couldn't prepare this photo. Try again.");
@@ -411,7 +421,7 @@ export default function VinPositionCropStep({ file, onConfirm, onCancel }: Props
         cropQuality === "good" ? (
           <p className="flex items-center gap-1.5 text-sm font-medium text-emerald-700">
             <CheckCircle2 className="h-4 w-4 shrink-0" />
-            Good framing — this should read clearly.
+            Framing looks good.
           </p>
         ) : (
           <p className="text-sm font-medium text-amber-700">
