@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type PointerEvent, type ReactNode, type SetStateAction } from "react";
+import { useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,11 +13,14 @@ import { getFallbackUnitNumber, getVehicleDisplayLabel } from "@/lib/vehicleDisp
 import { toast } from "sonner";
 import { Camera, Loader2, ScanLine, Upload, CheckCircle2, PencilLine, TriangleAlert, CarFront } from "lucide-react";
 import { VEHICLE_TYPE_OPTIONS, type VehicleTypeValue } from "../../../shared/vehicleTypes";
+import VinPositionCropStep, { type VinPositionCropResult } from "@/components/vin-capture/VinPositionCropStep";
+import { validateVinFormat } from "@/lib/vin";
 
 type FlowStep =
   | "entry"
   | "manual"
   | "scan_source"
+  | "position_crop"
   | "ocr_processing"
   | "ocr_failed"
   | "confirm_vin"
@@ -52,15 +55,6 @@ type Props = {
   onSaved: (vehicle: DriverVehicleRecord) => void;
 };
 
-function fileToDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ""));
-    reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
-    reader.readAsDataURL(file);
-  });
-}
-
 function normalizeVinInput(value: string) {
   return value.toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/[OQ]/g, "0").replace(/I/g, "1");
 }
@@ -76,8 +70,8 @@ export default function VehicleCaptureFlow({
   onSaved,
 }: Props) {
   const [step, setStep] = useState<FlowStep>(initialStep);
-  const [imagePreview, setImagePreview] = useState("");
-  const [previewOffset, setPreviewOffset] = useState({ x: 0, y: 0 });
+  const [capturedFile, setCapturedFile] = useState<File | null>(null);
+  const [preparedVinImage, setPreparedVinImage] = useState<VinPositionCropResult | null>(null);
   const [ocrWarning, setOcrWarning] = useState("");
   const [vinInput, setVinInput] = useState("");
   const [decodeWarning, setDecodeWarning] = useState("");
@@ -96,13 +90,6 @@ export default function VehicleCaptureFlow({
   });
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
-  const previewDragRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startY: number;
-    baseX: number;
-    baseY: number;
-  } | null>(null);
   const utils = trpc.useUtils();
   const createVehicleMutation = trpc.vehicles.create.useMutation();
 
@@ -116,49 +103,6 @@ export default function VehicleCaptureFlow({
         return "Add vehicle";
     }
   }, [source]);
-
-  useEffect(() => {
-    if (!imagePreview) {
-      setPreviewOffset({ x: 0, y: 0 });
-    }
-  }, [imagePreview]);
-
-  const clampPreviewOffset = (value: number, limit: number) =>
-    Math.max(-limit, Math.min(limit, value));
-
-  const handlePreviewPointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    previewDragRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      baseX: previewOffset.x,
-      baseY: previewOffset.y,
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const handlePreviewPointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    const drag = previewDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-
-    const nextX = drag.baseX + (event.clientX - drag.startX);
-    const nextY = drag.baseY + (event.clientY - drag.startY);
-    setPreviewOffset({
-      x: clampPreviewOffset(nextX, 180),
-      y: clampPreviewOffset(nextY, 120),
-    });
-  };
-
-  const finishPreviewDrag = (event?: PointerEvent<HTMLDivElement>) => {
-    if (event) {
-      try {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      } catch {
-        // Ignore capture release failures in browsers that do not support it fully.
-      }
-    }
-    previewDragRef.current = null;
-  };
 
   const persistVehicleLocally = (vehicle: {
     id: string | number;
@@ -205,22 +149,27 @@ export default function VehicleCaptureFlow({
     return localVehicle;
   };
 
-  const handleSelectedFile = async (file: File | null) => {
+  const handleSelectedFile = (file: File | null) => {
     if (!file) {
       setOcrWarning("No image was selected. You can try again or enter the VIN manually.");
       setStep("ocr_failed");
       return;
     }
+    setCapturedFile(file);
+    setStep("position_crop");
+  };
+
+  // Only fires once the user has confirmed a crop — OCR never starts before that.
+  const runOcr = async (image: VinPositionCropResult) => {
+    setPreparedVinImage(image);
+    setOcrWarning("");
+    setStep("ocr_processing");
 
     try {
-      const imageDataUrl = await fileToDataUrl(file);
-      setImagePreview(imageDataUrl);
-      setStep("ocr_processing");
-
       const response = await fetch(getApiUrl("/api/vehicles/extract-vin"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageDataUrl }),
+        body: JSON.stringify({ imageDataUrl: image.dataUrl }),
       });
       const payload: Record<string, any> = await readApiPayload<Record<string, any>>(response, {
         htmlErrorMessage: "TruckFixr received an HTML page instead of the VIN extraction API response. Check the live API base URL configuration.",
@@ -461,49 +410,18 @@ export default function VehicleCaptureFlow({
           </div>
         ) : null}
 
+        {step === "position_crop" && capturedFile ? (
+          <VinPositionCropStep
+            file={capturedFile}
+            onConfirm={(result) => void runOcr(result)}
+            onCancel={() => setStep("scan_source")}
+          />
+        ) : null}
+
         {step === "ocr_processing" ? (
-          <div className="space-y-4">
-            {imagePreview ? (
-              <div
-                className="relative h-72 overflow-hidden rounded-3xl border border-slate-200 bg-slate-950/95"
-                onPointerDown={handlePreviewPointerDown}
-                onPointerMove={handlePreviewPointerMove}
-                onPointerUp={finishPreviewDrag}
-                onPointerCancel={finishPreviewDrag}
-                onPointerLeave={finishPreviewDrag}
-              >
-                <img
-                  src={imagePreview}
-                  alt="VIN preview"
-                  className="absolute left-1/2 top-1/2 max-h-none max-w-none select-none"
-                  style={{
-                    transform: `translate(-50%, -50%) translate(${previewOffset.x}px, ${previewOffset.y}px) scale(1.18)`,
-                    touchAction: "none",
-                    userSelect: "none",
-                  }}
-                  draggable={false}
-                />
-                <div className="absolute inset-x-4 bottom-4 flex items-center justify-between gap-3 rounded-2xl bg-black/55 px-4 py-3 text-xs text-white backdrop-blur">
-                  <span>Drag the photo to center the VIN before saving.</span>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className="h-8 rounded-full bg-white/90 text-slate-900 hover:bg-white"
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setPreviewOffset({ x: 0, y: 0 });
-                    }}
-                  >
-                    Center
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-            <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
-              <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
-              OCR is processing the VIN image now.
-            </div>
+          <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-700">
+            <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+            OCR is processing the VIN image now.
           </div>
         ) : null}
 
@@ -519,8 +437,22 @@ export default function VehicleCaptureFlow({
               </div>
             </div>
             <div className="flex flex-wrap gap-3">
-              <Button type="button" onClick={() => setStep("scan_source")}>Retake Photo</Button>
-              <Button type="button" variant="outline" onClick={() => setStep("manual")}>Enter VIN Manually</Button>
+              {preparedVinImage ? (
+                <Button type="button" onClick={() => void runOcr(preparedVinImage)}>
+                  Try Again
+                </Button>
+              ) : null}
+              {capturedFile ? (
+                <Button type="button" variant="outline" onClick={() => setStep("position_crop")}>
+                  Adjust Photo
+                </Button>
+              ) : null}
+              <Button type="button" variant="outline" onClick={() => setStep("scan_source")}>
+                Retake Photo
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setStep("manual")}>
+                Enter VIN Manually
+              </Button>
             </div>
           </div>
         ) : null}
@@ -539,9 +471,19 @@ export default function VehicleCaptureFlow({
                 Review OCR mistakes before decode. Common corrections include 0 vs O and 1 vs I.
               </p>
               {ocrWarning ? <p className="mt-2 text-xs text-amber-700">{ocrWarning}</p> : null}
+              {(() => {
+                const normalized = normalizeVinInput(vinInput);
+                if (normalized.length !== 17) return null;
+                const validation = validateVinFormat(normalized);
+                return validation.ok ? (
+                  <p className="mt-2 text-xs font-medium text-emerald-700">VIN detected: {normalized}</p>
+                ) : (
+                  <p className="mt-2 text-xs font-medium text-amber-700">{validation.message}</p>
+                );
+              })()}
             </div>
             <div className="flex gap-3">
-              <Button type="button" variant="outline" onClick={() => setStep("scan_source")}>Back</Button>
+              <Button type="button" variant="outline" onClick={() => setStep("position_crop")}>Adjust Photo</Button>
               <Button type="button" onClick={() => void startDecode(vinInput)}>Decode VIN</Button>
             </div>
           </div>
