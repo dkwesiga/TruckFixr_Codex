@@ -1045,7 +1045,16 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
                   <Plus className="mr-2 h-4 w-4" />
                   Add vehicle
                 </Button>
-                <DialogContent className="max-h-[calc(100svh-1rem)] w-[calc(100vw-1rem)] overflow-hidden rounded-[28px] border-[var(--fleet-outline)] p-0 sm:max-h-[calc(100svh-2rem)] sm:max-w-2xl">
+                <DialogContent
+                  className="max-h-[calc(100svh-1rem)] w-[calc(100vw-1rem)] overflow-hidden rounded-[28px] border-[var(--fleet-outline)] p-0 sm:max-h-[calc(100svh-2rem)] sm:max-w-2xl"
+                  // Taking a VIN photo backgrounds the page while the native camera app is
+                  // open. Radix's Dialog otherwise treats the resulting focus/pointer loss as
+                  // an "outside interaction" and auto-dismisses back to the dashboard the
+                  // moment the camera returns focus — this keeps the dialog open through that
+                  // round trip; explicit Cancel/close/save actions are unaffected.
+                  onPointerDownOutside={(event) => event.preventDefault()}
+                  onInteractOutside={(event) => event.preventDefault()}
+                >
                   <VehicleCaptureFlow
                     fleetId={resolvedFleetId ?? 0}
                     source="vehicles"
