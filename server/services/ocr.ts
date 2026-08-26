@@ -186,8 +186,16 @@ export async function extractVinFromImage(
       rawText?: unknown;
     };
 
-    const vin = extractCandidateVin(typeof parsed.vinCandidate === "string" ? parsed.vinCandidate : "");
     const rawText = typeof parsed.rawText === "string" ? normalizeOcrText(parsed.rawText) : "";
+
+    // The model returns two fields: its "corrected" vinCandidate and a verbatim rawText
+    // transcription. Prefer vinCandidate, but if it's malformed (stray character, wrong
+    // length, punctuation it forgot to strip) fall back to searching the verbatim rawText —
+    // it's common for the raw transcription to contain a clean 17-char run even when the
+    // model's own "cleaned up" candidate field doesn't.
+    const vin =
+      extractCandidateVin(typeof parsed.vinCandidate === "string" ? parsed.vinCandidate : "") ||
+      extractCandidateVin(rawText);
 
     if (!vin) {
       return {

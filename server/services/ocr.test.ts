@@ -36,6 +36,29 @@ describe("OCR fallback handling", () => {
     expect(result.vin).toBe("1HTMMAAP05H155913");
   });
 
+  it("falls back to rawText when vinCandidate is malformed but rawText has a clean 17-char run", async () => {
+    const result = await extractVinFromImage({
+      imageDataUrl: "data:image/png;base64,abc123",
+      invoke: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                // vinCandidate is one character short (the model dropped a digit while
+                // "cleaning" it up), but rawText's verbatim transcription has the full VIN.
+                vinCandidate: "1HTMMAAP05H15591",
+                rawText: "1HTMMAAP05H155913",
+              }),
+            },
+          },
+        ],
+      }),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.vin).toBe("1HTMMAAP05H155913");
+  });
+
   it("returns a fallback warning when OCR cannot find a full VIN", async () => {
     const result = await extractVinFromImage({
       imageDataUrl: "data:image/png;base64,abc123",
