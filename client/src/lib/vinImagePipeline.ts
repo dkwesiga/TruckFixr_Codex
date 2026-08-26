@@ -42,9 +42,20 @@ export const VIN_IMAGE_PIPELINE_CONFIG = {
    * to zoom in further, since a crop this small is still valid but marginal for OCR.
    */
   RECOMMENDED_VIN_CROP_LONG_EDGE: 720,
+  /** Zoom is never allowed below this, even in degenerate guide/preview-size edge cases. */
+  MIN_ZOOM_SAFETY_FLOOR: 0.05,
+  /** Zoom-in headroom is always at least this multiple of the preview's native pixel size. */
+  MIN_MAX_ZOOM: 3,
   OUTPUT_MIME: "image/jpeg" as const,
   JPEG_QUALITY: 0.92,
   MAX_OUTPUT_BYTES: 3 * 1024 * 1024,
+} as const;
+
+export const VIN_CROP_PADDING = {
+  /** Fraction of the mapped crop's own width added on *each* horizontal side before OCR. */
+  HORIZONTAL_RATIO: 0.15,
+  /** Fraction of the mapped crop's own height added on *each* vertical side before OCR. */
+  VERTICAL_RATIO: 0.35,
 } as const;
 
 export type DecodedImage = {
@@ -157,6 +168,50 @@ export function previewCropToSourceCrop(
   };
 
   return clampCropToBounds(rawCrop, sourceDimensions);
+}
+
+/**
+ * Minimum zoom scale that keeps the VIN guide box fully backed by image pixels — the
+ * preview image only needs to cover the *guide region*, not the entire preview container.
+ * (Forcing coverage of the whole container, as an earlier version of this component did via
+ * `Math.max(1, ...)`, over-constrains zoom-out on a high-resolution preview bitmap shown in a
+ * small mobile viewport: the image is already far larger than the container at scale 1, so a
+ * floor of 1 makes it impossible to zoom out far enough to see the whole VIN label.)
+ */
+export function computeMinZoomForGuide(guide: Dimensions, previewDims: Dimensions): number {
+  if (previewDims.width <= 0 || previewDims.height <= 0) return 1;
+  return Math.max(
+    VIN_IMAGE_PIPELINE_CONFIG.MIN_ZOOM_SAFETY_FLOOR,
+    guide.width / previewDims.width,
+    guide.height / previewDims.height
+  );
+}
+
+/**
+ * Expands a source-space crop rect by a padding ratio on each side (before clamping to the
+ * source image bounds). Used to send OCR a looser ROI than the visible guide box — the guide
+ * only needs the VIN comfortably inside it, not glyph-tight, so the padded crop preserves
+ * character edges and label-border context that a razor-tight crop could clip.
+ */
+export function padCropRect(
+  crop: CropRect,
+  bounds: Dimensions,
+  config: { horizontalRatio?: number; verticalRatio?: number } = {}
+): CropRect {
+  const horizontalRatio = config.horizontalRatio ?? VIN_CROP_PADDING.HORIZONTAL_RATIO;
+  const verticalRatio = config.verticalRatio ?? VIN_CROP_PADDING.VERTICAL_RATIO;
+
+  const padX = crop.width * horizontalRatio;
+  const padY = crop.height * verticalRatio;
+
+  const padded: CropRect = {
+    x: crop.x - padX,
+    y: crop.y - padY,
+    width: crop.width + padX * 2,
+    height: crop.height + padY * 2,
+  };
+
+  return clampCropToBounds(padded, bounds);
 }
 
 /** Scales `crop` down (never up) so its long edge is at most `maxLongEdge`. */

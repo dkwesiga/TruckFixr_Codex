@@ -3,9 +3,11 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { CheckCircle2, Loader2, RotateCcw, ZoomIn } from "lucide-react";
 import {
+  computeMinZoomForGuide,
   computePreviewDimensions,
   decodeImageFile,
   logPipelineStage,
+  padCropRect,
   prepareVinRoiFromCrop,
   previewCropToSourceCrop,
   validatePreparedVinImage,
@@ -16,10 +18,12 @@ import {
   type ImageTransform,
 } from "@/lib/vinImagePipeline";
 
-// The VIN guide box is a wide, short band (VINs read as one horizontal line of 17 chars),
-// expressed as a fraction of the container so it scales with viewport size.
+// The VIN guide box is a wide band (VINs read as one horizontal line of 17 chars), expressed
+// as a fraction of the container so it scales with viewport size. Height is deliberately a
+// bit more generous than a glyph-tight box — combined with the OCR-side padding in
+// handleConfirm, this gives users tolerance for imperfect framing without needing a huge box.
 const GUIDE_WIDTH_RATIO = 0.88;
-const GUIDE_HEIGHT_RATIO = 0.22;
+const GUIDE_HEIGHT_RATIO = 0.3;
 const MAX_ZOOM_MULTIPLIER = 4;
 
 export type VinPositionCropResult = {
@@ -132,19 +136,36 @@ export default function VinPositionCropStep({ file, onConfirm, onCancel }: Props
     return () => window.removeEventListener("resize", measure);
   }, [status]);
 
-  const minZoom =
-    previewDims.width > 0 && previewDims.height > 0
-      ? Math.max(1, containerSize.width / previewDims.width, containerSize.height / previewDims.height)
-      : 1;
-  const maxZoom = minZoom * MAX_ZOOM_MULTIPLIER;
+  // The guide only needs to be backed by image pixels — the image does not need to cover the
+  // whole preview container. Both minZoom and pan clamping are derived from the guide's own
+  // dimensions rather than the container's.
+  const guide = guideRect();
+  const minZoom = computeMinZoomForGuide(guide, previewDims);
+  const maxZoom = Math.max(minZoom * MAX_ZOOM_MULTIPLIER, VIN_IMAGE_PIPELINE_CONFIG.MIN_MAX_ZOOM);
 
-  // Initialize the transform so the image covers the container (like background-size: cover)
-  // as soon as we know both the preview's native size and the container's rendered size.
+  // Initialize the transform so the image covers the guide box (like background-size: cover,
+  // but relative to the guide rather than the full container) as soon as we know both the
+  // preview's native size and the container's rendered size.
   useEffect(() => {
     if (status !== "ready" || initializedTransformRef.current) return;
     if (previewDims.width <= 0 || containerSize.width <= 0) return;
     setTransform({ scale: minZoom, translateX: 0, translateY: 0 });
     initializedTransformRef.current = true;
+
+    logPipelineStage("position-step-ready", {
+      sourceWidth: sourceDims.width,
+      sourceHeight: sourceDims.height,
+      previewWidth: previewDims.width,
+      previewHeight: previewDims.height,
+      containerWidth: Math.round(containerSize.width),
+      containerHeight: Math.round(containerSize.height),
+      guideWidth: Math.round(guide.width),
+      guideHeight: Math.round(guide.height),
+      minZoom: Math.round(minZoom * 1000) / 1000,
+      maxZoom: Math.round(maxZoom * 1000) / 1000,
+      displayedWidthAtMinZoom: Math.round(previewDims.width * minZoom),
+      displayedHeightAtMinZoom: Math.round(previewDims.height * minZoom),
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, previewDims, containerSize]);
 
@@ -152,8 +173,10 @@ export default function VinPositionCropStep({ file, onConfirm, onCancel }: Props
     const scale = Math.min(maxZoom, Math.max(minZoom, next.scale));
     const displayedWidth = previewDims.width * scale;
     const displayedHeight = previewDims.height * scale;
-    const slackX = Math.max(0, (displayedWidth - containerSize.width) / 2);
-    const slackY = Math.max(0, (displayedHeight - containerSize.height) / 2);
+    // Slack is computed against the guide box, not the full container — the image only needs
+    // to keep the guide region covered as the user pans, not the whole viewport.
+    const slackX = Math.max(0, (displayedWidth - guide.width) / 2);
+    const slackY = Math.max(0, (displayedHeight - guide.height) / 2);
     return {
       scale,
       translateX: Math.max(-slackX, Math.min(slackX, next.translateX)),
@@ -243,14 +266,17 @@ export default function VinPositionCropStep({ file, onConfirm, onCancel }: Props
     setStatus("preparing");
 
     try {
-      const sourceCrop = previewCropToSourceCrop(
+      const rawSourceCrop = previewCropToSourceCrop(
         guideRect(),
         { container: containerSize, image: previewDims },
         sourceDims,
         transform
       );
+      // OCR gets a looser crop than the visible guide box — the user only needs to keep the
+      // VIN comfortably inside the guide, not glyph-tight against its edges.
+      const paddedSourceCrop = padCropRect(rawSourceCrop, sourceDims);
 
-      const prepared = await prepareVinRoiFromCrop(decoded.drawable, sourceCrop);
+      const prepared = await prepareVinRoiFromCrop(decoded.drawable, paddedSourceCrop);
       const validation = validatePreparedVinImage({
         width: prepared.outputDimensions.width,
         height: prepared.outputDimensions.height,
@@ -260,8 +286,11 @@ export default function VinPositionCropStep({ file, onConfirm, onCancel }: Props
       logPipelineStage("crop-confirmed", {
         sourceWidth: sourceDims.width,
         sourceHeight: sourceDims.height,
-        cropWidth: Math.round(sourceCrop.width),
-        cropHeight: Math.round(sourceCrop.height),
+        selectedZoom: Math.round(transform.scale * 1000) / 1000,
+        cropWidthBeforePadding: Math.round(rawSourceCrop.width),
+        cropHeightBeforePadding: Math.round(rawSourceCrop.height),
+        cropWidthAfterPadding: Math.round(paddedSourceCrop.width),
+        cropHeightAfterPadding: Math.round(paddedSourceCrop.height),
         outputWidth: prepared.outputDimensions.width,
         outputHeight: prepared.outputDimensions.height,
         outputBytes: prepared.byteSize,
@@ -341,7 +370,7 @@ export default function VinPositionCropStep({ file, onConfirm, onCancel }: Props
               }}
             />
             <div className="pointer-events-none absolute inset-x-4 top-3 rounded-full bg-black/55 px-3 py-1.5 text-center text-xs font-medium text-white backdrop-blur">
-              Position the full 17-character VIN inside the box.
+              Keep the entire VIN inside the box with a little space around it.
             </div>
             {status === "preparing" ? (
               <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black/40 text-sm text-white">
