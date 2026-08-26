@@ -91,6 +91,9 @@ export default function VinPhotoCapture({ onVinCaptured, disabled, className, la
           <p className="text-sm font-medium text-[#D81F2A]" role="alert">
             {error}
           </p>
+          <p className="text-xs text-slate-500">
+            Tip: fill the box with just the VIN, keep the plate flat and well-lit, and avoid glare.
+          </p>
           {sourceFile ? (
             <Button
               type="button"

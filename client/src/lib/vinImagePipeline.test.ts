@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   clampCropToBounds,
+  computeMinZoomForGuide,
   computePreviewDimensions,
   computeRoiOutputDimensions,
+  padCropRect,
   previewCropToSourceCrop,
   validatePreparedVinImage,
+  VIN_IMAGE_PIPELINE_CONFIG,
   type PreviewLayout,
 } from "./vinImagePipeline";
 
@@ -196,5 +199,121 @@ describe("validatePreparedVinImage", () => {
     expect(
       validatePreparedVinImage({ width: 1600, height: 500, byteSize: 10 * 1024 * 1024 })
     ).toEqual({ ok: false, reason: "OUTPUT_TOO_LARGE" });
+  });
+});
+
+// Regression coverage for the "forced Math.max(1, ...) minZoom" bug: on a high-resolution
+// preview bitmap shown in a small mobile viewport, requiring the image to cover the whole
+// container (rather than just the guide box) made it impossible to zoom out far enough to see
+// the whole VIN label.
+describe("computeMinZoomForGuide", () => {
+  const container = { width: 360, height: 288 };
+  const guideWidthRatio = 0.88;
+  const guideHeightRatio = 0.3;
+  const guide = { width: container.width * guideWidthRatio, height: container.height * guideHeightRatio };
+
+  it("allows zooming out well below 1 when the preview is much larger than the guide", () => {
+    // e.g. a 4000x3000 source downscaled to a 1280x960 preview, shown in a 360x288 container.
+    const preview = { width: 1280, height: 960 };
+    const minZoom = computeMinZoomForGuide(guide, preview);
+
+    expect(minZoom).toBeLessThan(1);
+    expect(minZoom).toBeCloseTo(guide.width / preview.width, 5);
+  });
+
+  it("stays below 1 for a typical portrait phone photo (3024x4032 source)", () => {
+    const preview = computePreviewDimensions({ width: 3024, height: 4032 }, VIN_IMAGE_PIPELINE_CONFIG.MAX_PREVIEW_LONG_EDGE);
+    const minZoom = computeMinZoomForGuide(guide, preview);
+
+    expect(minZoom).toBeLessThan(1);
+    expect(minZoom).toBeGreaterThan(0);
+  });
+
+  it("stays below 1 for a typical landscape phone photo (4032x3024 source)", () => {
+    const preview = computePreviewDimensions({ width: 4032, height: 3024 }, VIN_IMAGE_PIPELINE_CONFIG.MAX_PREVIEW_LONG_EDGE);
+    const minZoom = computeMinZoomForGuide(guide, preview);
+
+    expect(minZoom).toBeLessThan(1);
+    expect(minZoom).toBeGreaterThan(0);
+  });
+
+  it("requires zooming in (minZoom > 1) when the preview is smaller than the guide", () => {
+    const tinyPreview = { width: 100, height: 75 };
+    const minZoom = computeMinZoomForGuide(guide, tinyPreview);
+
+    expect(minZoom).toBeGreaterThan(1);
+  });
+
+  it("never returns below the safety floor even for a degenerate guide", () => {
+    const minZoom = computeMinZoomForGuide({ width: 1, height: 1 }, { width: 10_000, height: 10_000 });
+    expect(minZoom).toBeGreaterThanOrEqual(VIN_IMAGE_PIPELINE_CONFIG.MIN_ZOOM_SAFETY_FLOOR);
+  });
+});
+
+describe("previewCropToSourceCrop at scale below 1", () => {
+  it("keeps the full VIN guide backed by valid source pixels when zoomed out past the old floor of 1", () => {
+    const container = { width: 360, height: 288 };
+    const guide = { width: container.width * 0.88, height: container.height * 0.3, x: 0, y: 0 };
+    guide.x = (container.width - guide.width) / 2;
+    guide.y = (container.height - guide.height) / 2;
+
+    const preview = { width: 1280, height: 960 };
+    const source = { width: 4000, height: 3000 };
+    const minZoom = computeMinZoomForGuide(guide, preview);
+
+    const crop = previewCropToSourceCrop(
+      guide,
+      { container, image: preview },
+      source,
+      { scale: minZoom, translateX: 0, translateY: 0 }
+    );
+
+    expect(minZoom).toBeLessThan(1);
+    expect(crop.width).toBeGreaterThan(0);
+    expect(crop.height).toBeGreaterThan(0);
+    expect(crop.x).toBeGreaterThanOrEqual(0);
+    expect(crop.y).toBeGreaterThanOrEqual(0);
+    expect(crop.x + crop.width).toBeLessThanOrEqual(source.width);
+    expect(crop.y + crop.height).toBeLessThanOrEqual(source.height);
+  });
+});
+
+describe("padCropRect", () => {
+  const bounds = { width: 1000, height: 1000 };
+
+  it("expands the crop by the configured horizontal/vertical ratios", () => {
+    const crop = { x: 100, y: 100, width: 200, height: 100 };
+    const padded = padCropRect(crop, bounds, { horizontalRatio: 0.15, verticalRatio: 0.35 });
+
+    expect(padded).toEqual({ x: 70, y: 65, width: 260, height: 170 });
+  });
+
+  it("clamps padding at the top-left source edge without going negative", () => {
+    const crop = { x: 10, y: 5, width: 100, height: 50 };
+    const padded = padCropRect(crop, { width: 300, height: 300 }, { horizontalRatio: 0.15, verticalRatio: 0.35 });
+
+    expect(padded.x).toBeGreaterThanOrEqual(0);
+    expect(padded.y).toBeGreaterThanOrEqual(0);
+    expect(padded.x).toBe(0);
+    expect(padded.y).toBe(0);
+  });
+
+  it("clamps padding at the bottom-right source edge and stays within bounds", () => {
+    const sourceBounds = { width: 200, height: 200 };
+    const crop = { x: 150, y: 150, width: 40, height: 40 };
+    const padded = padCropRect(crop, sourceBounds, { horizontalRatio: 0.15, verticalRatio: 0.35 });
+
+    expect(padded.x + padded.width).toBeLessThanOrEqual(sourceBounds.width);
+    expect(padded.y + padded.height).toBeLessThanOrEqual(sourceBounds.height);
+    expect(padded.x).toBeGreaterThanOrEqual(0);
+    expect(padded.y).toBeGreaterThanOrEqual(0);
+  });
+
+  it("uses the documented default ratios when none are passed", () => {
+    const crop = { x: 500, y: 500, width: 100, height: 50 };
+    const padded = padCropRect(crop, bounds);
+
+    expect(padded.width).toBe(100 + 100 * 0.15 * 2);
+    expect(padded.height).toBe(50 + 50 * 0.35 * 2);
   });
 });
