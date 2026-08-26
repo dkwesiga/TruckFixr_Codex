@@ -264,22 +264,21 @@ export async function extractVinFromImage(
       };
     }
 
-    // The check digit doesn't match — see if flipping one commonly
-    // misread character (e.g. 8/B, 5/S) unambiguously fixes it.
+    // The check digit doesn't match. A single flip of a commonly-misread
+    // character (8/B, 5/S, ...) landing on a valid checksum is only a
+    // guess at which character OCR got wrong — not proof, since the
+    // real misread could be a different character entirely. So we never
+    // apply it silently; we surface it as a suggestion and let the user
+    // confirm against the plate before decoding.
     const corrected = correctVinChecksum(vin);
-    if (corrected) {
-      return {
-        status: "completed",
-        vin: corrected,
-        rawText,
-      };
-    }
 
     return {
       status: "completed",
       vin,
       rawText,
-      warning: "This VIN's check digit doesn't match — double-check it against the plate before decoding.",
+      warning: corrected
+        ? `This VIN's check digit doesn't match — did you mean ${corrected}? Double-check it against the plate before decoding.`
+        : "This VIN's check digit doesn't match — double-check it against the plate before decoding.",
     };
   } catch (error) {
     return {

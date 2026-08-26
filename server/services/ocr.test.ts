@@ -36,8 +36,11 @@ describe("OCR fallback handling", () => {
     expect(result.vin).toBe("1HTMMAAP05H155913");
   });
 
-  it("auto-corrects a single OCR misread that breaks the VIN check digit", async () => {
+  it("suggests but does not silently apply a single-character checksum fix", async () => {
     // 1HGCM82633A004352 is a valid VIN; the '8' at index 5 was misread as 'B'.
+    // The checksum can only prove *something* is wrong, not *which*
+    // character — so the raw read is kept and the fix is offered as a
+    // suggestion for the user to confirm against the plate.
     const result = await extractVinFromImage({
       imageDataUrl: "data:image/png;base64,abc123",
       invoke: async () => ({
@@ -55,8 +58,8 @@ describe("OCR fallback handling", () => {
     });
 
     expect(result.status).toBe("completed");
-    expect(result.vin).toBe("1HGCM82633A004352");
-    expect(result.warning).toBeUndefined();
+    expect(result.vin).toBe("1HGCMB2633A004352");
+    expect(result.warning).toContain("1HGCM82633A004352");
   });
 
   it("keeps the VIN but warns when the check digit doesn't validate and can't be unambiguously fixed", async () => {
