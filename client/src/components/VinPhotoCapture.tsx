@@ -1,17 +1,10 @@
 import { useRef, useState } from "react";
 import { Camera, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { getApiUrl, readApiPayload } from "@/lib/api";
 import { normalizeVinInput } from "@/lib/vin";
-
-function fileToDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ""));
-    reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
-    reader.readAsDataURL(file);
-  });
-}
+import VinPositionCropStep, { type VinPositionCropResult } from "@/components/vin-capture/VinPositionCropStep";
 
 type Props = {
   onVinCaptured: (vin: string) => void;
@@ -24,22 +17,28 @@ type Props = {
  * Lets a guest capture a photo of a VIN plate, OCRs it via
  * /api/vehicles/extract-vin, and hands the extracted VIN back to the caller
  * for confirmation — it never decodes or submits the VIN itself.
+ *
+ * Shares the same position/crop pipeline as VehicleCaptureFlow (see
+ * client/src/components/vin-capture/VinPositionCropStep.tsx and
+ * client/src/lib/vinImagePipeline.ts) so both VIN capture entry points prepare the
+ * image the same way before it ever reaches OCR.
  */
 export default function VinPhotoCapture({ onVinCaptured, disabled, className, label = "Scan VIN photo" }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const [sourceFile, setSourceFile] = useState<File | null>(null);
+  const [cropDialogOpen, setCropDialogOpen] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleFile(file: File | null) {
-    if (!file) return;
+  // OCR only ever starts after the crop dialog has closed on a confirmed crop.
+  async function runOcr(image: VinPositionCropResult) {
     setError(null);
     setProcessing(true);
     try {
-      const imageDataUrl = await fileToDataUrl(file);
       const response = await fetch(getApiUrl("/api/vehicles/extract-vin"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageDataUrl }),
+        body: JSON.stringify({ imageDataUrl: image.dataUrl }),
       });
       const payload = await readApiPayload<Record<string, any>>(response, {
         htmlErrorMessage: "TruckFixr received an HTML page instead of the VIN extraction API response.",
@@ -50,13 +49,21 @@ export default function VinPhotoCapture({ onVinCaptured, disabled, className, la
         return;
       }
 
+      setSourceFile(null);
       onVinCaptured(normalizeVinInput(String(payload.vin)));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't read the VIN clearly. Try another photo or enter it manually.");
     } finally {
       setProcessing(false);
-      if (inputRef.current) inputRef.current.value = "";
     }
+  }
+
+  function handleFile(file: File | null) {
+    if (!file) return;
+    setError(null);
+    setSourceFile(file);
+    setCropDialogOpen(true);
+    if (inputRef.current) inputRef.current.value = "";
   }
 
   return (
@@ -67,7 +74,7 @@ export default function VinPhotoCapture({ onVinCaptured, disabled, className, la
         accept="image/*"
         capture="environment"
         className="hidden"
-        onChange={(e) => void handleFile(e.target.files?.[0] ?? null)}
+        onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
       />
       <Button
         type="button"
@@ -80,10 +87,40 @@ export default function VinPhotoCapture({ onVinCaptured, disabled, className, la
         {processing ? "Reading VIN…" : label}
       </Button>
       {error && (
-        <p className="mt-1 text-sm font-medium text-[#D81F2A]" role="alert">
-          {error}
-        </p>
+        <div className="mt-1 space-y-1">
+          <p className="text-sm font-medium text-[#D81F2A]" role="alert">
+            {error}
+          </p>
+          {sourceFile ? (
+            <Button
+              type="button"
+              variant="link"
+              className="h-auto p-0 text-sm font-medium underline"
+              onClick={() => setCropDialogOpen(true)}
+            >
+              Adjust Photo
+            </Button>
+          ) : null}
+        </div>
       )}
+
+      <Dialog open={cropDialogOpen} onOpenChange={setCropDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Position the VIN</DialogTitle>
+          </DialogHeader>
+          {sourceFile ? (
+            <VinPositionCropStep
+              file={sourceFile}
+              onConfirm={(result) => {
+                setCropDialogOpen(false);
+                void runOcr(result);
+              }}
+              onCancel={() => setCropDialogOpen(false)}
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
