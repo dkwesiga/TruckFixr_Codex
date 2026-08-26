@@ -50,6 +50,10 @@ export default function VinPhotoCapture({ onVinCaptured, disabled, className, la
         return;
       }
 
+      if (payload.warning) {
+        setError(String(payload.warning));
+      }
+
       onVinCaptured(normalizeVinInput(String(payload.vin)));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't read the VIN clearly. Try another photo or enter it manually.");
