@@ -38,18 +38,77 @@ function normalizeVinCandidate(value: string) {
   return normalized;
 }
 
+// ISO 3779 / SAE J853 check-digit weights and letter transliteration, used
+// by North American VINs (position 9, 0-indexed 8) to catch OCR misreads.
+const VIN_CHECK_WEIGHTS = [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2];
+const VIN_TRANSLITERATION: Record<string, number> = {
+  A: 1, B: 2, C: 3, D: 4, E: 5, F: 6, G: 7, H: 8,
+  J: 1, K: 2, L: 3, M: 4, N: 5, P: 7, R: 9,
+  S: 2, T: 3, U: 4, V: 5, W: 6, X: 7, Y: 8, Z: 9,
+};
+
+function vinCheckDigit(vin: string): string | null {
+  if (vin.length !== 17) return null;
+  let sum = 0;
+  for (let index = 0; index < 17; index += 1) {
+    const char = vin[index];
+    const value = /[0-9]/.test(char) ? Number(char) : VIN_TRANSLITERATION[char];
+    if (value === undefined) return null;
+    sum += value * VIN_CHECK_WEIGHTS[index];
+  }
+  const remainder = sum % 11;
+  return remainder === 10 ? "X" : String(remainder);
+}
+
+export function isValidVinChecksum(vin: string): boolean {
+  const expected = vinCheckDigit(vin);
+  return expected !== null && expected === vin[8];
+}
+
+// Characters commonly confused by OCR that never both appear as the
+// "correct" reading in the same slot — tried one at a time to see if
+// flipping a single character resolves the checksum.
+const VIN_OCR_CONFUSABLES: Record<string, string> = {
+  "8": "B", B: "8",
+  "5": "S", S: "5",
+  "2": "Z", Z: "2",
+  "6": "G", G: "6",
+};
+
+// If the raw candidate fails the checksum, try flipping exactly one
+// commonly-confused character to see if that's the single misread that
+// broke it. Only applies the fix when it's unambiguous (exactly one
+// single-character flip yields a valid checksum).
+function correctVinChecksum(vin: string): string | null {
+  const corrections: string[] = [];
+  for (let index = 0; index < vin.length; index += 1) {
+    const alt = VIN_OCR_CONFUSABLES[vin[index]];
+    if (!alt) continue;
+    const candidate = vin.slice(0, index) + alt + vin.slice(index + 1);
+    if (isValidVinChecksum(candidate)) {
+      corrections.push(candidate);
+    }
+  }
+  return corrections.length === 1 ? corrections[0] : null;
+}
+
 function extractCandidateVin(rawText: string) {
   const normalized = normalizeVinCandidate(rawText);
   if (normalized.length < 17) return "";
 
+  const candidates: string[] = [];
   for (let index = 0; index <= normalized.length - 17; index += 1) {
     const slice = normalized.slice(index, index + 17);
     if (/^[A-HJ-NPR-Z0-9]{17}$/.test(slice)) {
-      return slice;
+      candidates.push(slice);
     }
   }
 
-  return "";
+  if (!candidates.length) return "";
+
+  // Prefer a window whose check digit already validates; otherwise fall
+  // back to the first well-formed window, as before.
+  return candidates.find(isValidVinChecksum) ?? candidates[0];
 }
 
 export async function extractPhotoEvidenceText(
@@ -197,10 +256,30 @@ export async function extractVinFromImage(
       };
     }
 
+    if (isValidVinChecksum(vin)) {
+      return {
+        status: "completed",
+        vin,
+        rawText,
+      };
+    }
+
+    // The check digit doesn't match — see if flipping one commonly
+    // misread character (e.g. 8/B, 5/S) unambiguously fixes it.
+    const corrected = correctVinChecksum(vin);
+    if (corrected) {
+      return {
+        status: "completed",
+        vin: corrected,
+        rawText,
+      };
+    }
+
     return {
       status: "completed",
       vin,
       rawText,
+      warning: "This VIN's check digit doesn't match — double-check it against the plate before decoding.",
     };
   } catch (error) {
     return {
