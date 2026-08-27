@@ -61,6 +61,17 @@ import {
 } from "../services/outcomeVerification";
 import { ESTIMATE_SOURCES } from "@shared/tadis/roiImpact";
 import { isStaffAdminUser } from "../_core/trpc";
+import { isRepairShopFleet } from "../services/repairShop";
+import {
+  advanceShopTriage,
+  completeShopTriage,
+  createReturnJob,
+  FOLLOW_UP_RESULTS,
+  listFollowUpsForCase,
+  recordShopFollowUp,
+  recordShopRepairOutcome,
+  startShopRepair,
+} from "../services/repairShopWorkflow";
 
 const PAGE_DEFAULT = 25;
 const PAGE_MAX = 100;
@@ -106,6 +117,27 @@ async function gateCapability(
 // owner/manager. Deliberately NOT satisfiable by a bare capability grant —
 // correcting an already-verified technical fact is not an ordinary
 // technician action.
+// Repair-shop workflow gate (Phase 1): resolves the caller's fleet, requires
+// the maintenanceCases feature flag + capability grant (same as the other
+// shop-staff actions), AND requires the fleet actually be a repair shop
+// (fleets.isPartner) — so a non-repair-shop fleet with the maintenance
+// feature enabled cannot accidentally reach triage/follow-up/return-job
+// endpoints meant only for the repair-shop persona.
+async function gateRepairShop(
+  ctx: { user: { id: number; role: string; email?: string | null } },
+  requestedFleetId: number | null | undefined,
+  capability: MaintenanceCapability
+) {
+  const fleetId = await gateCapability(ctx, requestedFleetId, capability);
+  if (!(await isRepairShopFleet(fleetId))) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "This workflow is only available to repair-shop accounts.",
+    });
+  }
+  return fleetId;
+}
+
 async function gateReviseVerified(
   ctx: { user: { id: number; role: string; internalAdminRole?: string | null; email?: string | null } },
   requestedFleetId: number | null | undefined
@@ -144,14 +176,16 @@ export const maintenanceCasesRouter = router({
     .query(async ({ ctx, input }) => {
       const fleetId = await resolveActiveFleetId({ user: ctx.user, requestedFleetId: input.fleetId ?? null });
       await requireFleetFeature(fleetId, CAP.maintenanceCases);
-      const [caseRow, decisions, cycles, timeline, outcomes] = await Promise.all([
+      const [caseRow, decisions, cycles, timeline, outcomes, isRepairShop, followUps] = await Promise.all([
         getCaseForFleet(fleetId, input.caseId),
         listDecisions(fleetId, input.caseId),
         listCycles(fleetId, input.caseId),
         getCaseTimeline({ fleetId, caseId: input.caseId }),
         listOutcomesForCase(fleetId, input.caseId),
+        isRepairShopFleet(fleetId),
+        listFollowUpsForCase(fleetId, input.caseId),
       ]);
-      return { case: caseRow, decisions, cycles, timeline, outcomes };
+      return { case: caseRow, decisions, cycles, timeline, outcomes, isRepairShop, followUps };
     }),
 
   createManual: adminProcedure
@@ -697,6 +731,141 @@ export const maintenanceCasesRouter = router({
         eligibility: input.eligibility,
         reason: input.reason ?? null,
         actorUserId: ctx.user.id,
+      });
+    }),
+
+  // ---- Repair-shop workflow (Phase 1): adaptive diagnostic triage, repair
+  // outcome, manual 3-day follow-up, and linked return jobs. Gated to
+  // repair-shop fleets (fleets.isPartner) only — see gateRepairShop above. --
+
+  // Advance the adaptive triage loop by one turn. Call with no answer to run
+  // the very first turn against the complaint alone; call again with
+  // `answer` to submit the technician's response to the prior turn's
+  // nextDiagnosticStep and get the next one. Idempotent to resume: the full
+  // evidence trail is reconstructed from persisted decisions each time.
+  advanceTriage: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().optional(),
+        caseId: z.number(),
+        answer: z.string().trim().min(1).max(2000).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.submitTechnicianAssessment);
+      return advanceShopTriage({
+        fleetId,
+        caseId: input.caseId,
+        actorUserId: ctx.user.id,
+        answerToPreviousStep: input.answer,
+      });
+    }),
+
+  completeTriage: protectedProcedure
+    .input(z.object({ fleetId: z.number().optional(), caseId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.submitTechnicianAssessment);
+      return completeShopTriage({ fleetId, caseId: input.caseId, actorUserId: ctx.user.id });
+    }),
+
+  startRepair: protectedProcedure
+    .input(z.object({ fleetId: z.number().optional(), caseId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.updateRepairStatus);
+      return startShopRepair({ fleetId, caseId: input.caseId, actorUserId: ctx.user.id });
+    }),
+
+  // Single structured repair-outcome form (§12): actual fault found, root
+  // cause (or left unconfirmed), repair performed, parts replaced ([] =
+  // none), confirming test/measurement/evidence, and the shop's own
+  // confidence that the issue is resolved. Moves the case to
+  // awaiting_follow_up with a 3-day follow-up date.
+  recordRepairOutcome: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().optional(),
+        caseId: z.number(),
+        confirmedFault: z.string().min(1).max(4000),
+        rootCause: z.string().max(2000).optional(),
+        rootCauseConfirmed: z.boolean().optional(),
+        repairPerformed: z.string().min(1).max(4000),
+        partsReplaced: z.array(z.string().trim().min(1)).max(50).default([]),
+        verificationMethod: verificationMethodEnum,
+        verificationNotes: z.string().max(2000).optional(),
+        evidenceSource: evidenceSourceEnum.optional(),
+        shopConfidence: z.number().int().min(0).max(100),
+        repairNotes: z.string().max(4000).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.submitRepairOutcome);
+      return recordShopRepairOutcome({
+        fleetId,
+        caseId: input.caseId,
+        actorUserId: ctx.user.id,
+        confirmedFault: input.confirmedFault,
+        rootCause: input.rootCause,
+        rootCauseConfirmed: input.rootCauseConfirmed,
+        repairPerformed: input.repairPerformed,
+        partsReplaced: input.partsReplaced,
+        verificationMethod: input.verificationMethod as never,
+        verificationNotes: input.verificationNotes,
+        evidenceSource: input.evidenceSource as never,
+        shopConfidence: input.shopConfidence,
+        repairNotes: input.repairNotes,
+      });
+    }),
+
+  // Manual 3-day follow-up (§14): resolved / partially_resolved /
+  // not_resolved / returned + an optional note. Resolved closes the case;
+  // returned flags it for a linked return job (createReturnJob below).
+  recordFollowUp: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().optional(),
+        caseId: z.number(),
+        result: z.enum(FOLLOW_UP_RESULTS),
+        note: z.string().max(2000).optional(),
+        repairOutcomeId: z.number().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.submitRepairOutcome);
+      return recordShopFollowUp({
+        fleetId,
+        caseId: input.caseId,
+        actorUserId: ctx.user.id,
+        result: input.result,
+        note: input.note,
+        repairOutcomeId: input.repairOutcomeId,
+      });
+    }),
+
+  listFollowUps: protectedProcedure
+    .input(z.object({ fleetId: z.number().optional(), caseId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.viewAssignedCases);
+      return listFollowUpsForCase(fleetId, input.caseId);
+    }),
+
+  // Create a new, separately-tracked case for a returned problem, linked to
+  // the original via originalCaseId (§15). The original case's complaint,
+  // triage, outcome, and follow-up history are never modified.
+  createReturnJob: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().optional(),
+        originalCaseId: z.number(),
+        complaint: z.string().min(1).max(4000),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.createCase);
+      return createReturnJob({
+        fleetId,
+        originalCaseId: input.originalCaseId,
+        actorUserId: ctx.user.id,
+        complaint: input.complaint,
       });
     }),
 });

@@ -16,27 +16,37 @@ export const CASE_STATUSES = [
   "closed",
   "reopened",
   "cancelled",
+  // Repair-shop workflow (docs: repair-shop Phase 1). "awaiting_follow_up"
+  // sits after a repair outcome is recorded, before the manual 3-day
+  // follow-up call; "return_job" marks an original case that a follow-up
+  // call determined needs a new, separately-tracked return visit (see
+  // server/services/repairShopWorkflow.ts createReturnJob) without
+  // reopening or overwriting the original case's history.
+  "awaiting_follow_up",
+  "return_job",
 ] as const;
 
 export type CaseStatus = (typeof CASE_STATUSES)[number];
 
 // Terminal statuses cannot transition except via an explicit reopen.
-export const TERMINAL_STATUSES: CaseStatus[] = ["closed", "cancelled"];
+export const TERMINAL_STATUSES: CaseStatus[] = ["closed", "cancelled", "return_job"];
 
 // Explicit allowed transitions. Anything not listed is rejected. Reopen is a
 // dedicated action (owners/managers only) handled outside this map.
 const TRANSITIONS: Record<CaseStatus, CaseStatus[]> = {
   reported: ["triaging", "decision_pending", "monitoring", "cancelled"],
   triaging: ["decision_pending", "monitoring", "scheduled", "cancelled"],
-  decision_pending: ["monitoring", "scheduled", "out_of_service", "cancelled"],
+  decision_pending: ["monitoring", "scheduled", "out_of_service", "in_repair", "cancelled"],
   monitoring: ["decision_pending", "scheduled", "out_of_service", "closed", "cancelled"],
   scheduled: ["out_of_service", "in_repair", "monitoring", "cancelled"],
   out_of_service: ["in_repair", "awaiting_parts", "cancelled"],
-  in_repair: ["awaiting_parts", "ready_for_return", "out_of_service"],
+  in_repair: ["awaiting_parts", "ready_for_return", "out_of_service", "awaiting_follow_up"],
   awaiting_parts: ["in_repair", "ready_for_return", "out_of_service"],
   ready_for_return: ["completed", "in_repair"],
   completed: ["closed", "reopened"],
   closed: ["reopened"],
+  awaiting_follow_up: ["closed", "in_repair", "return_job"],
+  return_job: ["reopened"],
   reopened: ["triaging", "decision_pending", "scheduled", "out_of_service", "in_repair"],
   cancelled: ["reopened"],
 };
@@ -63,6 +73,7 @@ export const ACTIVE_CASE_STATUSES: CaseStatus[] = [
   "awaiting_parts",
   "ready_for_return",
   "reopened",
+  "awaiting_follow_up",
 ];
 
 // Normalized maintenance severity (distinct from diagnosis severity/confidence).
