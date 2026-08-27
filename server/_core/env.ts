@@ -60,6 +60,10 @@ export const ENV = {
   stripePriceProAnnual: readEnv("STRIPE_PRICE_PRO_ANNUAL"),
   stripePriceFleetMonthly: readEnv("STRIPE_PRICE_FLEET_MONTHLY"),
   enableStripeDiagnosticsEndpoint: readBooleanEnv("ENABLE_STRIPE_DIAGNOSTICS_ENDPOINT"),
+  // Structured (non-image) VIN OCR diagnostic logging — provider/model actually used, ROI
+  // dimensions/byte size, raw model response, parsed/normalized candidates, validation
+  // result. Never logs image data. Opt-in and off by default even outside production.
+  enableVinOcrDiagnostics: readBooleanEnv("ENABLE_VIN_OCR_DIAGNOSTICS"),
   adminEmails: readEnv("ADMIN_EMAILS"),
   salesNotificationEmail: readEnv("SALES_NOTIFICATION_EMAIL") || "info@truckfixr.com",
   appBaseUrl:
