@@ -176,6 +176,194 @@ describe("aiOrchestrator", () => {
     expect(result.orchestration?.estimatedCostUsd).toBeNull();
   });
 
+  describe("model-aware image capability (Groq VIN OCR)", () => {
+    const imageMessages = [
+      {
+        role: "user" as const,
+        content: [
+          { type: "text" as const, text: "Extract the VIN." },
+          { type: "image_url" as const, image_url: { url: "data:image/jpeg;base64,abc123" } },
+        ],
+      },
+    ];
+
+    it("sends image content to Groq's pinned vision model and reports it as the provider used", async () => {
+      const result = await invokeWithOrchestration(
+        {
+          feature: "ocr_vin",
+          preferredProvider: "groq",
+          model: "qwen/qwen3.6-27b",
+          fallbackProviders: ["openrouter", "openai"],
+          messages: imageMessages,
+          responseFormat: { type: "json_object" },
+        },
+        {
+          fetcher: async (url, init) => {
+            expect(String(url)).toContain("api.groq.com/openai/v1/chat/completions");
+            const body = JSON.parse(String(init?.body));
+            expect(body.model).toBe("qwen/qwen3.6-27b");
+            const imagePart = body.messages[0].content.find((part: { type: string }) => part.type === "image_url");
+            expect(imagePart.image_url.url).toBe("data:image/jpeg;base64,abc123");
+
+            return createJsonResponse({
+              id: "groq-vin-response",
+              created: 123456,
+              model: "qwen/qwen3.6-27b",
+              choices: [
+                {
+                  index: 0,
+                  message: { role: "assistant", content: '{"vinCandidate":"1M1AW07Y7FM010001","rawText":"1M1AW07Y7FM010001"}' },
+                  finish_reason: "stop",
+                },
+              ],
+              usage: { prompt_tokens: 300, completion_tokens: 20, total_tokens: 320 },
+            });
+          },
+        }
+      );
+
+      expect(result.orchestration?.provider).toBe("groq");
+      expect(result.orchestration?.attempts).toHaveLength(1);
+      expect(result.orchestration?.attempts[0]?.success).toBe(true);
+    });
+
+    it("rejects Groq's default text-only model for image content and does not call it", async () => {
+      let groqCalled = false;
+
+      const result = await invokeWithOrchestration(
+        {
+          feature: "ocr_vin",
+          preferredProvider: "groq",
+          // No model override — falls back to ENV.groqModel ("qwen/qwen3-32b" in this suite's
+          // beforeEach), a text-only model that must NOT be treated as image-capable.
+          fallbackProviders: [],
+          messages: imageMessages,
+          responseFormat: { type: "json_object" },
+        },
+        {
+          fetcher: async () => {
+            groqCalled = true;
+            throw new Error("should not be called for a text-only model with image content");
+          },
+        }
+      );
+
+      expect(groqCalled).toBe(false);
+      expect(result.orchestration?.attempts).toEqual([
+        expect.objectContaining({ provider: "groq", success: false, reason: "image_inputs_not_supported" }),
+      ]);
+    });
+
+    it("treats a Groq rate limit (429) as a provider failure and falls through to the next eligible provider", async () => {
+      const result = await invokeWithOrchestration(
+        {
+          feature: "ocr_vin",
+          preferredProvider: "groq",
+          model: "qwen/qwen3.6-27b",
+          fallbackProviders: ["openrouter", "openai"],
+          messages: imageMessages,
+          responseFormat: { type: "json_object" },
+        },
+        {
+          fetcher: async (url) => {
+            if (String(url).includes("api.groq.com")) {
+              return createJsonResponse({ error: { message: "Rate limit exceeded" } }, { status: 429, statusText: "Too Many Requests" });
+            }
+            // OpenRouter has no OPENROUTER_VISION_MODEL configured in this test, so it's
+            // skipped structurally (image_inputs_not_supported) without a network call —
+            // only OpenAI should actually be reached here.
+            expect(String(url)).toContain("api.openai.com/v1/chat/completions");
+            return createJsonResponse({
+              id: "openai-vin-response",
+              created: 123456,
+              model: "gpt-4.1-mini",
+              choices: [
+                {
+                  index: 0,
+                  message: { role: "assistant", content: '{"vinCandidate":"1M1AW07Y7FM010001","rawText":"1M1AW07Y7FM010001"}' },
+                  finish_reason: "stop",
+                },
+              ],
+              usage: { prompt_tokens: 300, completion_tokens: 20, total_tokens: 320 },
+            });
+          },
+        }
+      );
+
+      expect(result.orchestration?.provider).toBe("openai");
+      const groqAttempt = result.orchestration?.attempts.find((a) => a.provider === "groq");
+      expect(groqAttempt?.success).toBe(false);
+      expect(groqAttempt?.reason).toContain("429");
+      const openrouterAttempt = result.orchestration?.attempts.find((a) => a.provider === "openrouter");
+      expect(openrouterAttempt).toEqual(expect.objectContaining({ success: false, reason: "image_inputs_not_supported" }));
+    });
+
+    it("skips Groq when GROQ_API_KEY is not configured and attempts the next eligible provider", async () => {
+      ENV.groqApiKey = "";
+
+      const result = await invokeWithOrchestration(
+        {
+          feature: "ocr_vin",
+          preferredProvider: "groq",
+          model: "qwen/qwen3.6-27b",
+          fallbackProviders: ["openrouter", "openai"],
+          messages: imageMessages,
+          responseFormat: { type: "json_object" },
+        },
+        {
+          fetcher: async (url) => {
+            expect(String(url)).toContain("api.openai.com/v1/chat/completions");
+            return createJsonResponse({
+              id: "openai-vin-response",
+              created: 123456,
+              model: "gpt-4.1-mini",
+              choices: [
+                {
+                  index: 0,
+                  message: { role: "assistant", content: '{"vinCandidate":"1M1AW07Y7FM010001","rawText":"1M1AW07Y7FM010001"}' },
+                  finish_reason: "stop",
+                },
+              ],
+              usage: { prompt_tokens: 300, completion_tokens: 20, total_tokens: 320 },
+            });
+          },
+        }
+      );
+
+      const groqAttempt = result.orchestration?.attempts.find((a) => a.provider === "groq");
+      expect(groqAttempt).toEqual(expect.objectContaining({ success: false, reason: "provider_not_configured" }));
+      expect(result.orchestration?.provider).toBe("openai");
+    });
+
+    it("returns OCR_PROVIDER_UNAVAILABLE-eligible synthetic fallback (zero successes) when every eligible provider fails", async () => {
+      const result = await invokeWithOrchestration(
+        {
+          feature: "ocr_vin",
+          preferredProvider: "groq",
+          model: "qwen/qwen3.6-27b",
+          fallbackProviders: ["openrouter", "openai"],
+          messages: imageMessages,
+          responseFormat: { type: "json_object" },
+        },
+        {
+          fetcher: async (url) => {
+            if (String(url).includes("api.groq.com")) {
+              return createJsonResponse({ error: { message: "Rate limit exceeded" } }, { status: 429, statusText: "Too Many Requests" });
+            }
+            return createJsonResponse({ error: { message: "quota exceeded" } }, { status: 429, statusText: "Too Many Requests" });
+          },
+        }
+      );
+
+      expect(result.orchestration?.attempts.some((a) => a.success)).toBe(false);
+      expect(JSON.parse(result.choices[0]?.message.content as string)).toEqual({
+        status: "unavailable",
+        feature: "ocr_vin",
+        reason: "provider_unavailable",
+      });
+    });
+  });
+
   it("routes to the preferred provider and tracks usage, latency, and cost", async () => {
     const result = await invokeWithOrchestration(
       {

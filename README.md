@@ -168,6 +168,9 @@ Optional backend env vars:
 - `ADMIN_COMPARISON_MODEL`
 - `GROQ_API_KEY`
 - `GROQ_MODEL`
+- `GROQ_VISION_MODEL` — VIN OCR only (`server/services/ocr.ts`); separate from `GROQ_MODEL` so it never affects other Groq-backed features. Defaults to `qwen/qwen3.6-27b`, Groq's free-tier Qwen vision preview model. Free-tier availability/rate limits are an external Groq constraint, not a guarantee.
+- `OPENROUTER_VISION_MODEL` — optional; pins a specific OpenRouter multimodal model to enable it as a VIN OCR fallback (OpenRouter is otherwise treated as image-incapable, since a configured OpenRouter model may or may not support vision).
+- `ENABLE_VIN_OCR_DIAGNOSTICS` — opt-in, non-image structured logging for VIN OCR calls (provider/model used, ROI dimensions, raw model response, parsed candidate). Never logs image data.
 - `ANTHROPIC_API_KEY`
 - `ANTHROPIC_MODEL`
 - `DIAGNOSTIC_CONFIDENCE_THRESHOLD`
