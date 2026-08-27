@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ENV } from "../_core/env";
 import { extractPhotoEvidenceText, extractVinFromImage } from "./ocr";
 
 describe("OCR fallback handling", () => {
@@ -257,4 +258,155 @@ describe("VIN OCR failure taxonomy", () => {
     expect(result.code).toBe("OCR_INVALID_PROVIDER_RESPONSE");
   });
 
+});
+
+describe("Groq as primary VIN OCR provider", () => {
+  it("requests Groq (with the dedicated vision model) as preferred provider, with OpenRouter/OpenAI as fallbacks", async () => {
+    let capturedInput: { preferredProvider?: string; model?: string; fallbackProviders?: string[] } = {};
+
+    await extractVinFromImage({
+      imageDataUrl: "data:image/png;base64,abc123",
+      invoke: async (input) => {
+        capturedInput = input as typeof capturedInput;
+        return {
+          orchestration: {
+            provider: "groq",
+            model: input.model ?? "",
+            latencyMs: 500,
+            estimatedCostUsd: 0,
+            attempts: [{ provider: "groq", model: input.model ?? "", latencyMs: 500, success: true }],
+          },
+          choices: [
+            { message: { content: JSON.stringify({ vinCandidate: "1M1AW07Y7FM010001", rawText: "1M1AW07Y7FM010001" }) } },
+          ],
+        };
+      },
+    });
+
+    expect(capturedInput.preferredProvider).toBe("groq");
+    expect(capturedInput.model).toBe(ENV.groqVisionModel);
+    expect(capturedInput.fallbackProviders).toEqual(["openrouter", "openai"]);
+  });
+
+  it("Groq success: extracts the VIN with no fallback provider needed", async () => {
+    const result = await extractVinFromImage({
+      imageDataUrl: "data:image/png;base64,abc123",
+      invoke: async () => ({
+        orchestration: {
+          provider: "groq",
+          model: "qwen/qwen3.6-27b",
+          latencyMs: 500,
+          estimatedCostUsd: 0,
+          attempts: [{ provider: "groq", model: "qwen/qwen3.6-27b", latencyMs: 500, success: true }],
+        },
+        choices: [
+          { message: { content: JSON.stringify({ vinCandidate: "1M1AW07Y7FM010001", rawText: "1M1AW07Y7FM010001" }) } },
+        ],
+      }),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.vin).toBe("1M1AW07Y7FM010001");
+  });
+
+  it("Groq rawText recovery: recovers the VIN when Groq's vinCandidate is malformed", async () => {
+    const result = await extractVinFromImage({
+      imageDataUrl: "data:image/png;base64,abc123",
+      invoke: async () => ({
+        orchestration: {
+          provider: "groq",
+          model: "qwen/qwen3.6-27b",
+          latencyMs: 500,
+          estimatedCostUsd: 0,
+          attempts: [{ provider: "groq", model: "qwen/qwen3.6-27b", latencyMs: 500, success: true }],
+        },
+        choices: [
+          { message: { content: JSON.stringify({ vinCandidate: "", rawText: "1M1AW07Y7FM010001" }) } },
+        ],
+      }),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.vin).toBe("1M1AW07Y7FM010001");
+  });
+
+  it("Groq rate limit: a 429 with a successful fallback still completes (not OCR_NO_VIN_FOUND)", async () => {
+    const result = await extractVinFromImage({
+      imageDataUrl: "data:image/png;base64,abc123",
+      invoke: async () => ({
+        orchestration: {
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          latencyMs: 900,
+          estimatedCostUsd: 0.001,
+          attempts: [
+            { provider: "groq", model: "qwen/qwen3.6-27b", latencyMs: 100, success: false, reason: "Groq request failed (429 Too Many Requests): Rate limit exceeded" },
+            { provider: "openrouter", model: "deepseek/deepseek-v4-flash", latencyMs: 0, success: false, reason: "image_inputs_not_supported" },
+            { provider: "openai", model: "gpt-4.1-mini", latencyMs: 900, success: true },
+          ],
+        },
+        choices: [
+          { message: { content: JSON.stringify({ vinCandidate: "1M1AW07Y7FM010001", rawText: "1M1AW07Y7FM010001" }) } },
+        ],
+      }),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.vin).toBe("1M1AW07Y7FM010001");
+  });
+
+  it("Groq rate limit: total outage (Groq 429, no fallback succeeds) is OCR_PROVIDER_UNAVAILABLE, not OCR_NO_VIN_FOUND", async () => {
+    const result = await extractVinFromImage({
+      imageDataUrl: "data:image/png;base64,abc123",
+      invoke: async () => ({
+        orchestration: {
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          latencyMs: 900,
+          estimatedCostUsd: null,
+          attempts: [
+            { provider: "groq", model: "qwen/qwen3.6-27b", latencyMs: 100, success: false, reason: "Groq request failed (429 Too Many Requests): Rate limit exceeded" },
+            { provider: "openrouter", model: "deepseek/deepseek-v4-flash", latencyMs: 0, success: false, reason: "image_inputs_not_supported" },
+            { provider: "openai", model: "gpt-4.1-mini", latencyMs: 900, success: false, reason: "OpenAI request failed (429 Too Many Requests): quota exceeded" },
+          ],
+        },
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({ status: "unavailable", feature: "ocr_vin", reason: "provider_unavailable" }),
+            },
+          },
+        ],
+      }),
+    });
+
+    expect(result.status).toBe("fallback");
+    expect(result.code).toBe("OCR_PROVIDER_UNAVAILABLE");
+    expect(result.warning).not.toContain("Could not confidently extract");
+  });
+
+  it("Groq unavailable (no API key): the next eligible provider is attempted and still completes", async () => {
+    const result = await extractVinFromImage({
+      imageDataUrl: "data:image/png;base64,abc123",
+      invoke: async () => ({
+        orchestration: {
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          latencyMs: 900,
+          estimatedCostUsd: 0.001,
+          attempts: [
+            { provider: "groq", model: "qwen/qwen3.6-27b", latencyMs: 0, success: false, reason: "provider_not_configured" },
+            { provider: "openrouter", model: "deepseek/deepseek-v4-flash", latencyMs: 0, success: false, reason: "image_inputs_not_supported" },
+            { provider: "openai", model: "gpt-4.1-mini", latencyMs: 900, success: true },
+          ],
+        },
+        choices: [
+          { message: { content: JSON.stringify({ vinCandidate: "1M1AW07Y7FM010001", rawText: "1M1AW07Y7FM010001" }) } },
+        ],
+      }),
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.vin).toBe("1M1AW07Y7FM010001");
+  });
 });

@@ -86,6 +86,13 @@ export const ENV = {
   openRouterFallbackModel: readEnv("OPENROUTER_FALLBACK_MODEL"),
   groqApiKey: readEnv("GROQ_API_KEY"),
   groqModel: readEnv("GROQ_MODEL"),
+  // Kept separate from GROQ_MODEL (used by unrelated text-only diagnosis/classification
+  // features) so switching the VIN OCR vision model never changes those features' behavior.
+  // Defaults to Groq's Qwen3.6-27B preview vision model.
+  groqVisionModel: readEnv("GROQ_VISION_MODEL") || "qwen/qwen3.6-27b",
+  // Unset by default: OpenRouter is only treated as image-capable once a specific
+  // multimodal model is pinned here — see server/services/aiOrchestrator.ts isImageCapableModel.
+  openRouterVisionModel: readEnv("OPENROUTER_VISION_MODEL"),
   anthropicApiKey: readEnv("ANTHROPIC_API_KEY"),
   anthropicModel: readEnv("ANTHROPIC_MODEL"),
   geminiApiKey: readEnv("GEMINI_API_KEY"),

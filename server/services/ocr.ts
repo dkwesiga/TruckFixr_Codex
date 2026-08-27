@@ -187,8 +187,15 @@ export async function extractVinFromImage(
   try {
     const result = await invoke({
       feature: "ocr_vin",
-      preferredProvider: "openrouter",
-      fallbackProviders: ["openai", "gemini"],
+      // Groq's Qwen3.6-27B is the primary VIN OCR vision model (free tier, during pilot).
+      // GROQ_VISION_MODEL is deliberately separate from GROQ_MODEL (the text-only model used
+      // by unrelated diagnosis/classification features) so this never changes their behavior.
+      // OpenRouter only becomes eligible once OPENROUTER_VISION_MODEL pins a real multimodal
+      // model (see aiOrchestrator.ts isImageCapableModel) — until then it's a harmless no-op
+      // in the chain. OpenAI remains the last real fallback.
+      preferredProvider: "groq",
+      model: ENV.groqVisionModel,
+      fallbackProviders: ["openrouter", "openai"],
       timeoutMs: input.timeoutMs ?? 12_000,
       maxTokens: 200,
       responseFormat: { type: "json_object" },

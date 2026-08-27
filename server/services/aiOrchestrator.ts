@@ -161,7 +161,6 @@ type FetchLike = typeof fetch;
 type ProviderConfig = {
   key: string;
   model: string;
-  supportsImages: boolean;
   supportsTools: boolean;
   supportsJsonSchema: boolean;
 };
@@ -258,7 +257,6 @@ function resolveProviderConfig(provider: AiProvider): ProviderConfig {
       return {
         key: ENV.openAiApiKey,
         model: ENV.openAiModel || DEFAULT_MODELS.openai,
-        supportsImages: true,
         supportsTools: true,
         supportsJsonSchema: true,
       };
@@ -266,7 +264,6 @@ function resolveProviderConfig(provider: AiProvider): ProviderConfig {
       return {
         key: ENV.anthropicApiKey,
         model: ENV.anthropicModel || DEFAULT_MODELS.anthropic,
-        supportsImages: false,
         supportsTools: false,
         supportsJsonSchema: false,
       };
@@ -274,7 +271,6 @@ function resolveProviderConfig(provider: AiProvider): ProviderConfig {
       return {
         key: ENV.geminiApiKey,
         model: ENV.geminiModel || DEFAULT_MODELS.gemini,
-        supportsImages: false,
         supportsTools: false,
         supportsJsonSchema: false,
       };
@@ -282,7 +278,6 @@ function resolveProviderConfig(provider: AiProvider): ProviderConfig {
       return {
         key: ENV.openRouterApiKey,
         model: ENV.openRouterModel || DEFAULT_MODELS.openrouter,
-        supportsImages: false,
         supportsTools: false,
         supportsJsonSchema: false,
       };
@@ -290,12 +285,33 @@ function resolveProviderConfig(provider: AiProvider): ProviderConfig {
       return {
         key: ENV.groqApiKey,
         model: ENV.groqModel || DEFAULT_MODELS.groq,
-        supportsImages: false,
         supportsTools: false,
         supportsJsonSchema: false,
       };
   }
 }
+
+// Image support is model-aware, not merely provider-wide: a provider can serve both
+// vision-capable and text-only models, and defaulting an entire provider to "supports
+// images" (as OpenAI effectively was) or "never supports images" (as Groq/OpenRouter/Gemini
+// were) is either unsafe or needlessly blocks a genuinely multimodal model becoming available.
+// OpenAI's default/configured model is trusted as vision-capable unchanged from prior
+// behavior — this ticket scopes the model-aware fix to Groq (and, once pinned via
+// OPENROUTER_VISION_MODEL, OpenRouter) without touching other features' provider routing.
+function isImageCapableModel(provider: AiProvider, model: string): boolean {
+  switch (provider) {
+    case "openai":
+      return true;
+    case "groq":
+      return model === ENV.groqVisionModel;
+    case "openrouter":
+      return Boolean(ENV.openRouterVisionModel) && model === ENV.openRouterVisionModel;
+    case "anthropic":
+    case "gemini":
+      return false;
+  }
+}
+
 
 function getProviderOrder(input: OrchestratorInput) {
   const configuredProviders = getEnabledProviders();
@@ -910,7 +926,7 @@ async function invokeGemini(
   };
 }
 
-function validateProviderCompatibility(provider: AiProvider, input: OrchestratorInput) {
+function validateProviderCompatibility(provider: AiProvider, input: OrchestratorInput, effectiveModel: string) {
   const config = resolveProviderConfig(provider);
 
   if (!config.key) {
@@ -921,7 +937,7 @@ function validateProviderCompatibility(provider: AiProvider, input: Orchestrator
     return "file_inputs_not_supported";
   }
 
-  if (hasImageContent(input.messages) && !config.supportsImages) {
+  if (hasImageContent(input.messages) && !isImageCapableModel(provider, effectiveModel)) {
     return "image_inputs_not_supported";
   }
 
@@ -1132,13 +1148,13 @@ export async function invokeWithOrchestration(
   const primaryModel = resolveProviderConfig(primaryProvider).model;
 
   for (const provider of providers) {
-    const incompatibility = validateProviderCompatibility(provider, input);
     const config = resolveProviderConfig(provider);
     const providerSpecificInput =
       input.model && input.preferredProvider && provider !== input.preferredProvider
         ? { ...input, model: undefined }
         : input;
     const model = providerSpecificInput.model || config.model;
+    const incompatibility = validateProviderCompatibility(provider, input, model);
 
     if (incompatibility) {
       const skippedAttempt: ProviderAttempt = {
