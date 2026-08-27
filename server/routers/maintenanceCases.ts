@@ -798,7 +798,23 @@ export const maintenanceCasesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // This single form both reports AND verifies the outcome in one call
+      // (Phase 1 has one shop user) — verifying is the one capability the
+      // existing outcome lifecycle deliberately reserves for a Technician
+      // grant (see verifyOutcome above), so require it here too rather than
+      // letting a bare submitRepairOutcome grant silently gain it.
       const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.submitRepairOutcome);
+      const canVerify = await hasMaintenanceCapability({
+        fleetId,
+        user: ctx.user,
+        capability: MAINTENANCE_CAPABILITIES.verifyOutcome,
+      });
+      if (!canVerify) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Recording a repair outcome also verifies it — this requires the Technician verify-outcome capability.",
+        });
+      }
       return recordShopRepairOutcome({
         fleetId,
         caseId: input.caseId,

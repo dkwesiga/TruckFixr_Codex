@@ -196,6 +196,47 @@ describe("advanceShopTriage", () => {
       { type: "test", instruction: "Check connector", response: "Corrosion found on pin 3", recordedAt: expect.any(String) },
     ]);
   });
+
+  it("passes fault codes captured at intake through to the triage prompt", async () => {
+    caseStore[1].status = "triaging";
+    decisionsMock.listDecisions.mockResolvedValueOnce([
+      {
+        id: 1,
+        version: 1,
+        source: "manual",
+        createdAt: new Date(),
+        nextDiagnosticStepJson: null,
+        evidenceJson: { faultCodes: ["P0562", "P0107"] },
+      },
+    ]);
+    await advanceShopTriage({ fleetId: FLEET, caseId: 1, actorUserId: 9 });
+    const triageArg = triageMock.runShopTriageStep.mock.calls[0][0];
+    expect(triageArg.faultCodes).toEqual(["P0562", "P0107"]);
+  });
+
+  it("stops calling the AI once the diagnostic turn cap is reached", async () => {
+    caseStore[1].status = "triaging";
+    const manyAiTurns = Array.from({ length: 12 }, (_, i) => ({
+      id: i + 1,
+      version: i + 1,
+      source: "ai",
+      createdAt: new Date(),
+      severity: "attention",
+      confidence: 40,
+      likelyCausesJson: [],
+      immediateChecksJson: [],
+      evidenceSummary: "thin",
+      safetySummary: "none",
+      nextDiagnosticStepJson: { type: "test", instruction: "x", reason: "y" },
+      evidenceJson: null,
+    }));
+    decisionsMock.listDecisions.mockResolvedValueOnce(manyAiTurns);
+    await advanceShopTriage({ fleetId: FLEET, caseId: 1, actorUserId: 9 });
+    expect(triageMock.runShopTriageStep).not.toHaveBeenCalled();
+    const call = decisionsMock.addDecision.mock.calls[0][0];
+    expect(call.confidenceStatus).toBe("insufficient");
+    expect(call.nextDiagnosticStep).toBeNull();
+  });
 });
 
 describe("completeShopTriage", () => {

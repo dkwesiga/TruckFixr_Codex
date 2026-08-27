@@ -523,7 +523,7 @@ function MaintenanceCaseDetailContent() {
             </CardContent>
           </Card>
 
-          {(status === "closed" || status === "completed" || status === "cancelled") ? (
+          {(status === "closed" || status === "completed" || status === "cancelled" || status === "return_job") ? (
             <Card>
               <CardHeader><CardTitle className="text-base">Reopen</CardTitle></CardHeader>
               <CardContent className="space-y-2">

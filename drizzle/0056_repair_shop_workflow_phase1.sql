@@ -51,3 +51,18 @@ CREATE TABLE IF NOT EXISTS "repairFollowUps" (
 
 CREATE INDEX IF NOT EXISTS "repairFollowUps_case_idx" ON "repairFollowUps" ("maintenanceCaseId");
 CREATE INDEX IF NOT EXISTS "repairFollowUps_fleet_idx" ON "repairFollowUps" ("fleetId");
+
+-- Lock it down like every other tenant-scoped maintenance table (see
+-- 0055_password_reset_tokens_rls.sql for the same pattern): RLS on, access
+-- via the service-role connection only. Follow-up notes are tenant-private
+-- customer-outcome data and must never be client-readable directly.
+ALTER TABLE "repairFollowUps" ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+  IF to_regrole('service_role') IS NOT NULL THEN
+    DROP POLICY IF EXISTS "repairFollowUps_service_role_full_access" ON "repairFollowUps";
+    CREATE POLICY "repairFollowUps_service_role_full_access" ON "repairFollowUps"
+      FOR ALL TO service_role USING (true) WITH CHECK (true);
+  END IF;
+END $$;

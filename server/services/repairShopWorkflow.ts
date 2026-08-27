@@ -21,7 +21,9 @@ import { reportOutcome, verifyOutcome } from "./outcomeVerification";
 import type { VerificationMethod, EvidenceSource } from "@shared/tadis/outcomeLifecycle";
 import {
   runShopTriageStep,
+  SHOP_TRIAGE_STEP_CAP,
   type ShopEvidenceEntry,
+  type ShopTriageResult,
 } from "./shopTriageWorkflow";
 import { logMaintenanceActivity } from "./maintenanceActivityLog";
 
@@ -54,6 +56,24 @@ async function vehicleLabelFor(fleetId: number, vehicleId: string): Promise<{ la
 // Reconstruct the diagnostic evidence trail from the append-only decision
 // versions recorded so far (oldest first), so a resumed session has the full
 // history without a separate evidence table.
+// Fault codes captured at intake (shopCaseCapture.ts's initial "intake
+// logged" decision stores them as evidenceJson.faultCodes, distinct from the
+// {type, instruction, response} shape the triage loop itself writes) are a
+// primary diagnostic input and must reach the triage prompt/evidence-ceiling
+// calculation, not just sit unread in the decision history.
+function faultCodesFromDecisions(decisions: Awaited<ReturnType<typeof listDecisions>>): string[] {
+  const codes = new Set<string>();
+  for (const d of decisions) {
+    const evidence = d.evidenceJson as { faultCodes?: unknown } | null;
+    if (Array.isArray(evidence?.faultCodes)) {
+      for (const code of evidence.faultCodes) {
+        if (typeof code === "string" && code.trim()) codes.add(code.trim());
+      }
+    }
+  }
+  return Array.from(codes);
+}
+
 function evidenceTrailFromDecisions(decisions: Awaited<ReturnType<typeof listDecisions>>): ShopEvidenceEntry[] {
   const trail: ShopEvidenceEntry[] = [];
   // Each decision's evidenceJson (when present) already carries the
@@ -123,12 +143,40 @@ export async function advanceShopTriage(input: {
   }
 
   const { label, mileage } = await vehicleLabelFor(input.fleetId, current.vehicleId);
-  const result = await runShopTriageStep({
-    complaint: current.summary ?? current.title ?? "",
-    vehicleLabel: label,
-    mileage,
-    evidence,
-  });
+  const faultCodes = faultCodesFromDecisions(priorDecisions);
+  const priorAiTurns = priorDecisions.filter((d) => d.source === "ai").length;
+
+  // Hard backstop (spec §8): once the turn cap is hit, stop calling the AI
+  // and force the loop to a stop rather than asking forever. Uses the latest
+  // known confidence rather than resetting to 0 — this is "we stopped
+  // trying," not "we learned nothing."
+  const result: ShopTriageResult =
+    priorAiTurns >= SHOP_TRIAGE_STEP_CAP
+      ? {
+          urgency: (latest?.severity as ShopTriageResult["severity"]) ?? "attention",
+          safetySummary:
+            (latest?.safetySummary as string | null) ??
+            "Diagnostic turn limit reached; use technician judgment.",
+          confidence: latest?.confidence ?? 0,
+          confidenceStatus: "insufficient",
+          likelyCauses: (latest?.likelyCausesJson as ShopTriageResult["likelyCauses"]) ?? [],
+          nextDiagnosticStep: null,
+          evidenceSummary:
+            (latest?.evidenceSummary as string | null) ??
+            "Diagnostic turn limit reached before confidence cleared the target.",
+          remainingVerification: (latest?.immediateChecksJson as string[] | null) ?? [],
+          diagnosticRationale:
+            `Reached the ${SHOP_TRIAGE_STEP_CAP}-turn diagnostic limit without reaching >85% confidence. ` +
+            "Insufficient evidence to reach further confidence through this adaptive loop — use technician judgment to proceed.",
+          severity: (latest?.severity as ShopTriageResult["severity"]) ?? "attention",
+        }
+      : await runShopTriageStep({
+          complaint: current.summary ?? current.title ?? "",
+          vehicleLabel: label,
+          mileage,
+          faultCodes,
+          evidence,
+        });
 
   if (current.status === "reported") {
     await transitionCaseStatus({
