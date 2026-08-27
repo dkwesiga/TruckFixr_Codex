@@ -98,6 +98,15 @@ function PartnerKnowledgeStudioInner() {
 
   function submit(outcomeId: number) {
     if (!fleetId) return;
+    const missing: string[] = [];
+    if (!form.codeSystem.trim()) missing.push("Code system");
+    if (!form.code.trim()) missing.push("Fault code");
+    if (!form.category.trim()) missing.push("Category");
+    if (!form.title.trim()) missing.push("Reference title");
+    if (missing.length > 0) {
+      toast.error(`Fill in required field${missing.length > 1 ? "s" : ""}: ${missing.join(", ")}.`);
+      return;
+    }
     promote.mutate({
       fleetId,
       outcomeId,
@@ -229,7 +238,7 @@ function PartnerKnowledgeStudioInner() {
                     <div className="space-y-4 rounded-lg border bg-muted/30 p-4">
                       <div className="grid gap-4 sm:grid-cols-2">
                         <div className="space-y-1.5">
-                          <Label htmlFor={`code-system-${outcome.id}`}>Code system</Label>
+                          <Label htmlFor={`code-system-${outcome.id}`}>Code system *</Label>
                           <Input
                             id={`code-system-${outcome.id}`}
                             value={form.codeSystem}
@@ -240,7 +249,7 @@ function PartnerKnowledgeStudioInner() {
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <Label htmlFor={`code-${outcome.id}`}>Fault code</Label>
+                          <Label htmlFor={`code-${outcome.id}`}>Fault code *</Label>
                           <Input
                             id={`code-${outcome.id}`}
                             value={form.code}
@@ -251,7 +260,7 @@ function PartnerKnowledgeStudioInner() {
                           />
                         </div>
                         <div className="space-y-1.5">
-                          <Label htmlFor={`category-${outcome.id}`}>Category</Label>
+                          <Label htmlFor={`category-${outcome.id}`}>Category *</Label>
                           <Input
                             id={`category-${outcome.id}`}
                             value={form.category}
@@ -282,7 +291,7 @@ function PartnerKnowledgeStudioInner() {
                       </div>
 
                       <div className="space-y-1.5">
-                        <Label htmlFor={`title-${outcome.id}`}>Reference title</Label>
+                        <Label htmlFor={`title-${outcome.id}`}>Reference title *</Label>
                         <Input
                           id={`title-${outcome.id}`}
                           value={form.title}

@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronUp,
   Loader2,
+  Save,
   ScanLine,
   Wrench,
 } from "lucide-react";
@@ -79,6 +80,14 @@ function ShopCaseCaptureInner() {
   const [showMore, setShowMore] = useState(false);
   const [symptomsText, setSymptomsText] = useState("");
   const [faultCodesText, setFaultCodesText] = useState("");
+  const [draftCaseId, setDraftCaseId] = useState<number | null>(null);
+
+  const utils = trpc.useUtils();
+  const draftsQuery = trpc.maintenanceCases.listDraftCases.useQuery(
+    { fleetId },
+    { enabled: Boolean(fleetId) }
+  );
+  const drafts = (draftsQuery.data ?? []).filter((d: any) => d.id !== draftCaseId);
 
   const createCase = trpc.maintenanceCases.createShopCase.useMutation({
     onSuccess: (result) => {
@@ -89,6 +98,51 @@ function ShopCaseCaptureInner() {
     },
     onError: (error) => toast.error(error.message),
   });
+
+  const saveDraft = trpc.maintenanceCases.saveDraftCase.useMutation({
+    onSuccess: async (result) => {
+      setDraftCaseId(result.id);
+      toast.success("Draft saved. You can come back to finish this case anytime.");
+      if (fleetId) await utils.maintenanceCases.listDraftCases.invalidate({ fleetId });
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  function resumeDraft(d: any) {
+    setDraftCaseId(d.id);
+    setCaseType(d.caseType || "diagnostic_troubleshooting");
+    setComplaint(d.summary || "");
+    setSelectedVehicleId(String(d.vehicleId));
+    toast.success("Draft loaded — pick up where you left off.");
+  }
+
+  function saveDraftCase() {
+    if (!fleetId) return;
+    const usingExistingVehicle = selectedVehicleId !== NEW_VEHICLE_VALUE;
+    if (!usingExistingVehicle && !vehicle.vin && !vehicle.unitNumber) {
+      toast.error("Enter at least a VIN or unit number before saving a draft.");
+      return;
+    }
+    saveDraft.mutate({
+      fleetId,
+      draftCaseId: draftCaseId ?? undefined,
+      caseType: caseType as never,
+      complaint: complaint || undefined,
+      ...(usingExistingVehicle
+        ? { vehicleId: selectedVehicleId }
+        : {
+            vehicle: {
+              vin: vehicle.vin ? normalizeVinInput(vehicle.vin) : undefined,
+              unitNumber: vehicle.unitNumber || undefined,
+              make: vehicle.make || undefined,
+              model: vehicle.model || undefined,
+              year: vehicle.year ? Number(vehicle.year) : undefined,
+              engineMake: vehicle.engineMake || undefined,
+              vinSource: vehicle.vinSource,
+            },
+          }),
+    });
+  }
 
   async function handleDecode() {
     const normalized = normalizeVinInput(vehicle.vin);
@@ -128,6 +182,7 @@ function ShopCaseCaptureInner() {
       complaint,
       symptoms: symptomsText.split("\n").map((s) => s.trim()).filter(Boolean),
       faultCodes: faultCodesText.split(/[,\n]/).map((s) => s.trim()).filter(Boolean),
+      draftCaseId: draftCaseId ?? undefined,
       ...(usingExistingVehicle
         ? { vehicleId: selectedVehicleId }
         : {
@@ -178,6 +233,29 @@ function ShopCaseCaptureInner() {
       </header>
 
       <main className="mx-auto max-w-2xl space-y-4 px-4 py-6">
+        {drafts.length > 0 ? (
+          <Card className="border-amber-200 bg-amber-50/60">
+            <CardContent className="space-y-2 py-4 text-sm">
+              <p className="font-medium text-amber-900">
+                {drafts.length === 1 ? "You have a saved draft case." : `You have ${drafts.length} saved draft cases.`}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {drafts.map((d: any) => (
+                  <Button
+                    key={d.id}
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => resumeDraft(d)}
+                  >
+                    Resume {d.reference}
+                  </Button>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
+
         {/* Step 1: vehicle, VIN-first */}
         <Card>
           <CardHeader className="pb-3">
@@ -303,16 +381,37 @@ function ShopCaseCaptureInner() {
           </Card>
         ) : null}
 
-        <Button className="w-full" disabled={createCase.isPending || !complaint.trim()} onClick={submit}>
-          {createCase.isPending ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <CheckCircle2 className="mr-2 h-4 w-4" />
-          )}
-          Create case
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="flex-1"
+            disabled={saveDraft.isPending || createCase.isPending}
+            onClick={saveDraftCase}
+          >
+            {saveDraft.isPending ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Save className="mr-2 h-4 w-4" />
+            )}
+            Save case
+          </Button>
+          <Button
+            className="flex-1"
+            disabled={createCase.isPending || saveDraft.isPending || !complaint.trim()}
+            onClick={submit}
+          >
+            {createCase.isPending ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+            )}
+            Create case
+          </Button>
+        </div>
         <p className="text-center text-xs text-slate-400">
-          A technician can add diagnosis, resolution, and Verified/Confirmed outcomes on the case page next.
+          "Save case" keeps your progress as a draft if you're not ready to finish intake yet. A
+          technician can add diagnosis, resolution, and Verified/Confirmed outcomes on the case page next.
         </p>
       </main>
     </div>

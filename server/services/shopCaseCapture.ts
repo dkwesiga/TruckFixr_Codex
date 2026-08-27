@@ -3,10 +3,63 @@ import { eq, and } from "drizzle-orm";
 import { getDb } from "../db";
 import { vehicles } from "../../drizzle/schema";
 import { ensureShopVehicle, type VehicleProvenanceSource } from "./shopVehicleIntake";
-import { createManualCase } from "./maintenanceCases";
+import { createManualCase, updateDraftCase } from "./maintenanceCases";
 import { addDecision } from "./maintenanceDecisions";
 import type { CaseType } from "@shared/tadis/caseTypes";
 import type { MaintenanceSeverity } from "@shared/maintenance/caseWorkflow";
+
+type ShopVehicleInput = {
+  vin?: string | null;
+  unitNumber?: string | null;
+  licensePlate?: string | null;
+  make?: string | null;
+  model?: string | null;
+  year?: number | null;
+  engineMake?: string | null;
+  assetType?: "tractor" | "straight_truck" | "trailer" | "other";
+  vinSource: VehicleProvenanceSource;
+};
+
+async function resolveShopVehicle(input: {
+  fleetId: number;
+  actorUserId: number;
+  vehicleId?: string | null;
+  vehicle?: ShopVehicleInput;
+}) {
+  if (input.vehicleId) {
+    const db = await getDb();
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable." });
+    const [existing] = await db
+      .select()
+      .from(vehicles)
+      .where(and(eq(vehicles.id, input.vehicleId), eq(vehicles.fleetId, input.fleetId)))
+      .limit(1);
+    if (!existing) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "That vehicle was not found in your shop." });
+    }
+    return { vehicle: existing, provenance: "tenant_record" as VehicleProvenanceSource };
+  }
+  if (input.vehicle) {
+    const ensured = await ensureShopVehicle({
+      fleetId: input.fleetId,
+      vin: input.vehicle.vin,
+      unitNumber: input.vehicle.unitNumber,
+      licensePlate: input.vehicle.licensePlate,
+      make: input.vehicle.make,
+      model: input.vehicle.model,
+      year: input.vehicle.year,
+      engineMake: input.vehicle.engineMake,
+      assetType: input.vehicle.assetType,
+      vinSource: input.vehicle.vinSource,
+      createdByUserId: input.actorUserId,
+    });
+    return { vehicle: ensured.vehicle, provenance: ensured.provenance };
+  }
+  throw new TRPCError({
+    code: "BAD_REQUEST",
+    message: "Either an existing vehicleId or new vehicle details are required.",
+  });
+}
 
 // Fast shop case capture (§5/§6): VIN-first, progressive-disclosure intake
 // that a Service Advisor or Technician can complete in under a minute.
@@ -22,78 +75,47 @@ export async function createShopCase(input: {
   // Exactly one of these: an existing vehicle already on file for this shop
   // (a returning customer), or intake details for a new/walk-in vehicle.
   vehicleId?: string | null;
-  vehicle?: {
-    vin?: string | null;
-    unitNumber?: string | null;
-    licensePlate?: string | null;
-    make?: string | null;
-    model?: string | null;
-    year?: number | null;
-    engineMake?: string | null;
-    assetType?: "tractor" | "straight_truck" | "trailer" | "other";
-    vinSource: VehicleProvenanceSource;
-  };
+  vehicle?: ShopVehicleInput;
   caseType: CaseType;
   complaint: string;
   symptoms?: string[];
   faultCodes?: string[];
   severity?: MaintenanceSeverity;
+  // A draft case saved earlier during this intake (see saveDraftShopCase):
+  // finalize it in place instead of inserting a second case row.
+  draftCaseId?: number | null;
 }) {
   if (!input.complaint?.trim()) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "A complaint or inquiry description is required." });
   }
 
-  let vehicle: typeof vehicles.$inferSelect;
-  let provenance: VehicleProvenanceSource;
+  const { vehicle, provenance } = await resolveShopVehicle(input);
 
-  if (input.vehicleId) {
-    const db = await getDb();
-    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable." });
-    const [existing] = await db
-      .select()
-      .from(vehicles)
-      .where(and(eq(vehicles.id, input.vehicleId), eq(vehicles.fleetId, input.fleetId)))
-      .limit(1);
-    if (!existing) {
-      throw new TRPCError({ code: "NOT_FOUND", message: "That vehicle was not found in your shop." });
-    }
-    vehicle = existing;
-    provenance = "tenant_record";
-  } else if (input.vehicle) {
-    const ensured = await ensureShopVehicle({
+  let caseRow;
+  if (input.draftCaseId) {
+    caseRow = await updateDraftCase({
       fleetId: input.fleetId,
-      vin: input.vehicle.vin,
-      unitNumber: input.vehicle.unitNumber,
-      licensePlate: input.vehicle.licensePlate,
-      make: input.vehicle.make,
-      model: input.vehicle.model,
-      year: input.vehicle.year,
-      engineMake: input.vehicle.engineMake,
-      assetType: input.vehicle.assetType,
-      vinSource: input.vehicle.vinSource,
-      createdByUserId: input.actorUserId,
+      caseId: input.draftCaseId,
+      vehicleId: vehicle.id,
+      title: input.complaint.slice(0, 120),
+      summary: input.complaint,
+      caseType: input.caseType,
+      status: "reported",
     });
-    vehicle = ensured.vehicle;
-    provenance = ensured.provenance;
   } else {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: "Either an existing vehicleId or new vehicle details are required.",
+    caseRow = await createManualCase({
+      fleetId: input.fleetId,
+      vehicleId: vehicle.id,
+      origin: "manual",
+      title: input.complaint.slice(0, 120),
+      summary: input.complaint,
+      severity: input.severity ?? "stable",
+      createdByUserId: input.actorUserId,
+      caseType: input.caseType,
+      recordOrigin: "live",
+      vehicleContextProvenance: { vin: provenance, make: provenance, model: provenance, year: provenance },
     });
   }
-
-  const caseRow = await createManualCase({
-    fleetId: input.fleetId,
-    vehicleId: vehicle.id,
-    origin: "manual",
-    title: input.complaint.slice(0, 120),
-    summary: input.complaint,
-    severity: input.severity ?? "stable",
-    createdByUserId: input.actorUserId,
-    caseType: input.caseType,
-    recordOrigin: "live",
-    vehicleContextProvenance: { vin: provenance, make: provenance, model: provenance, year: provenance },
-  });
 
   if (!caseRow) {
     throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Failed to create case." });
@@ -113,6 +135,49 @@ export async function createShopCase(input: {
   });
 
   return { case: caseRow, vehicle, decision };
+}
+
+// Save a work-in-progress case before intake is complete, so a Service
+// Advisor who gets pulled away mid-intake doesn't lose what they've entered.
+// Unlike createShopCase, only a case type is required — no complaint, and no
+// decision is recorded yet. Pass draftCaseId to update an existing draft in
+// place rather than creating another row each time "Save draft" is clicked.
+export async function saveDraftShopCase(input: {
+  fleetId: number;
+  actorUserId: number;
+  draftCaseId?: number | null;
+  vehicleId?: string | null;
+  vehicle?: ShopVehicleInput;
+  caseType: CaseType;
+  complaint?: string;
+}) {
+  const { vehicle, provenance } = await resolveShopVehicle(input);
+  const title = input.complaint?.trim() ? input.complaint.trim().slice(0, 120) : null;
+  const summary = input.complaint?.trim() || null;
+
+  if (input.draftCaseId) {
+    return updateDraftCase({
+      fleetId: input.fleetId,
+      caseId: input.draftCaseId,
+      vehicleId: vehicle.id,
+      title,
+      summary,
+      caseType: input.caseType,
+    });
+  }
+
+  return createManualCase({
+    fleetId: input.fleetId,
+    vehicleId: vehicle.id,
+    origin: "manual",
+    title,
+    summary,
+    createdByUserId: input.actorUserId,
+    caseType: input.caseType,
+    recordOrigin: "live",
+    status: "draft",
+    vehicleContextProvenance: { vin: provenance, make: provenance, model: provenance, year: provenance },
+  });
 }
 
 // Vehicles this shop has already captured, for the "existing vehicle" picker

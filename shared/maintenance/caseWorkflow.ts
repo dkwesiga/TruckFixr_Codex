@@ -3,6 +3,7 @@
 // disclaimers. No DB — trivially testable and shared client/server.
 
 export const CASE_STATUSES = [
+  "draft",
   "reported",
   "triaging",
   "decision_pending",
@@ -26,6 +27,7 @@ export const TERMINAL_STATUSES: CaseStatus[] = ["closed", "cancelled"];
 // Explicit allowed transitions. Anything not listed is rejected. Reopen is a
 // dedicated action (owners/managers only) handled outside this map.
 const TRANSITIONS: Record<CaseStatus, CaseStatus[]> = {
+  draft: ["reported", "cancelled"],
   reported: ["triaging", "decision_pending", "monitoring", "cancelled"],
   triaging: ["decision_pending", "monitoring", "scheduled", "cancelled"],
   decision_pending: ["monitoring", "scheduled", "out_of_service", "cancelled"],
