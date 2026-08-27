@@ -705,6 +705,14 @@ export const repairOutcomes = pgTable("repairOutcomes", {
   promotedReferenceId: integer("promotedReferenceId"),
   promotedAt: dateTimestamp(),
   promotedByUserId: integer("promotedByUserId"),
+  // ---- Repair-shop workflow Phase 1 (all nullable/defaulted; existing rows
+  // stay valid). shopConfidence is the shop's own confidence (0-100) that the
+  // issue is resolved, distinct from any AI triage confidence. rootCause is
+  // separate from confirmedFault ("what was found") — it can be left
+  // unconfirmed rather than forced to a speculative value.
+  shopConfidence: integer("shopConfidence"),
+  rootCause: text("rootCause"),
+  rootCauseConfirmed: boolean("rootCauseConfirmed").default(false).notNull(),
   // ---- Repair outcome v2 (all optional; existing payloads stay valid) ----
   maintenanceCaseId: integer("maintenanceCaseId"),
   repairCycleId: integer("repairCycleId"),
@@ -1630,6 +1638,14 @@ export const maintenanceCases = pgTable(
     // Per-field provenance for vehicle context: vin_decoder | tenant_record |
     // technician_input | historical_import | ai_extraction.
     vehicleContextProvenanceJson: jsonb("vehicleContextProvenanceJson"),
+    // ---- Repair-shop workflow Phase 1 (both nullable; existing rows stay
+    // valid). originalCaseId links a return-job case back to the case it
+    // returned from, WITHOUT that original case ever being reopened or
+    // mutated — see server/services/repairShopWorkflow.ts createReturnJob.
+    // followUpDueAt is set when a repair outcome is recorded (repair-shop
+    // Phase 1 §12/§14): roughly 3 days out, for the shop's manual follow-up.
+    originalCaseId: integer("originalCaseId"),
+    followUpDueAt: dateTimestamp(),
     createdAt: dateTimestamp().defaultNow().notNull(),
     updatedAt: dateTimestamp().defaultNow().notNull(),
   },
@@ -1640,6 +1656,7 @@ export const maintenanceCases = pgTable(
     index("maintenanceCases_assigned_manager_idx").on(table.assignedManagerUserId),
     index("maintenanceCases_caseId_idx").on(table.caseId),
     index("maintenanceCases_tadisEligibility_idx").on(table.tadisEligibility),
+    index("maintenanceCases_originalCaseId_idx").on(table.originalCaseId),
   ]
 );
 
@@ -1680,6 +1697,17 @@ export const maintenanceDecisions = pgTable(
     resolutionCategory: varchar("resolutionCategory", { length: 32 }),
     createdByUserId: integer("createdByUserId"),
     createdAt: dateTimestamp().defaultNow().notNull(),
+    // ---- Repair-shop adaptive diagnostic triage (Phase 1; all nullable —
+    // fleet-side decisions never populate these). confidence/likelyCausesJson/
+    // immediateChecksJson/rationale above are reused as-is for the triage
+    // loop's confidence score, ranked likely causes, remaining verification
+    // checks, and technician-facing diagnostic rationale respectively. See
+    // server/services/shopTriageWorkflow.ts.
+    // insufficient | progressing | target_reached
+    confidenceStatus: varchar("confidenceStatus", { length: 24 }),
+    nextDiagnosticStepJson: jsonb("nextDiagnosticStepJson"),
+    safetySummary: text("safetySummary"),
+    evidenceSummary: text("evidenceSummary"),
   },
   (table) => [
     uniqueIndex("maintenanceDecisions_case_version_unique").on(table.caseId, table.version),
@@ -1725,12 +1753,40 @@ export const repairCycles = pgTable(
   ]
 );
 
+// Manual 3-day follow-up (repair-shop Phase 1 §14). Append-only: a case can
+// in principle receive more than one follow-up call over time.
+export const repairFollowUps = pgTable(
+  "repairFollowUps",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId")
+      .notNull()
+      .references(() => fleets.id, { onDelete: "cascade" }),
+    maintenanceCaseId: integer("maintenanceCaseId")
+      .notNull()
+      .references(() => maintenanceCases.id, { onDelete: "cascade" }),
+    repairOutcomeId: integer("repairOutcomeId"),
+    // resolved | partially_resolved | not_resolved | returned
+    result: varchar("result", { length: 24 }).notNull(),
+    note: text("note"),
+    recordedByUserId: integer("recordedByUserId").notNull(),
+    recordedAt: dateTimestamp().defaultNow().notNull(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("repairFollowUps_case_idx").on(table.maintenanceCaseId),
+    index("repairFollowUps_fleet_idx").on(table.fleetId),
+  ]
+);
+
 export type MaintenanceCase = typeof maintenanceCases.$inferSelect;
 export type InsertMaintenanceCase = typeof maintenanceCases.$inferInsert;
 export type MaintenanceDecision = typeof maintenanceDecisions.$inferSelect;
 export type InsertMaintenanceDecision = typeof maintenanceDecisions.$inferInsert;
 export type RepairCycle = typeof repairCycles.$inferSelect;
 export type InsertRepairCycle = typeof repairCycles.$inferInsert;
+export type RepairFollowUp = typeof repairFollowUps.$inferSelect;
+export type InsertRepairFollowUp = typeof repairFollowUps.$inferInsert;
 
 // =====================================================================
 // Phase 4: Repair documents + repair authorization.

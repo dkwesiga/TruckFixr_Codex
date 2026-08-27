@@ -5,6 +5,7 @@ import {
   canTransition,
   formatCaseReference,
   isCriticalAction,
+  TERMINAL_STATUSES,
 } from "./caseWorkflow";
 import {
   deriveAction,
@@ -33,6 +34,34 @@ describe("case status transitions", () => {
   it("allows reopening from terminal states", () => {
     expect(canTransition("closed", "reopened")).toBe(true);
     expect(canTransition("cancelled", "reopened")).toBe(true);
+  });
+});
+
+describe("repair-shop workflow statuses (Phase 1)", () => {
+  it("walks the repair-shop happy path: reported -> ... -> closed", () => {
+    expect(canTransition("reported", "triaging")).toBe(true);
+    expect(canTransition("triaging", "decision_pending")).toBe(true);
+    expect(canTransition("decision_pending", "in_repair")).toBe(true);
+    expect(canTransition("in_repair", "awaiting_follow_up")).toBe(true);
+    expect(canTransition("awaiting_follow_up", "closed")).toBe(true);
+  });
+
+  it("allows a follow-up that isn't fully resolved to send the case back to repair", () => {
+    expect(canTransition("awaiting_follow_up", "in_repair")).toBe(true);
+  });
+
+  it("allows a returned problem to flag the case as a return job", () => {
+    expect(canTransition("awaiting_follow_up", "return_job")).toBe(true);
+  });
+
+  it("treats return_job as terminal except for an explicit reopen", () => {
+    expect(canTransition("return_job", "reopened")).toBe(true);
+    expect(canTransition("return_job", "triaging")).toBe(false);
+    expect(TERMINAL_STATUSES).toContain("return_job");
+  });
+
+  it("rejects skipping straight from awaiting_follow_up to reported", () => {
+    expect(canTransition("awaiting_follow_up", "reported")).toBe(false);
   });
 });
 

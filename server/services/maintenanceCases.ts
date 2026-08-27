@@ -236,8 +236,16 @@ export async function reopenCase(input: {
 
   const current = await getCaseForFleet(input.fleetId, input.caseId);
   if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Case not found in this fleet." });
-  if (current.status !== "closed" && current.status !== "completed" && current.status !== "cancelled") {
-    throw new TRPCError({ code: "BAD_REQUEST", message: "Only a closed or completed case can be reopened." });
+  if (
+    current.status !== "closed" &&
+    current.status !== "completed" &&
+    current.status !== "cancelled" &&
+    current.status !== "return_job"
+  ) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Only a closed, completed, cancelled, or return-job case can be reopened.",
+    });
   }
   if (!input.reason?.trim()) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "A reason is required to reopen a case." });

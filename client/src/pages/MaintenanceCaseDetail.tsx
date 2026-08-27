@@ -43,6 +43,7 @@ import {
   EVIDENCE_SOURCES,
   VERIFICATION_METHODS,
 } from "@shared/tadis/outcomeLifecycle";
+import RepairShopWorkflowSection from "@/components/RepairShopWorkflowSection";
 
 const OUTCOME_STATE_BADGE: Record<string, string> = {
   unknown: "bg-slate-100 text-slate-600 border-slate-200",
@@ -451,6 +452,21 @@ function MaintenanceCaseDetailContent() {
             </CardContent>
           </Card>
 
+          {/* Repair-shop workflow (Phase 1): adaptive triage, repair outcome,
+              3-day follow-up, and linked return jobs. Only rendered for
+              repair-shop fleets — a fleet's own operational maintenance
+              cases never show this section. */}
+          {data.isRepairShop ? (
+            <RepairShopWorkflowSection
+              caseId={caseId}
+              status={status}
+              summary={c.summary}
+              currentDecision={currentDecision}
+              followUps={data.followUps ?? []}
+              onChanged={invalidate}
+            />
+          ) : null}
+
           {/* Repair documents (Phase 4) */}
           <RepairDocumentsSection caseId={caseId} />
 
@@ -507,7 +523,7 @@ function MaintenanceCaseDetailContent() {
             </CardContent>
           </Card>
 
-          {(status === "closed" || status === "completed" || status === "cancelled") ? (
+          {(status === "closed" || status === "completed" || status === "cancelled" || status === "return_job") ? (
             <Card>
               <CardHeader><CardTitle className="text-base">Reopen</CardTitle></CardHeader>
               <CardContent className="space-y-2">

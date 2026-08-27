@@ -21,7 +21,9 @@ interface AddDecisionInput {
   originalRecommendation?: unknown;
   rationale?: string | null;
   confidence?: number | null;
-  likelyCauses?: string[] | null;
+  // string[] for the fleet-side flow; an array of {cause, rank, rationale}
+  // objects for the repair-shop adaptive triage loop (shopTriageWorkflow.ts).
+  likelyCauses?: unknown;
   immediateChecks?: string[] | null;
   evidence?: unknown;
   diagnosticSessionId?: string | null;
@@ -29,6 +31,13 @@ interface AddDecisionInput {
   promptVersion?: string | null;
   // Resolution taxonomy tag (§8) — see shared/tadis/caseTypes.ts.
   resolutionCategory?: string | null;
+  // Repair-shop adaptive diagnostic triage (Phase 1) — see
+  // server/services/shopTriageWorkflow.ts. All optional; fleet-side callers
+  // never populate these.
+  confidenceStatus?: "insufficient" | "progressing" | "target_reached" | null;
+  nextDiagnosticStep?: unknown;
+  safetySummary?: string | null;
+  evidenceSummary?: string | null;
 }
 
 // Append a new decision version. Marks all prior versions not-current, points
@@ -87,6 +96,10 @@ export async function addDecision(input: AddDecisionInput) {
       isCurrent: true,
       createdByUserId: input.actorUserId,
       resolutionCategory: input.resolutionCategory ?? null,
+      confidenceStatus: input.confidenceStatus ?? null,
+      nextDiagnosticStepJson: (input.nextDiagnosticStep ?? null) as never,
+      safetySummary: input.safetySummary ?? null,
+      evidenceSummary: input.evidenceSummary ?? null,
     })
     .returning();
 

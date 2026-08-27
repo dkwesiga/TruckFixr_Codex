@@ -88,6 +88,12 @@ export async function reportOutcome(input: {
   evidenceSource: EvidenceSource;
   vehicleId: string;
   repairNotes?: string | null;
+  // Repair-shop workflow Phase 1 (§12): the shop's own confidence (0-100)
+  // that the issue is resolved, and an explicit (possibly unconfirmed) root
+  // cause distinct from confirmedFault ("what was found").
+  shopConfidence?: number | null;
+  rootCause?: string | null;
+  rootCauseConfirmed?: boolean;
 }) {
   const db = await getDb();
   if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable." });
@@ -149,6 +155,9 @@ export async function reportOutcome(input: {
       reportedByUserId: input.actorUserId,
       evidenceSource: input.evidenceSource,
       repairNotes: input.repairNotes ?? null,
+      shopConfidence: input.shopConfidence ?? null,
+      rootCause: input.rootCause ?? null,
+      rootCauseConfirmed: input.rootCauseConfirmed ?? false,
     })
     .returning();
 
