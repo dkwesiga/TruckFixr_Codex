@@ -26,16 +26,33 @@ type ExtractVinInput = {
   roiMetadata?: { width?: number; height?: number; byteSize?: number };
 };
 
+export type VinOcrFailureCode =
+  | "OCR_NO_VIN_FOUND"
+  | "OCR_PROVIDER_UNAVAILABLE"
+  | "OCR_INVALID_PROVIDER_RESPONSE"
+  | "OCR_TIMEOUT";
+
+const VIN_OCR_FAILURE_MESSAGES: Record<VinOcrFailureCode, string> = {
+  OCR_NO_VIN_FOUND: "Could not confidently extract a 17-character VIN from this image.",
+  OCR_PROVIDER_UNAVAILABLE: "VIN scanning is temporarily unavailable. Try again or enter the VIN manually.",
+  OCR_INVALID_PROVIDER_RESPONSE: "VIN scanning is temporarily unavailable. Try again or enter the VIN manually.",
+  OCR_TIMEOUT: "VIN scanning took too long. Try again or enter the VIN manually.",
+};
+
 /**
  * Structured, non-image VIN OCR diagnostics: which provider/model actually handled the call,
- * how long it took, the ROI size the client reported preparing, the model's raw/parsed
- * response, and how TruckFixr's own extraction interpreted it. Gated behind
- * ENV.enableVinOcrDiagnostics (opt-in, off by default) — never logs the image itself.
+ * the full attempt sequence (including why each was skipped/failed), whether the response was
+ * real model output or the orchestrator's own synthetic fallback, the ROI size the client
+ * reported preparing, the model's raw/parsed response, and how TruckFixr's own extraction
+ * interpreted it. Gated behind ENV.enableVinOcrDiagnostics (opt-in, off by default) — never
+ * logs the image itself.
  */
 function logVinOcrDiagnostics(data: {
   provider?: string;
   model?: string;
   latencyMs?: number;
+  attempts?: Array<{ provider: string; model: string; success: boolean; reason?: string }>;
+  syntheticFallback?: boolean;
   roiWidth?: number;
   roiHeight?: number;
   roiByteSize?: number;
@@ -43,6 +60,7 @@ function logVinOcrDiagnostics(data: {
   parsedVinCandidate?: string;
   parsedRawText?: string;
   normalizedVin?: string;
+  code?: VinOcrFailureCode;
   fallbackReason?: string;
 }) {
   if (!ENV.enableVinOcrDiagnostics) return;
@@ -162,6 +180,7 @@ export async function extractVinFromImage(
   vin?: string;
   rawText?: string;
   warning?: string;
+  code?: VinOcrFailureCode;
 }> {
   const invoke = input.invoke ?? invokeWithOrchestration;
 
@@ -216,10 +235,81 @@ export async function extractVinFromImage(
           .map((part) => part.text)
           .join("\n") ?? "";
 
-    const parsed = JSON.parse(textContent) as {
-      vinCandidate?: unknown;
-      rawText?: unknown;
+    const attempts = result.orchestration?.attempts;
+    // invokeWithOrchestration always populates `attempts` (with at least one entry) in
+    // production, whether a provider succeeded or every provider was skipped/failed. Treat a
+    // completely absent `attempts` field (rather than an empty/all-failed one) as "no
+    // orchestration info available" and proceed normally, so callers/tests that construct a
+    // response without that bookkeeping aren't misclassified as a provider outage.
+    const anyProviderSucceeded = attempts === undefined ? true : attempts.some((attempt) => attempt.success);
+    const diagnosticsBase = {
+      provider: result.orchestration?.provider,
+      model: result.orchestration?.model,
+      latencyMs: result.orchestration?.latencyMs,
+      attempts: (attempts ?? []).map((attempt) => ({
+        provider: attempt.provider,
+        model: attempt.model,
+        success: attempt.success,
+        reason: attempt.reason,
+      })),
+      roiWidth: input.roiMetadata?.width,
+      roiHeight: input.roiMetadata?.height,
+      roiByteSize: input.roiMetadata?.byteSize,
+      rawModelResponse: textContent.slice(0, 500),
     };
+
+    // Every configured provider was skipped or failed — invokeWithOrchestration still returns
+    // a well-formed response (its own synthetic "unavailable" placeholder) rather than
+    // throwing. Without this check, that placeholder gets parsed as if it were a genuine
+    // (empty) OCR read and reported as "no VIN found," silently masking a total provider
+    // outage as an image-quality problem.
+    if (!anyProviderSucceeded) {
+      logVinOcrDiagnostics({
+        ...diagnosticsBase,
+        syntheticFallback: true,
+        code: "OCR_PROVIDER_UNAVAILABLE",
+        fallbackReason: attempts?.[attempts.length - 1]?.reason ?? "no_provider_attempted",
+      });
+      return {
+        status: "fallback",
+        code: "OCR_PROVIDER_UNAVAILABLE",
+        warning: VIN_OCR_FAILURE_MESSAGES.OCR_PROVIDER_UNAVAILABLE,
+      };
+    }
+
+    let parsed: { vinCandidate?: unknown; rawText?: unknown };
+    try {
+      parsed = JSON.parse(textContent);
+    } catch {
+      logVinOcrDiagnostics({
+        ...diagnosticsBase,
+        syntheticFallback: false,
+        code: "OCR_INVALID_PROVIDER_RESPONSE",
+        fallbackReason: "response_not_valid_json",
+      });
+      return {
+        status: "fallback",
+        code: "OCR_INVALID_PROVIDER_RESPONSE",
+        warning: VIN_OCR_FAILURE_MESSAGES.OCR_INVALID_PROVIDER_RESPONSE,
+      };
+    }
+
+    const hasExpectedShape =
+      parsed !== null && typeof parsed === "object" && ("vinCandidate" in parsed || "rawText" in parsed);
+
+    if (!hasExpectedShape) {
+      logVinOcrDiagnostics({
+        ...diagnosticsBase,
+        syntheticFallback: false,
+        code: "OCR_INVALID_PROVIDER_RESPONSE",
+        fallbackReason: "response_missing_expected_fields",
+      });
+      return {
+        status: "fallback",
+        code: "OCR_INVALID_PROVIDER_RESPONSE",
+        warning: VIN_OCR_FAILURE_MESSAGES.OCR_INVALID_PROVIDER_RESPONSE,
+      };
+    }
 
     const rawText = typeof parsed.rawText === "string" ? normalizeOcrText(parsed.rawText) : "";
 
@@ -232,16 +322,12 @@ export async function extractVinFromImage(
     const vin = extractCandidateVin(vinCandidateRaw) || extractCandidateVin(rawText);
 
     logVinOcrDiagnostics({
-      provider: result.orchestration?.provider,
-      model: result.orchestration?.model,
-      latencyMs: result.orchestration?.latencyMs,
-      roiWidth: input.roiMetadata?.width,
-      roiHeight: input.roiMetadata?.height,
-      roiByteSize: input.roiMetadata?.byteSize,
-      rawModelResponse: textContent.slice(0, 500),
+      ...diagnosticsBase,
+      syntheticFallback: false,
       parsedVinCandidate: vinCandidateRaw,
       parsedRawText: rawText,
       normalizedVin: vin || undefined,
+      code: vin ? undefined : "OCR_NO_VIN_FOUND",
       fallbackReason: vin ? undefined : "no_valid_17char_candidate",
     });
 
@@ -249,7 +335,8 @@ export async function extractVinFromImage(
       return {
         status: "fallback",
         rawText,
-        warning: "Could not confidently extract a 17-character VIN from this image.",
+        code: "OCR_NO_VIN_FOUND",
+        warning: VIN_OCR_FAILURE_MESSAGES.OCR_NO_VIN_FOUND,
       };
     }
 
@@ -259,18 +346,19 @@ export async function extractVinFromImage(
       rawText,
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const code: VinOcrFailureCode = /timed out|aborterror/i.test(message) ? "OCR_TIMEOUT" : "OCR_PROVIDER_UNAVAILABLE";
     logVinOcrDiagnostics({
       roiWidth: input.roiMetadata?.width,
       roiHeight: input.roiMetadata?.height,
       roiByteSize: input.roiMetadata?.byteSize,
-      fallbackReason: error instanceof Error ? error.message : String(error),
+      code,
+      fallbackReason: message,
     });
     return {
       status: "fallback",
-      warning:
-        error instanceof Error
-          ? `OCR unavailable for VIN capture: ${error.message}`
-          : "OCR unavailable for VIN capture.",
+      code,
+      warning: `${VIN_OCR_FAILURE_MESSAGES[code]} (${message})`,
     };
   }
 }

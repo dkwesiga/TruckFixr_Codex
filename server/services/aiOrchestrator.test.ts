@@ -294,6 +294,56 @@ describe("aiOrchestrator", () => {
     expect(result.choices[0]?.message.content).toContain("temporarily unavailable");
   });
 
+  it("Test E: gives structured-extraction features (ocr_vin) an OCR-shaped fallback, not the diagnosis-flavored one", async () => {
+    const result = await invokeWithOrchestration(
+      {
+        feature: "ocr_vin",
+        preferredProvider: "openrouter",
+        fallbackProviders: [],
+        messages: [{ role: "user", content: "Extract the VIN." }],
+        responseFormat: { type: "json_object" },
+        maxTokens: 120,
+      },
+      {
+        fetcher: async () => {
+          throw new Error("AI request timed out");
+        },
+      }
+    );
+
+    const content = result.choices[0]?.message.content;
+    expect(content).not.toContain("temporarily unavailable");
+    expect(content).not.toContain("fault codes");
+    expect(content).not.toContain("safety-critical");
+    expect(JSON.parse(content as string)).toEqual({
+      status: "unavailable",
+      feature: "ocr_vin",
+      reason: "provider_unavailable",
+    });
+  });
+
+  it("leaves non-OCR features (e.g. diagnosis, unspecified feature) on the original safety-oriented fallback text", async () => {
+    const result = await invokeWithOrchestration(
+      {
+        feature: "diagnosis_intake",
+        preferredProvider: "openrouter",
+        fallbackProviders: [],
+        messages: [{ role: "user", content: "Summarize the diagnosis." }],
+        responseFormat: { type: "json_object" },
+        maxTokens: 120,
+      },
+      {
+        fetcher: async () => {
+          throw new Error("AI request timed out");
+        },
+      }
+    );
+
+    const content = result.choices[0]?.message.content;
+    expect(content).toContain("temporarily unavailable");
+    expect(content).toContain("safety-critical");
+  });
+
   it("uses provider-native fallback models when the preferred provider model should not carry across", async () => {
     let openRouterCalled = false;
 

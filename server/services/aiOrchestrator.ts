@@ -959,7 +959,26 @@ function categorizeAiError(error: unknown): AiErrorCategory {
   return "unknown";
 }
 
+// Structured extraction features (OCR and similar) have callers that validate the response
+// against a specific schema (e.g. {vinCandidate, rawText}) rather than just displaying prose.
+// Handing them the diagnosis-flavored fallback text below — which happens to be valid JSON —
+// let a total provider failure silently masquerade as "the model found nothing," because the
+// caller had no way to tell a real (empty) answer apart from this synthetic one. Features in
+// this set get an OCR-appropriate fallback shape instead; every other feature (diagnosis,
+// triage, general chat) keeps the existing safety-oriented fallback unchanged.
+const STRUCTURED_EXTRACTION_FEATURES = new Set(["ocr_vin", "ocr_photo_text"]);
+
 function buildControlledFallbackChoice(input: OrchestratorInput) {
+  const feature = input.feature ?? "general";
+
+  if (STRUCTURED_EXTRACTION_FEATURES.has(feature)) {
+    return JSON.stringify({
+      status: "unavailable",
+      feature,
+      reason: "provider_unavailable",
+    });
+  }
+
   const fallbackText =
     "AI analysis is temporarily unavailable. Please retry safely, review the fault codes and inspection findings, and contact maintenance if the issue is safety-critical.";
 

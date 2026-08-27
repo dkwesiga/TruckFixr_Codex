@@ -343,8 +343,9 @@ export function registerVehicleLookupRoutes(app: Express) {
 
     if (result.status !== "completed" || !result.vin) {
       res.status(422).json({
-        error: "Couldn't read VIN clearly.",
+        error: result.warning ?? "Couldn't read VIN clearly.",
         warning: result.warning,
+        code: result.code,
         rawText: result.rawText ?? "",
       });
       return;
