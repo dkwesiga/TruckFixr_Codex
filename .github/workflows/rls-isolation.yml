@@ -60,7 +60,7 @@ jobs:
 
       - name: Upload evidence artifact
         if: steps.guard.outputs.run == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rls-isolation-evidence
           path: reports/evidence/rls-isolation-*.json
