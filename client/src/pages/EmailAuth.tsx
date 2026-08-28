@@ -39,6 +39,7 @@ export default function EmailAuth() {
   const [recoveryAccessToken, setRecoveryAccessToken] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [authLinkError, setAuthLinkError] = useState<string | null>(null);
   const [inviteContext, setInviteContext] = useState<{
     managerName: string;
     managerEmail: string;
@@ -133,6 +134,17 @@ export default function EmailAuth() {
     const params = new URLSearchParams(hash);
     const type = params.get("type");
     const accessToken = params.get("access_token") ?? "";
+    const errorCode = params.get("error_code");
+    const errorDescription = params.get("error_description");
+
+    if (errorCode === "otp_expired" || params.get("error") === "access_denied") {
+      setAuthLinkError(
+        errorCode === "otp_expired"
+          ? "This email verification link has expired or has already been used. Enter your email below and request a new verification link."
+          : errorDescription?.replace(/\+/g, " ") || "This email verification link is invalid. Request a new link below."
+      );
+      window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+    }
 
     if (type === "recovery" && accessToken) {
       setIsRecoveryMode(true);
@@ -141,13 +153,36 @@ export default function EmailAuth() {
     }
   }, []);
 
+  const resendVerification = async () => {
+    const response = await fetch(getApiUrl("/api/email/resend-verification"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim() }),
+    });
+    const payload = await readApiPayload(response).catch(() => ({}));
+    if (!response.ok) throw new Error((payload as any).error || "Unable to resend verification email");
+    toast.success("If verification is required, a new verification link has been sent.");
+  };
+
   // Use fetch for API endpoints that set cookies
   const handleSignup = async (email: string, password: string, name: string) => {
+    // Pilot redemption is intentionally handled by the existing tRPC flow
+    // below, so do not redeem the same code in the signup endpoint as well.
+    const signupMode = inviteContext ? "driver_invite" : usePilotAccess ? undefined : "trial";
     const response = await fetch(getApiUrl('/api/email/signup'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ email, password, name }),
+      body: JSON.stringify({
+        email,
+        password,
+        name,
+        accessMode: signupMode,
+        // The standalone signup flow uses the person's name as a temporary
+        // company name; onboarding lets them replace it after the account is
+        // created. Invited drivers must not create or activate a fleet.
+        companyName: !inviteContext && !usePilotAccess ? name : pilotCompanyName,
+      }),
     });
     const payload = await readApiPayload(response, {
       htmlErrorMessage: "TruckFixr received an HTML page instead of the signup API response. Check the live API base URL configuration.",
@@ -268,6 +303,11 @@ export default function EmailAuth() {
           setTimeout(() => {
             window.location.href = postSignupPath;
           }, 600);
+        } else if (inviteContext) {
+          toast.success("Account created! Redirecting to your invitation...");
+          setTimeout(() => {
+            window.location.href = postSignupPath;
+          }, 600);
         } else {
           await activateFreeMutation.mutateAsync();
           toast.success("Account created! Redirecting to first-time setup...");
@@ -347,6 +387,21 @@ export default function EmailAuth() {
                 : "Welcome back to TruckFixr."}
             </p>
           </div>
+
+          {authLinkError ? (
+            <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900" role="alert">
+              <p>{authLinkError}</p>
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-3 w-full border-amber-300 bg-white"
+                disabled={!isEmailValid || isLoading}
+                onClick={() => resendVerification().catch((error) => toast.error(error?.message || "Unable to resend verification email"))}
+              >
+                Resend verification email
+              </Button>
+            </div>
+          ) : null}
 
           {inviteContext && !isRecoveryMode ? (
             <div className="mb-6 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">

@@ -241,6 +241,20 @@ export async function canManageCompanyOperations(input: { fleetId: number; user:
 export async function canManageCompanyBilling(input: { fleetId: number; user: AppUser }) {
   if (input.user.role !== "owner") return false;
 
+  const db = await getDb();
+  if (!db) return false;
+
+  // The fleet owner is the source of truth for billing authority. Older
+  // owner-operator accounts can have a stale/missing membership row, and a
+  // membership role must not override ownership of the fleet itself.
+  const [fleet] = await db
+    .select({ ownerId: fleets.ownerId })
+    .from(fleets)
+    .where(eq(fleets.id, input.fleetId))
+    .limit(1);
+
+  if (fleet?.ownerId === input.user.id) return true;
+
   const membership = await getCompanyMembership({
     userId: input.user.id,
     fleetId: input.fleetId,
@@ -250,16 +264,7 @@ export async function canManageCompanyBilling(input: { fleetId: number; user: Ap
     return membership.status === "active" && membership.role === "owner";
   }
 
-  const db = await getDb();
-  if (!db) return false;
-
-  const [fleet] = await db
-    .select({ ownerId: fleets.ownerId })
-    .from(fleets)
-    .where(eq(fleets.id, input.fleetId))
-    .limit(1);
-
-  return fleet?.ownerId === input.user.id;
+  return false;
 }
 
 export async function canInviteCompanyRole(input: {

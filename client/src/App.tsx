@@ -181,6 +181,21 @@ function RouteFallback() {
   );
 }
 
+function AuthLinkRedirect() {
+  const [location, setLocation] = useLocation();
+
+  useEffect(() => {
+    if (location === "/auth/email") return;
+    const hash = window.location.hash.replace(/^#/, "");
+    const params = new URLSearchParams(hash);
+    if (params.get("error_code") === "otp_expired" || params.get("error") === "access_denied") {
+      setLocation(`/auth/email${window.location.search}${window.location.hash}`);
+    }
+  }, [location, setLocation]);
+
+  return null;
+}
+
 function DashboardRedirect() {
   const { user, isLoading } = useAuthContext();
   const [, setLocation] = useLocation();
@@ -206,6 +221,7 @@ function DashboardRedirect() {
 function Router() {
   return (
     <Suspense fallback={<RouteFallback />}>
+      <AuthLinkRedirect />
       <Switch>
         <Route path={"/access/start-trial"} component={AccessStartTrial} />
         <Route path={"/access/pilot-code"} component={AccessPilotCode} />

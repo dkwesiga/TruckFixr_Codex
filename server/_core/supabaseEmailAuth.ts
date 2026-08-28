@@ -109,6 +109,7 @@ export async function signUpWithSupabaseEmail(input: {
     body: JSON.stringify({
       email: input.email.trim().toLowerCase(),
       password: input.password,
+      redirect_to: `${ENV.appBaseUrl.replace(/\/$/, "")}/auth/email`,
       data: {
         name: input.name.trim(),
         full_name: input.name.trim(),

@@ -29,7 +29,7 @@ vi.mock("./db", () => ({
   getDb,
 }));
 
-import { getCompanyMembership, getUserPrimaryFleetId } from "./services/companyAccess";
+import { canManageCompanyBilling, getCompanyMembership, getUserPrimaryFleetId } from "./services/companyAccess";
 
 describe("getCompanyMembership", () => {
   beforeEach(() => {
@@ -91,5 +91,20 @@ describe("getUserPrimaryFleetId", () => {
 
     await expect(getUserPrimaryFleetId(42)).resolves.toBeNull();
     expect(select).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("canManageCompanyBilling", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    queueSelectResults();
+  });
+
+  it("allows the fleet owner even when an older membership row has a stale role", async () => {
+    queueSelectResults([{ ownerId: 42 }]);
+
+    await expect(
+      canManageCompanyBilling({ fleetId: 9, user: { id: 42, role: "owner" } })
+    ).resolves.toBe(true);
   });
 });

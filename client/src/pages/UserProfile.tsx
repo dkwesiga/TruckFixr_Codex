@@ -309,19 +309,13 @@ export default function UserProfile() {
         return;
       }
 
-      const result =
-        planKey === "fleet_growth"
-          ? await createPilotCheckoutMutation.mutateAsync({
-              successPath: "/profile?subscription=success",
-              cancelPath: "/profile?subscription=cancelled",
-            })
-          : await createCheckoutMutation.mutateAsync({
-              planKey,
-              billingInterval: billingCadence,
-              extraTrailerQuantity: 0,
-              successPath: "/profile?subscription=success",
-              cancelPath: "/profile?subscription=cancelled",
-            });
+      const result = await createCheckoutMutation.mutateAsync({
+        planKey,
+        billingInterval: billingCadence,
+        extraTrailerQuantity: 0,
+        successPath: "/profile?subscription=success",
+        cancelPath: "/profile?subscription=cancelled",
+      });
       if (!result.checkoutUrl) {
         throw new Error("Checkout session could not be created.");
       }
@@ -844,7 +838,7 @@ export default function UserProfile() {
                       </p>
                     </div>
                     <Button className="bg-blue-600 hover:bg-blue-700" onClick={() => handleUpgrade("fleet_growth")}>
-                      Start Fleet Pilot Checkout
+                      Start Fleet Growth — $99/month
                     </Button>
                   </div>
                 </div>
@@ -979,7 +973,7 @@ export default function UserProfile() {
                             {plan.planKey === "custom_fleet"
                               ? "Request Fleet Quote"
                               : plan.planKey === "fleet_growth"
-                                ? "Start 30-Day Fleet Pilot"
+                                ? "Choose Fleet Growth — $99/month"
                                 : `Choose ${plan.name}`}
                           </Button>
                         )}

@@ -120,7 +120,6 @@ export default function Pricing() {
 
   const quoteMutation = trpc.subscriptions.requestFleetQuote.useMutation();
   const checkoutMutation = trpc.subscriptions.createCheckoutSession.useMutation();
-  const pilotMutation = trpc.subscriptions.createPilotCheckoutSession.useMutation();
 
   const handleCheckout = async (planKey: PlanKey) => {
     try {
@@ -132,18 +131,6 @@ export default function Pricing() {
 
       if (planKey === "custom_fleet") {
         window.location.href = "#fleet-quote";
-        return;
-      }
-
-      if (planKey === "fleet_growth") {
-        const result = await pilotMutation.mutateAsync({
-          successPath: "/profile?subscription=success",
-          cancelPath: "/pricing?subscription=cancelled",
-        });
-        if (!result.checkoutUrl) {
-          throw new Error("Fleet Pilot checkout could not be started.");
-        }
-        window.location.href = result.checkoutUrl;
         return;
       }
 
@@ -351,14 +338,14 @@ export default function Pricing() {
                     </p>
                     {plan.planKey === "fleet_growth" ? (
                       <p className="mt-1 text-xs font-medium text-red-700">
-                        Starts with a CAD $99, one-time 30-day pilot — credited to your first month if you continue.
+                        CAD $99/month recurring subscription. The separate 30-day Fleet Pilot is a one-time CAD $99 payment.
                       </p>
                     ) : null}
                     <div className="mt-4 flex flex-wrap gap-2">
                       <Button
                         className="rounded-full bg-slate-950 px-4"
                         onClick={() => handleCheckout(plan.planKey)}
-                        disabled={checkoutMutation.isPending || pilotMutation.isPending}
+                        disabled={checkoutMutation.isPending}
                       >
                         {plan.cta}
                       </Button>
@@ -383,6 +370,15 @@ export default function Pricing() {
               })}
             </CardContent>
           </Card>
+          <div className="mt-6 rounded-2xl border border-blue-200 bg-blue-50 p-5">
+            <p className="font-semibold text-slate-950">Want an assisted pilot first?</p>
+            <p className="mt-1 text-sm text-slate-700">
+              Start the separate 30-day Fleet Pilot for a one-time CAD $99 payment. If you continue, that payment can be credited toward your first monthly subscription.
+            </p>
+            <Button className="mt-4 rounded-full bg-blue-600 hover:bg-blue-700" onClick={() => navigate("/pilot-apply")}>
+              Explore the 30-Day Fleet Pilot
+            </Button>
+          </div>
         </section>
 
         <section id="pricing" className="border-y border-slate-200 bg-white">
