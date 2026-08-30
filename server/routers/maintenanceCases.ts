@@ -18,6 +18,7 @@ import {
   createAutomaticCaseFromDiagnosis,
   createManualCase,
   getCaseForFleet,
+  getCaseFleetId,
   listCasesForFleet,
   reopenCase,
   setCaseTadisEligibilityOverride,
@@ -84,8 +85,36 @@ const verificationMethodEnum = z.enum(VERIFICATION_METHODS as unknown as [string
 const confirmationEvidenceEnum = z.enum(CONFIRMATION_EVIDENCE_TYPES as unknown as [string, ...string[]]);
 const evidenceSourceEnum = z.enum(EVIDENCE_SOURCES as unknown as [string, ...string[]]);
 
-async function gateManages(ctx: { user: { id: number; role: string } }, requestedFleetId?: number | null) {
-  const fleetId = await resolveActiveFleetId({ user: ctx.user, requestedFleetId: requestedFleetId ?? null });
+// Resolves the fleet for a case-scoped action. An explicit fleetId is
+// trusted (and verified) as before. Otherwise, when a caseId is given,
+// resolve the fleet the case actually belongs to — maintenanceCases.id is a
+// global (not per-fleet) primary key, so this is unambiguous — rather than
+// guessing at the caller's "primary"/most-recently-active fleet, which for a
+// user who belongs to more than one fleet (e.g. a repair-shop owner who also
+// has their own operational fleet) may not be the fleet this case lives in.
+// Falls back to the old "primary fleet" guess when there is no caseId to
+// resolve from (e.g. list/createManual) or the case can't be found, so the
+// existing not-found error is still surfaced by the caller.
+async function resolveCaseFleetId(
+  ctx: { user: { id: number; role: string } },
+  requestedFleetId: number | null | undefined,
+  caseId?: number | null
+) {
+  if (requestedFleetId == null && caseId != null) {
+    const caseFleetId = await getCaseFleetId(caseId);
+    if (caseFleetId != null) {
+      return resolveActiveFleetId({ user: ctx.user, requestedFleetId: caseFleetId });
+    }
+  }
+  return resolveActiveFleetId({ user: ctx.user, requestedFleetId: requestedFleetId ?? null });
+}
+
+async function gateManages(
+  ctx: { user: { id: number; role: string } },
+  requestedFleetId?: number | null,
+  caseId?: number | null
+) {
+  const fleetId = await resolveCaseFleetId(ctx, requestedFleetId, caseId);
   await assertManagesFleet({ user: ctx.user, fleetId });
   await requireFleetFeature(fleetId, CAP.maintenanceCases);
   return fleetId;
@@ -99,9 +128,10 @@ async function gateManages(ctx: { user: { id: number; role: string } }, requeste
 async function gateCapability(
   ctx: { user: { id: number; role: string } },
   requestedFleetId: number | null | undefined,
-  capability: MaintenanceCapability
+  capability: MaintenanceCapability,
+  caseId?: number | null
 ) {
-  const fleetId = await resolveActiveFleetId({ user: ctx.user, requestedFleetId: requestedFleetId ?? null });
+  const fleetId = await resolveCaseFleetId(ctx, requestedFleetId, caseId);
   await requireFleetFeature(fleetId, CAP.maintenanceCases);
   const allowed = await hasMaintenanceCapability({ fleetId, user: ctx.user, capability });
   if (!allowed) {
@@ -126,9 +156,10 @@ async function gateCapability(
 async function gateRepairShop(
   ctx: { user: { id: number; role: string; email?: string | null } },
   requestedFleetId: number | null | undefined,
-  capability: MaintenanceCapability
+  capability: MaintenanceCapability,
+  caseId?: number | null
 ) {
-  const fleetId = await gateCapability(ctx, requestedFleetId, capability);
+  const fleetId = await gateCapability(ctx, requestedFleetId, capability, caseId);
   if (!(await isRepairShopFleet(fleetId))) {
     throw new TRPCError({
       code: "FORBIDDEN",
@@ -140,9 +171,10 @@ async function gateRepairShop(
 
 async function gateReviseVerified(
   ctx: { user: { id: number; role: string; internalAdminRole?: string | null; email?: string | null } },
-  requestedFleetId: number | null | undefined
+  requestedFleetId: number | null | undefined,
+  caseId?: number | null
 ) {
-  const fleetId = await resolveActiveFleetId({ user: ctx.user, requestedFleetId: requestedFleetId ?? null });
+  const fleetId = await resolveCaseFleetId(ctx, requestedFleetId, caseId);
   if (isStaffAdminUser(ctx.user)) return fleetId;
   await assertManagesFleet({ user: ctx.user, fleetId });
   return fleetId;
@@ -174,7 +206,7 @@ export const maintenanceCasesRouter = router({
   get: protectedProcedure
     .input(z.object({ fleetId: z.number().optional(), caseId: z.number() }))
     .query(async ({ ctx, input }) => {
-      const fleetId = await resolveActiveFleetId({ user: ctx.user, requestedFleetId: input.fleetId ?? null });
+      const fleetId = await resolveCaseFleetId(ctx, input.fleetId, input.caseId);
       await requireFleetFeature(fleetId, CAP.maintenanceCases);
       const [caseRow, decisions, cycles, timeline, outcomes, isRepairShop, followUps] = await Promise.all([
         getCaseForFleet(fleetId, input.caseId),
@@ -300,7 +332,7 @@ export const maintenanceCasesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const fleetId = await gateManages(ctx, input.fleetId);
+      const fleetId = await gateManages(ctx, input.fleetId, input.caseId);
       return transitionCaseStatus({
         fleetId,
         caseId: input.caseId,
@@ -320,7 +352,7 @@ export const maintenanceCasesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const fleetId = await gateManages(ctx, input.fleetId);
+      const fleetId = await gateManages(ctx, input.fleetId, input.caseId);
       await assignCase({
         fleetId,
         caseId: input.caseId,
@@ -334,7 +366,7 @@ export const maintenanceCasesRouter = router({
   reopen: adminProcedure
     .input(z.object({ fleetId: z.number().optional(), caseId: z.number(), reason: z.string().min(1).max(2000) }))
     .mutation(async ({ ctx, input }) => {
-      const fleetId = await gateManages(ctx, input.fleetId);
+      const fleetId = await gateManages(ctx, input.fleetId, input.caseId);
       await reopenCase({ fleetId, caseId: input.caseId, actorUserId: ctx.user.id, reason: input.reason });
       return { ok: true };
     }),
@@ -353,7 +385,7 @@ export const maintenanceCasesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const fleetId = await gateManages(ctx, input.fleetId);
+      const fleetId = await gateManages(ctx, input.fleetId, input.caseId);
       return addDecision({
         fleetId,
         caseId: input.caseId,
@@ -370,7 +402,7 @@ export const maintenanceCasesRouter = router({
   approveDecision: adminProcedure
     .input(z.object({ fleetId: z.number().optional(), caseId: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      const fleetId = await gateManages(ctx, input.fleetId);
+      const fleetId = await gateManages(ctx, input.fleetId, input.caseId);
       return approveCurrentDecision({ fleetId, caseId: input.caseId, actorUserId: ctx.user.id });
     }),
 
@@ -385,7 +417,7 @@ export const maintenanceCasesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const fleetId = await gateManages(ctx, input.fleetId);
+      const fleetId = await gateManages(ctx, input.fleetId, input.caseId);
       return recordCriticalOverride({
         fleetId,
         caseId: input.caseId,
@@ -399,7 +431,7 @@ export const maintenanceCasesRouter = router({
   startCycle: adminProcedure
     .input(z.object({ fleetId: z.number().optional(), caseId: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      const fleetId = await gateManages(ctx, input.fleetId);
+      const fleetId = await gateManages(ctx, input.fleetId, input.caseId);
       return startRepairCycle({ fleetId, caseId: input.caseId, actorUserId: ctx.user.id });
     }),
 
@@ -413,7 +445,7 @@ export const maintenanceCasesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const fleetId = await gateManages(ctx, input.fleetId);
+      const fleetId = await gateManages(ctx, input.fleetId, input.caseId);
       const expected =
         input.expectedCompletionAt === undefined
           ? undefined
@@ -432,7 +464,7 @@ export const maintenanceCasesRouter = router({
   returnToService: adminProcedure
     .input(z.object({ fleetId: z.number().optional(), caseId: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      const fleetId = await gateManages(ctx, input.fleetId);
+      const fleetId = await gateManages(ctx, input.fleetId, input.caseId);
       return returnToService({ fleetId, caseId: input.caseId, actorUserId: ctx.user.id });
     }),
 
@@ -445,7 +477,7 @@ export const maintenanceCasesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const fleetId = await gateManages(ctx, input.fleetId);
+      const fleetId = await gateManages(ctx, input.fleetId, input.caseId);
       return completeCycle({
         fleetId,
         caseId: input.caseId,
@@ -546,7 +578,7 @@ export const maintenanceCasesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const fleetId = await gateCapability(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.recordResolution);
+      const fleetId = await gateCapability(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.recordResolution, input.caseId);
       return addDecision({
         fleetId,
         caseId: input.caseId,
@@ -577,7 +609,7 @@ export const maintenanceCasesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const fleetId = await gateCapability(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.submitRepairOutcome);
+      const fleetId = await gateCapability(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.submitRepairOutcome, input.caseId);
       return reportOutcomeService({
         fleetId,
         caseId: input.caseId,
@@ -724,7 +756,7 @@ export const maintenanceCasesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const fleetId = await gateReviseVerified(ctx, input.fleetId);
+      const fleetId = await gateReviseVerified(ctx, input.fleetId, input.caseId);
       return setCaseTadisEligibilityOverride({
         fleetId,
         caseId: input.caseId,
@@ -752,7 +784,7 @@ export const maintenanceCasesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.submitTechnicianAssessment);
+      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.submitTechnicianAssessment, input.caseId);
       return advanceShopTriage({
         fleetId,
         caseId: input.caseId,
@@ -764,14 +796,14 @@ export const maintenanceCasesRouter = router({
   completeTriage: protectedProcedure
     .input(z.object({ fleetId: z.number().optional(), caseId: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.submitTechnicianAssessment);
+      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.submitTechnicianAssessment, input.caseId);
       return completeShopTriage({ fleetId, caseId: input.caseId, actorUserId: ctx.user.id });
     }),
 
   startRepair: protectedProcedure
     .input(z.object({ fleetId: z.number().optional(), caseId: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.updateRepairStatus);
+      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.updateRepairStatus, input.caseId);
       return startShopRepair({ fleetId, caseId: input.caseId, actorUserId: ctx.user.id });
     }),
 
@@ -803,7 +835,7 @@ export const maintenanceCasesRouter = router({
       // existing outcome lifecycle deliberately reserves for a Technician
       // grant (see verifyOutcome above), so require it here too rather than
       // letting a bare submitRepairOutcome grant silently gain it.
-      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.submitRepairOutcome);
+      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.submitRepairOutcome, input.caseId);
       const canVerify = await hasMaintenanceCapability({
         fleetId,
         user: ctx.user,
@@ -846,7 +878,7 @@ export const maintenanceCasesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.submitRepairOutcome);
+      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.submitRepairOutcome, input.caseId);
       return recordShopFollowUp({
         fleetId,
         caseId: input.caseId,
@@ -860,7 +892,7 @@ export const maintenanceCasesRouter = router({
   listFollowUps: protectedProcedure
     .input(z.object({ fleetId: z.number().optional(), caseId: z.number() }))
     .query(async ({ ctx, input }) => {
-      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.viewAssignedCases);
+      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.viewAssignedCases, input.caseId);
       return listFollowUpsForCase(fleetId, input.caseId);
     }),
 
@@ -876,7 +908,7 @@ export const maintenanceCasesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.createCase);
+      const fleetId = await gateRepairShop(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.createCase, input.originalCaseId);
       return createReturnJob({
         fleetId,
         originalCaseId: input.originalCaseId,

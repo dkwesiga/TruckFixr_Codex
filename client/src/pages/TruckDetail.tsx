@@ -51,17 +51,22 @@ function TruckDetailContent() {
     (warning) => warning.warningType === "repeat_symptom" || warning.warningType === "recurring_after_repair"
   );
 
-  if (overviewQuery.isLoading) {
+  if (vehicleId && !data && !overviewQuery.isError) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 text-slate-600">
         Loading vehicle…
       </div>
     );
   }
-  if (!vehicle) {
+  if (overviewQuery.isError || !vehicle) {
+    const message = !vehicleId
+      ? "No vehicle specified."
+      : overviewQuery.isError
+        ? overviewQuery.error.message || "Something went wrong loading this vehicle."
+        : "Vehicle not found.";
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 text-slate-600">
-        <p>Vehicle not found.</p>
+        <p>{message}</p>
         <Button variant="outline" onClick={() => navigate("/manager")}>
           Back to Fleet
         </Button>

@@ -1377,7 +1377,9 @@ export const defectsRouter = router({
     .input(z.object({ vehicleId: z.union([z.number(), z.string().trim().min(1)]) }))
     .query(async ({ input, ctx }) => {
       const db = await getDb();
-      if (!db) return null;
+      if (!db) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
+      }
 
       const normalizedVehicleId = String(input.vehicleId);
       const [vehicle] = await db

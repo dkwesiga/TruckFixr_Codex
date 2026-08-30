@@ -139,6 +139,25 @@ export async function getCaseForFleet(fleetId: number, caseId: number) {
   return row ?? null;
 }
 
+// maintenanceCases.id is a global (not per-fleet) serial primary key, so a
+// case's fleet can be looked up directly instead of guessing at the caller's
+// "primary"/active fleet (see resolveActiveFleetId) — needed by case-scoped
+// router endpoints that take a caseId but no fleetId: a user who belongs to
+// more than one fleet (e.g. a repair-shop owner who also has their own
+// operational fleet) may have a "primary" fleet that isn't the one this case
+// actually belongs to, which would otherwise make an existing case the user
+// has real access to look like it doesn't exist.
+export async function getCaseFleetId(caseId: number): Promise<number | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db
+    .select({ fleetId: maintenanceCases.fleetId })
+    .from(maintenanceCases)
+    .where(eq(maintenanceCases.id, caseId))
+    .limit(1);
+  return row?.fleetId ?? null;
+}
+
 // Validated status transition. Rejects any transition not in the allowed map.
 export async function transitionCaseStatus(input: {
   fleetId: number;
