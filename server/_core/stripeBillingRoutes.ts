@@ -19,8 +19,7 @@ import { markPilotAccessConvertedToPaid } from "../services/pilotAccess";
 import { markPilotPaid } from "../services/pilotApplications";
 import { markTechnicianReviewPaid } from "../services/technicianReviews";
 import { recordObservabilityEvent } from "../services/observability";
-
-const processedWebhookEventIds = new Set<string>();
+import { claimStripeWebhookEvent } from "../services/stripeWebhookEvents";
 
 function normalizeStripeBillingStatus(value: unknown): BillingStatus {
   if (value === "trialing") return "trialing";
@@ -58,10 +57,10 @@ export async function processStripeWebhookEvent(
   const loadSubscription = options?.loadSubscription ?? retrieveStripeSubscription;
 
   if (event.id) {
-    if (processedWebhookEventIds.has(event.id)) {
+    const claimed = await claimStripeWebhookEvent(event.id, event.type);
+    if (!claimed) {
       return;
     }
-    processedWebhookEventIds.add(event.id);
   }
 
   switch (event.type) {
