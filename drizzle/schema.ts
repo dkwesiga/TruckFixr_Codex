@@ -2361,6 +2361,20 @@ export const verificationCodes = pgTable(
 export type VerificationCode = typeof verificationCodes.$inferSelect;
 export type InsertVerificationCode = typeof verificationCodes.$inferInsert;
 
+// Stripe webhook idempotency ledger. The event id is the primary key, so a
+// duplicate delivery (Stripe retries on any non-2xx, and can send the same
+// event more than once even on success) is rejected by the DB unique
+// constraint instead of relying on in-process memory, which doesn't survive
+// a restart or hold across multiple server instances.
+export const stripeWebhookEvents = pgTable("stripeWebhookEvents", {
+  id: varchar("id", { length: 255 }).primaryKey(),
+  type: varchar("type", { length: 255 }).notNull(),
+  receivedAt: dateTimestamp().defaultNow().notNull(),
+});
+
+export type StripeWebhookEvent = typeof stripeWebhookEvents.$inferSelect;
+export type InsertStripeWebhookEvent = typeof stripeWebhookEvents.$inferInsert;
+
 // Parts concierge (PRD v1.1 §6). Manual-first MVP: staff create requests,
 // hand suppliers a signed no-account link (guestTokens purpose
 // "supplier_offer_link"), and hand the customer a signed comparison link
