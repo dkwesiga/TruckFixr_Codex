@@ -350,6 +350,35 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
   } | null>(null);
   const [assignmentForm, setAssignmentForm] = useState(DEFAULT_ASSIGNMENT_FORM);
 
+  const [reportIssueVehicle, setReportIssueVehicle] = useState<{ id: string; label: string } | null>(null);
+  const [reportTitle, setReportTitle] = useState("");
+  const [reportDescription, setReportDescription] = useState("");
+  const [reportSymptoms, setReportSymptoms] = useState("");
+  const createDefect = trpc.defects.create.useMutation({
+    onSuccess: () => {
+      toast.success("Issue reported.");
+      setReportIssueVehicle(null);
+      setReportTitle("");
+      setReportDescription("");
+      setReportSymptoms("");
+      void utils.vehicles.listByFleet.invalidate();
+    },
+    onError: (error) => toast.error(error.message),
+  });
+  function submitReportIssue() {
+    if (!resolvedFleetId || !reportIssueVehicle || !reportTitle.trim()) return;
+    createDefect.mutate({
+      fleetId: resolvedFleetId,
+      vehicleId: reportIssueVehicle.id,
+      title: reportTitle.trim(),
+      description: reportDescription.trim() || undefined,
+      symptoms: reportSymptoms
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    });
+  }
+
   const vehiclesQuery = trpc.vehicles.listByFleet.useQuery(
     { fleetId: resolvedFleetId ?? 0 },
     { enabled: resolvedFleetId != null }
@@ -1965,6 +1994,14 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
                       >
                         Assign
                       </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="rounded-full"
+                        onClick={() => setReportIssueVehicle({ id: String(row.id), label: row.truck })}
+                      >
+                        Report issue
+                      </Button>
                       {isOperationalOwnerOperatorAsset(row) ? (
                         row.isOwnerOperatorSelfAssigned ? (
                           <Button
@@ -2094,6 +2131,14 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
                               onClick={() => handleOpenAssign(String(row.id))}
                             >
                               Assign
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="rounded-full"
+                              onClick={() => setReportIssueVehicle({ id: String(row.id), label: row.truck })}
+                            >
+                              Report issue
                             </Button>
                             {isOperationalOwnerOperatorAsset(row) ? (
                               row.isOwnerOperatorSelfAssigned ? (
@@ -2475,6 +2520,56 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
                 }}
               >
                 Assign to me
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={reportIssueVehicle != null}
+          onOpenChange={(open) => {
+            if (!open) setReportIssueVehicle(null);
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Report issue{reportIssueVehicle ? ` — ${reportIssueVehicle.label}` : ""}</DialogTitle>
+              <DialogDescription>
+                Capture a problem on this vehicle for triage before repair and reporting.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="dash-report-title">What's wrong</Label>
+                <Input
+                  id="dash-report-title"
+                  value={reportTitle}
+                  onChange={(e) => setReportTitle(e.target.value)}
+                  placeholder="e.g. Check engine light + derate on the highway"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="dash-report-description">Details (optional)</Label>
+                <Textarea
+                  id="dash-report-description"
+                  rows={3}
+                  value={reportDescription}
+                  onChange={(e) => setReportDescription(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="dash-report-symptoms">Symptoms (one per line, optional)</Label>
+                <Textarea
+                  id="dash-report-symptoms"
+                  rows={3}
+                  value={reportSymptoms}
+                  onChange={(e) => setReportSymptoms(e.target.value)}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button disabled={createDefect.isPending || !reportTitle.trim()} onClick={submitReportIssue}>
+                Submit
               </Button>
             </DialogFooter>
           </DialogContent>

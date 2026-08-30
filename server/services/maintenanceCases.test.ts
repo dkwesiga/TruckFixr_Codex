@@ -66,13 +66,25 @@ vi.mock("../db", () => ({ getDb: mockDb.getDb }));
 vi.mock("./maintenanceActivityLog", () => ({ logMaintenanceActivity: async () => {} }));
 vi.mock("./maintenanceCaseReference", () => ({ nextCaseReference: async () => "MC-2026-000099" }));
 
-import { reopenCase } from "./maintenanceCases";
+import { getCaseFleetId, reopenCase } from "./maintenanceCases";
 
 const FLEET = 1;
 const CASE = 100;
 
 beforeEach(() => {
   mockDb.reset();
+});
+
+describe("getCaseFleetId", () => {
+  it("resolves a case's actual fleet regardless of which fleet is 'active' for the caller", async () => {
+    const OTHER_FLEET = 2;
+    store.cases.push({ id: CASE, fleetId: OTHER_FLEET, reference: "MC-2026-000001", status: "reported" });
+    await expect(getCaseFleetId(CASE)).resolves.toBe(OTHER_FLEET);
+  });
+
+  it("returns null for a case id that doesn't exist", async () => {
+    await expect(getCaseFleetId(999)).resolves.toBeNull();
+  });
 });
 
 describe("reopenCase", () => {
