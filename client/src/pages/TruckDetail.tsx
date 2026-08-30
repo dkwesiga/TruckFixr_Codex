@@ -1,13 +1,25 @@
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { RoleBasedRoute } from "@/components/RoleBasedRoute";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EarlyWarningList, type EarlyWarning } from "@/components/EarlyWarnings";
 import { formatDistanceKm } from "@/lib/vehicleDisplay";
 import { trpc } from "@/lib/trpc";
-import { AlertTriangle, CheckCircle, Sparkles } from "lucide-react";
+import { AlertTriangle, CheckCircle, Loader2, Sparkles } from "lucide-react";
 import { useLocation } from "wouter";
+import { toast } from "sonner";
 
 function severityBadge(severity: string | null | undefined) {
   switch (severity) {
@@ -50,6 +62,38 @@ function TruckDetailContent() {
   const recurringIssues = activeWarnings.filter(
     (warning) => warning.warningType === "repeat_symptom" || warning.warningType === "recurring_after_repair"
   );
+
+  const utils = trpc.useUtils();
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportTitle, setReportTitle] = useState("");
+  const [reportDescription, setReportDescription] = useState("");
+  const [reportSymptoms, setReportSymptoms] = useState("");
+
+  const createDefect = trpc.defects.create.useMutation({
+    onSuccess: () => {
+      toast.success("Issue reported.");
+      setReportOpen(false);
+      setReportTitle("");
+      setReportDescription("");
+      setReportSymptoms("");
+      void utils.defects.getVehicleOverview.invalidate({ vehicleId });
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  function submitReport() {
+    if (!vehicle || !reportTitle.trim()) return;
+    createDefect.mutate({
+      fleetId: vehicle.fleetId,
+      vehicleId,
+      title: reportTitle.trim(),
+      description: reportDescription.trim() || undefined,
+      symptoms: reportSymptoms
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    });
+  }
 
   if (vehicleId && !data && !overviewQuery.isError) {
     return (
@@ -208,9 +252,14 @@ function TruckDetailContent() {
           {/* Issues */}
           <TabsContent value="issues" className="mt-6 space-y-6">
             <Card>
-              <CardHeader>
-                <CardTitle>Issues</CardTitle>
-                <CardDescription>All reported issues for this vehicle.</CardDescription>
+              <CardHeader className="flex flex-row items-start justify-between gap-3">
+                <div>
+                  <CardTitle>Issues</CardTitle>
+                  <CardDescription>All reported issues for this vehicle.</CardDescription>
+                </div>
+                <Button size="sm" onClick={() => setReportOpen(true)}>
+                  Report issue
+                </Button>
               </CardHeader>
               <CardContent className="space-y-3">
                 {allIssues.length === 0 ? (
@@ -304,6 +353,55 @@ function TruckDetailContent() {
           </TabsContent>
         </Tabs>
       </main>
+
+      <Dialog open={reportOpen} onOpenChange={setReportOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Report issue</DialogTitle>
+            <DialogDescription>
+              Capture a problem on this vehicle for triage before repair and reporting.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="report-title">What's wrong</Label>
+              <Input
+                id="report-title"
+                value={reportTitle}
+                onChange={(e) => setReportTitle(e.target.value)}
+                placeholder="e.g. Check engine light + derate on the highway"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="report-description">Details (optional)</Label>
+              <Textarea
+                id="report-description"
+                rows={3}
+                value={reportDescription}
+                onChange={(e) => setReportDescription(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="report-symptoms">Symptoms (one per line, optional)</Label>
+              <Textarea
+                id="report-symptoms"
+                rows={3}
+                value={reportSymptoms}
+                onChange={(e) => setReportSymptoms(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              disabled={createDefect.isPending || !reportTitle.trim()}
+              onClick={submitReport}
+            >
+              {createDefect.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Submit
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
