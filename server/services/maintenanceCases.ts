@@ -139,6 +139,59 @@ export async function getCaseForFleet(fleetId: number, caseId: number) {
   return row ?? null;
 }
 
+// Work-in-progress cases a shop staffer saved before finishing intake
+// (§5/§6 fast capture). Visible fleet-wide so a teammate can pick up where
+// someone left off — these never had a decision recorded, so there is
+// nothing tenant-sensitive beyond the case row itself.
+export async function listDraftCasesForFleet(fleetId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(maintenanceCases)
+    .where(and(eq(maintenanceCases.fleetId, fleetId), eq(maintenanceCases.status, "draft")))
+    .orderBy(desc(maintenanceCases.updatedAt))
+    .limit(20);
+}
+
+// Update a case still in "draft" status in place, so repeated "Save draft"
+// clicks during intake update the same row instead of piling up duplicates.
+export async function updateDraftCase(input: {
+  fleetId: number;
+  caseId: number;
+  vehicleId?: string;
+  title?: string | null;
+  summary?: string | null;
+  caseType?: string | null;
+  // Finalize the draft into a real case as part of the same update, so
+  // callers don't need a second round trip just to flip the status.
+  status?: CaseStatus;
+}) {
+  const db = await getDb();
+  if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable." });
+
+  const current = await getCaseForFleet(input.fleetId, input.caseId);
+  if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Draft case not found in this fleet." });
+  if (current.status !== "draft") {
+    throw new TRPCError({ code: "BAD_REQUEST", message: "This case is no longer a draft." });
+  }
+
+  const [row] = await db
+    .update(maintenanceCases)
+    .set({
+      ...(input.vehicleId ? { vehicleId: input.vehicleId } : {}),
+      ...(input.title !== undefined ? { title: input.title } : {}),
+      ...(input.summary !== undefined ? { summary: input.summary } : {}),
+      ...(input.caseType !== undefined ? { caseType: input.caseType } : {}),
+      ...(input.status ? { status: input.status } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(maintenanceCases.id, current.id))
+    .returning();
+
+  return row;
+}
+
 // Validated status transition. Rejects any transition not in the allowed map.
 export async function transitionCaseStatus(input: {
   fleetId: number;

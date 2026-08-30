@@ -49,7 +49,9 @@ import {
 import {
   createShopCase as createShopCaseService,
   listShopVehicles,
+  saveDraftShopCase,
 } from "../services/shopCaseCapture";
+import { listDraftCasesForFleet } from "../services/maintenanceCases";
 import {
   confirmOutcome as confirmOutcomeService,
   listOutcomesForCase,
@@ -83,6 +85,18 @@ const resolutionCategoryEnum = z.enum(RESOLUTION_CATEGORIES as unknown as [strin
 const verificationMethodEnum = z.enum(VERIFICATION_METHODS as unknown as [string, ...string[]]);
 const confirmationEvidenceEnum = z.enum(CONFIRMATION_EVIDENCE_TYPES as unknown as [string, ...string[]]);
 const evidenceSourceEnum = z.enum(EVIDENCE_SOURCES as unknown as [string, ...string[]]);
+
+const shopVehicleInputSchema = z.object({
+  vin: z.string().trim().length(17).optional(),
+  unitNumber: z.string().trim().max(50).optional(),
+  licensePlate: z.string().trim().max(20).optional(),
+  make: z.string().trim().max(100).optional(),
+  model: z.string().trim().max(100).optional(),
+  year: z.number().int().min(1980).max(2100).optional(),
+  engineMake: z.string().trim().max(100).optional(),
+  assetType: z.enum(["tractor", "straight_truck", "trailer", "other"]).optional(),
+  vinSource: z.enum(["vin_decoder", "tenant_record", "technician_input", "historical_import", "ai_extraction"]),
+});
 
 async function gateManages(ctx: { user: { id: number; role: string } }, requestedFleetId?: number | null) {
   const fleetId = await resolveActiveFleetId({ user: ctx.user, requestedFleetId: requestedFleetId ?? null });
@@ -495,19 +509,10 @@ export const maintenanceCasesRouter = router({
           // A returning customer's vehicle already on file for this shop.
           vehicleId: z.string().trim().min(1).optional(),
           // New/walk-in vehicle intake — required unless vehicleId is given.
-          vehicle: z
-            .object({
-              vin: z.string().trim().length(17).optional(),
-              unitNumber: z.string().trim().max(50).optional(),
-              licensePlate: z.string().trim().max(20).optional(),
-              make: z.string().trim().max(100).optional(),
-              model: z.string().trim().max(100).optional(),
-              year: z.number().int().min(1980).max(2100).optional(),
-              engineMake: z.string().trim().max(100).optional(),
-              assetType: z.enum(["tractor", "straight_truck", "trailer", "other"]).optional(),
-              vinSource: z.enum(["vin_decoder", "tenant_record", "technician_input", "historical_import", "ai_extraction"]),
-            })
-            .optional(),
+          vehicle: shopVehicleInputSchema.optional(),
+          // A draft saved earlier in this intake (see saveDraftCase) — finalize
+          // it in place instead of creating a second case row.
+          draftCaseId: z.number().int().positive().optional(),
         })
         .refine((val) => Boolean(val.vehicleId) !== Boolean(val.vehicle), {
           message: "Provide either an existing vehicleId or new vehicle details, not both.",
@@ -526,6 +531,48 @@ export const maintenanceCasesRouter = router({
         symptoms: input.symptoms,
         faultCodes: input.faultCodes,
         severity: input.severity as never,
+        draftCaseId: input.draftCaseId,
+      });
+    }),
+
+  // Work-in-progress cases this shop has saved but not yet finished intake
+  // for, so a "Resume draft" list can be shown on the new-case page.
+  listDraftCases: protectedProcedure
+    .input(z.object({ fleetId: z.number().optional() }))
+    .query(async ({ ctx, input }) => {
+      const fleetId = await gateCapability(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.createCase);
+      return listDraftCasesForFleet(fleetId);
+    }),
+
+  // Save a case in progress (§5/§6) before intake is complete — only a case
+  // type is required. Pass draftCaseId to update the same draft in place
+  // rather than creating a new row each time "Save draft" is clicked.
+  saveDraftCase: protectedProcedure
+    .input(
+      z
+        .object({
+          fleetId: z.number().optional(),
+          draftCaseId: z.number().int().positive().optional(),
+          caseType: caseTypeEnum,
+          complaint: z.string().max(4000).optional(),
+          vehicleId: z.string().trim().min(1).optional(),
+          vehicle: shopVehicleInputSchema.optional(),
+        })
+        .refine((val) => Boolean(val.vehicleId) !== Boolean(val.vehicle), {
+          message: "Provide either an existing vehicleId or new vehicle details, not both.",
+          path: ["vehicle"],
+        })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const fleetId = await gateCapability(ctx, input.fleetId, MAINTENANCE_CAPABILITIES.createCase);
+      return saveDraftShopCase({
+        fleetId,
+        actorUserId: ctx.user.id,
+        draftCaseId: input.draftCaseId,
+        vehicleId: input.vehicleId,
+        vehicle: input.vehicle,
+        caseType: input.caseType as never,
+        complaint: input.complaint,
       });
     }),
 
