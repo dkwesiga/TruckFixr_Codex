@@ -1232,37 +1232,36 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-3 sm:grid-cols-3">
-              {(verifiedHealth?.openDefects.length ?? 0) > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => scrollToSection("manager-open-defects-panel")}
-                  className="rounded-2xl border border-red-100 bg-red-50 px-4 py-4 text-left transition-colors hover:border-red-300 hover:bg-red-100/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
-                >
-                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-red-700">Open defects</p>
-                  <p className="mt-2 text-2xl font-semibold text-red-950">
-                    {verifiedHealth?.openDefects.length ?? 0}
-                  </p>
-                </button>
-              ) : (
-                <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-4">
-                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-red-700">Open defects</p>
-                  <p className="mt-2 text-2xl font-semibold text-red-950">
-                    {verifiedHealth?.openDefects.length ?? 0}
-                  </p>
-                </div>
-              )}
-              <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-4">
+              <button
+                type="button"
+                onClick={() => scrollToSection("manager-open-defects-list")}
+                className="rounded-2xl border border-red-100 bg-red-50 px-4 py-4 text-left transition-colors hover:border-red-300 hover:bg-red-100/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+              >
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-red-700">Open defects</p>
+                <p className="mt-2 text-2xl font-semibold text-red-950">
+                  {verifiedHealth?.openDefects.length ?? 0}
+                </p>
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollToSection("manager-fleet-operations")}
+                className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-4 text-left transition-colors hover:border-amber-300 hover:bg-amber-100/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+              >
                 <p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-700">Missed inspections</p>
                 <p className="mt-2 text-2xl font-semibold text-amber-950">
                   {verifiedHealth?.today.missedInspections ?? 0}
                 </p>
-              </div>
-              <div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-4">
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollToSection("manager-action-queue-panel")}
+                className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-4 text-left transition-colors hover:border-blue-300 hover:bg-blue-100/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              >
                 <p className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-700">Needs manager action</p>
                 <p className="mt-2 text-2xl font-semibold text-blue-950">
                   {managerActionItems.length}
                 </p>
-              </div>
+              </button>
             </CardContent>
           </Card>
 
@@ -1737,7 +1736,7 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
         </section>
 
         <section className="grid gap-6 xl:grid-cols-2">
-          <Card className="saas-card">
+          <Card id="manager-open-defects-list" className="saas-card scroll-mt-4">
             <CardHeader>
               <CardTitle className="text-slate-950">Open defects</CardTitle>
               <CardDescription>
@@ -2347,7 +2346,7 @@ function ManagerDashboardFixedContent({ internalAdminRole }: { internalAdminRole
                 />
               </CardContent>
             </Card>
-            <Card className="saas-card">
+            <Card id="manager-action-queue-panel" className="saas-card scroll-mt-4">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-slate-950">
                   <AlertTriangle className="h-5 w-5 text-amber-600" />
