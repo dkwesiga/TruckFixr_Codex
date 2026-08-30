@@ -175,8 +175,8 @@ function decisionCard(
     recommendation: assessment.recommendation,
     evidenceReviewed,
     // Suppressed by default; populated with AI-generated hypothesis-level
-    // causes (§4.6) by submitGuestContact when available for a non-critical
-    // case. Never set for a critical case (safety guidance takes priority).
+    // causes (§4.6) by submitGuestContact when available, including for a
+    // critical case (shown alongside, never in place of, safety guidance).
     possibleCauses: null as GuestLikelyCause[] | null,
     possibleCausesSuppressed: true,
     humanReviewStatus: assessment.reviewStatus,
@@ -290,9 +290,12 @@ export async function startGuestCase(args: StartGuestCaseArgs) {
       confidence: null,
     }),
   ]);
-  const nextQuestion: AdaptiveQuestion | null = rawAssessment.criticalTriggered
-    ? null
-    : firstTurnNextQuestion;
+  // Clarifying questions run for critical cases too (safety guidance is shown
+  // alongside them throughout, per TryOneCase.tsx) so confidence has a chance
+  // to improve before the final report, rather than freezing on the very
+  // first signal. generateGuestNextQuestion's own confidence/question-budget
+  // logic still bounds how many are asked.
+  const nextQuestion: AdaptiveQuestion | null = firstTurnNextQuestion;
   const assessment = applyLowConfidenceEscalation(rawAssessment, nextQuestion);
   const now = new Date();
   const publicToken = generateOpaqueToken();
@@ -414,9 +417,13 @@ export async function answerGuestQuestion(params: {
   const wasCritical = row.criticalTriggered === true;
   const wasAlreadyQueuedForLowConfidence = row.reviewStatus === "review_queued";
 
-  const nextQuestion = rawAssessment.criticalTriggered
-    ? null
-    : await generateGuestNextQuestion({ input, answers, vehicleIdentifier, confidence: rawAssessment.confidence });
+  // See startGuestCase: clarifying questions continue for critical cases too.
+  const nextQuestion = await generateGuestNextQuestion({
+    input,
+    answers,
+    vehicleIdentifier,
+    confidence: rawAssessment.confidence,
+  });
   const assessment = applyLowConfidenceEscalation(rawAssessment, nextQuestion);
 
   await db
@@ -594,16 +601,14 @@ export async function submitGuestContact(params: {
   }
 
   const card = decisionCard(assessment, input, answers);
-  // AI-generated likely causes (PRD §4.6) are strictly additive: only for
-  // non-critical cases (an active emergency gets safety guidance, not cause
-  // speculation), and never able to change readiness/safetyGuidance — those
-  // remain fully governed by the deterministic assessment above.
-  if (!assessment.criticalTriggered) {
-    const causes = await generateGuestLikelyCauses({ guestCaseId: row.id, input, answers });
-    if (causes.length > 0) {
-      card.possibleCauses = causes;
-      card.possibleCausesSuppressed = false;
-    }
+  // AI-generated likely causes (PRD §4.6) are strictly additive: shown
+  // alongside safety guidance on a critical case too, but never able to
+  // change readiness/safetyGuidance — those remain fully governed by the
+  // deterministic assessment above.
+  const causes = await generateGuestLikelyCauses({ guestCaseId: row.id, input, answers });
+  if (causes.length > 0) {
+    card.possibleCauses = causes;
+    card.possibleCausesSuppressed = false;
   }
   // Persisted for later retrieval by verifyGuestContactCode — recomputing at
   // verify time would risk drifting from what was captured here.

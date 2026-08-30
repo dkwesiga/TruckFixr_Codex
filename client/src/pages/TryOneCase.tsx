@@ -240,13 +240,16 @@ export default function TryOneCase() {
   }) {
     setPreliminary(res.preliminary);
     setSafetyGuidance(res.safetyGuidance);
-    if (res.criticalTriggered) {
+    if (res.nextQuestion) {
+      // Clarifying questions run even on a critical case (safety guidance
+      // stays visible via the "questions" phase banner below) so confidence
+      // has a chance to improve before the final report.
+      setQuestion(res.nextQuestion);
+      setPhase("questions");
+    } else if (res.criticalTriggered) {
       setQuestion(null);
       setPhase("critical");
       trackEvent("critical_escalation_triggered", {});
-    } else if (res.nextQuestion) {
-      setQuestion(res.nextQuestion);
-      setPhase("questions");
     } else {
       setQuestion(null);
       setPhase("preliminary");
@@ -815,21 +818,24 @@ export default function TryOneCase() {
         )}
 
         {phase === "questions" && question && (
-          <div className={cn(cardClass, "space-y-5 p-5 sm:p-6")}>
-            <StepDots current={Math.min(answered + 1, 3)} total={3} />
-            <h2 className={cn(displayClass, "text-xl sm:text-2xl")}>{question.prompt}</h2>
-            <div className="grid gap-2">
-              {question.options.map((o) => (
-                <button
-                  key={o.value}
-                  type="button"
-                  onClick={() => handleAnswer(o.value)}
-                  disabled={answerMutation.isPending}
-                  className="min-h-[48px] rounded-md border border-[#C3C7CE] bg-white px-4 text-left text-sm font-medium text-[#0A1A2E] hover:border-[#0A1A2E] disabled:opacity-60"
-                >
-                  {o.label}
-                </button>
-              ))}
+          <div className="space-y-5">
+            {safetyGuidance && <SafetyCard guidance={safetyGuidance} />}
+            <div className={cn(cardClass, "space-y-5 p-5 sm:p-6")}>
+              <StepDots current={Math.min(answered + 1, 3)} total={3} />
+              <h2 className={cn(displayClass, "text-xl sm:text-2xl")}>{question.prompt}</h2>
+              <div className="grid gap-2">
+                {question.options.map((o) => (
+                  <button
+                    key={o.value}
+                    type="button"
+                    onClick={() => handleAnswer(o.value)}
+                    disabled={answerMutation.isPending}
+                    className="min-h-[48px] rounded-md border border-[#C3C7CE] bg-white px-4 text-left text-sm font-medium text-[#0A1A2E] hover:border-[#0A1A2E] disabled:opacity-60"
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}
