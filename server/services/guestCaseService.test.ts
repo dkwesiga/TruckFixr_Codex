@@ -182,7 +182,10 @@ describe("answerGuestQuestion — safety sweep can escalate", () => {
     const res = await answerGuestQuestion({ publicToken, questionId: "safety_sweep", answer: "smoke_fire" });
     expect(res.criticalTriggered).toBe(true);
     expect(res.safetyGuidance).toBeTruthy();
-    expect(res.nextQuestion).toBeNull();
+    // Clarifying questions continue even on a critical case (safety guidance
+    // is shown alongside them, per TryOneCase.tsx) so confidence has a chance
+    // to improve before the final report.
+    expect(res.nextQuestion?.id).toBe("symptom_frequency");
     expect(rows("caseReviewQueueItems")).toHaveLength(1);
   });
 });
@@ -243,6 +246,27 @@ describe("submitGuestContact", () => {
     const res = await verifyGuestContactCode({ publicToken, code: latestSentCode() });
     expect(res.decision.readiness).toBeDefined();
     expect(res.decision.possibleCausesSuppressed).toBe(true);
+  });
+
+  it("includes possible causes on a critical case when the AI returns them", async () => {
+    const { generateGuestLikelyCauses } = await import("./guestCaseAiReport");
+    vi.mocked(generateGuestLikelyCauses).mockResolvedValueOnce([
+      { label: "Brake line leak", confidenceBand: "medium", supportingEvidence: ["Reported brake failure"], status: "hypothesis" },
+    ]);
+
+    const { publicToken } = await startGuestCase({
+      concernText: "the brakes failed on the highway",
+      operatingStatus: "stopped",
+      concernCategory: "symptom",
+    });
+    await submitGuestContact({ publicToken, email: "ops@fleet-a.com", consentEmail: true, ...ack });
+    const res = await verifyGuestContactCode({ publicToken, code: latestSentCode() });
+
+    expect(res.decision.readiness).toBe("stop");
+    expect(res.decision.safetyGuidance).toBeTruthy();
+    expect(res.decision.possibleCausesSuppressed).toBe(false);
+    expect(res.decision.possibleCauses).toHaveLength(1);
+    expect(res.decision.possibleCauses?.[0].label).toBe("Brake line leak");
   });
 
   it("resend issues a new code that also verifies", async () => {
