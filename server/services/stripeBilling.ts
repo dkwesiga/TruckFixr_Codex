@@ -260,6 +260,19 @@ export async function createTruckFixrCheckoutSession(input: TruckFixrStripeCheck
     form["line_items[1][quantity]"] = extraTrailerQuantity;
   }
 
+  if (ENV.enableAcssDebit) {
+    // Canadian pre-authorized bank debit, alongside card. Settles over 3-5
+    // business days rather than instantly, so the subscription starts out
+    // incomplete/processing until the debit clears — hasPaidAccess() already
+    // treats non-"active" billingStatus as unpaid, so no gating change needed.
+    form["payment_method_types[0]"] = "card";
+    form["payment_method_types[1]"] = "acss_debit";
+    form["payment_method_options[acss_debit][currency]"] = "cad";
+    form["payment_method_options[acss_debit][mandate_options][payment_schedule]"] = "combined";
+    form["payment_method_options[acss_debit][mandate_options][transaction_type]"] = "business";
+    form["payment_method_options[acss_debit][verification_method]"] = "automatic";
+  }
+
   return stripeRequest<StripeCheckoutSession>("/v1/checkout/sessions", {
     form,
   });

@@ -60,6 +60,10 @@ export const ENV = {
   stripePriceProAnnual: readEnv("STRIPE_PRICE_PRO_ANNUAL"),
   stripePriceFleetMonthly: readEnv("STRIPE_PRICE_FLEET_MONTHLY"),
   enableStripeDiagnosticsEndpoint: readBooleanEnv("ENABLE_STRIPE_DIAGNOSTICS_ENDPOINT"),
+  // ACSS Debit (Canadian pre-authorized bank debit) requires the capability to be
+  // approved on the Stripe account first (Dashboard > Settings > Payment methods).
+  // Off by default so a deploy never offers it before that approval lands.
+  enableAcssDebit: readBooleanEnv("ENABLE_ACSS_DEBIT"),
   // Structured (non-image) VIN OCR diagnostic logging — provider/model actually used, ROI
   // dimensions/byte size, raw model response, parsed/normalized candidates, validation
   // result. Never logs image data. Opt-in and off by default even outside production.
