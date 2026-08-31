@@ -309,19 +309,28 @@ export default function UserProfile() {
         return;
       }
 
-      const result =
-        planKey === "fleet_growth"
-          ? await createPilotCheckoutMutation.mutateAsync({
-              successPath: "/profile?subscription=success",
-              cancelPath: "/profile?subscription=cancelled",
-            })
-          : await createCheckoutMutation.mutateAsync({
-              planKey,
-              billingInterval: billingCadence,
-              extraTrailerQuantity: 0,
-              successPath: "/profile?subscription=success",
-              cancelPath: "/profile?subscription=cancelled",
-            });
+      const result = await createCheckoutMutation.mutateAsync({
+        planKey,
+        billingInterval: billingCadence,
+        extraTrailerQuantity: 0,
+        successPath: "/profile?subscription=success",
+        cancelPath: "/profile?subscription=cancelled",
+      });
+      if (!result.checkoutUrl) {
+        throw new Error("Checkout session could not be created.");
+      }
+      window.location.href = result.checkoutUrl;
+    } catch (error: any) {
+      toast.error(error?.message || "Unable to start checkout");
+    }
+  };
+
+  const handleStartPilotCheckout = async () => {
+    try {
+      const result = await createPilotCheckoutMutation.mutateAsync({
+        successPath: "/profile?subscription=success",
+        cancelPath: "/profile?subscription=cancelled",
+      });
       if (!result.checkoutUrl) {
         throw new Error("Checkout session could not be created.");
       }
@@ -843,7 +852,7 @@ export default function UserProfile() {
                         Users enabled: {subscription.pilotAccess.usersUsed} / {subscription.pilotAccess.maxUsers}
                       </p>
                     </div>
-                    <Button className="bg-blue-600 hover:bg-blue-700" onClick={() => handleUpgrade("fleet_growth")}>
+                    <Button className="bg-blue-600 hover:bg-blue-700" onClick={handleStartPilotCheckout}>
                       Start Fleet Pilot Checkout
                     </Button>
                   </div>
@@ -978,9 +987,7 @@ export default function UserProfile() {
                           <Button className="w-full bg-blue-600 hover:bg-blue-700" onClick={() => handleUpgrade(plan.planKey)}>
                             {plan.planKey === "custom_fleet"
                               ? "Request Fleet Quote"
-                              : plan.planKey === "fleet_growth"
-                                ? "Start 30-Day Fleet Pilot"
-                                : `Choose ${plan.name}`}
+                              : `Choose ${plan.name}`}
                           </Button>
                         )}
                       </div>
