@@ -277,6 +277,11 @@ services:
       # alerts). Leave unset to keep the public-launch gate fail-safe closed.
       - key: CASE_REVIEWER_EMAIL
         sync: false
+      # Inbox that receives a follow-up notice (guest email + diagnosis summary)
+      # once a guest's final "/try-one-case" report is released. Defaults to
+      # contact@truckfixr.com in code if unset.
+      - key: CASE_FOLLOWUP_NOTIFICATION_EMAIL
+        sync: false
       - key: VITE_APP_ID
         value: truckfixr-render
       - key: APP_BASE_URL
