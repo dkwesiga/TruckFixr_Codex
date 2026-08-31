@@ -957,16 +957,14 @@ export default function UserProfile() {
                       key={plan.planKey}
                       className={`flex h-full flex-col rounded-xl border p-4 ${plan.recommended ? "border-blue-200 bg-blue-50/40" : "border-slate-200"}`}
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900">{plan.name}</p>
-                          <p className="mt-1 text-xs text-slate-600">{plan.description}</p>
-                        </div>
-                        {plan.recommended ? (
-                          <span className="rounded-full bg-blue-600 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white">
-                            Recommended
-                          </span>
-                        ) : null}
+                      {plan.recommended ? (
+                        <span className="mb-2 inline-block w-fit rounded-full bg-blue-600 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white">
+                          Recommended
+                        </span>
+                      ) : null}
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{plan.name}</p>
+                        <p className="mt-1 text-xs text-slate-600">{plan.description}</p>
                       </div>
                       <p className="mt-3 text-lg font-semibold text-slate-950">
                         {priceLabel}
