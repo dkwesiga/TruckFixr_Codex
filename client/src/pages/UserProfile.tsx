@@ -942,7 +942,7 @@ export default function UserProfile() {
                 </div>
               ) : null}
 
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
                 {visiblePlans.map((plan) => {
                   const isCurrent = currentPlanKey === plan.planKey;
                   const price = getTruckFixrPlanPrice(plan.planKey, billingCadence);
@@ -953,7 +953,10 @@ export default function UserProfile() {
                         ? "CAD $0"
                         : `${formatTruckFixrCad(price)} / ${billingCadence === "annual" ? "year" : "month"}`;
                   return (
-                    <div key={plan.planKey} className={`rounded-xl border p-4 ${plan.recommended ? "border-blue-200 bg-blue-50/40" : "border-slate-200"}`}>
+                    <div
+                      key={plan.planKey}
+                      className={`flex h-full flex-col rounded-xl border p-4 ${plan.recommended ? "border-blue-200 bg-blue-50/40" : "border-slate-200"}`}
+                    >
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="text-sm font-semibold text-slate-900">{plan.name}</p>
@@ -974,7 +977,7 @@ export default function UserProfile() {
                         <li>AI diagnosis sessions: {plan.aiDiagnosticSessionLimit ?? "Custom"}</li>
                         <li>Dashboard: {plan.fleetDashboard}</li>
                       </ul>
-                      <div className="mt-4">
+                      <div className="mt-auto pt-4">
                         {isCurrent ? (
                           <Button variant="outline" className="w-full" disabled>
                             Current plan
