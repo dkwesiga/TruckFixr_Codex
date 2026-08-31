@@ -159,4 +159,7 @@ export const ENV = {
     readEnv("SALES_NOTIFICATION_EMAIL") ||
     "info@truckfixr.com",
   caseBackupReviewerEmail: readEnv("CASE_BACKUP_REVIEWER_EMAIL"),
+  // Inbox that gets a follow-up notice (guest email + diagnosis summary) once a
+  // guest's final "/try-one-case" report is released, so TruckFixr can follow up.
+  caseFollowUpNotificationEmail: readEnv("CASE_FOLLOWUP_NOTIFICATION_EMAIL") || "contact@truckfixr.com",
 };
