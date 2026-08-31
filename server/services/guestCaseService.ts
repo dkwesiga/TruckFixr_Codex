@@ -7,6 +7,7 @@
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../db";
+import { ENV } from "../_core/env";
 import { randomUUID } from "node:crypto";
 import {
   analyticsEvents,
@@ -186,6 +187,95 @@ function decisionCard(
     confidenceLow: assessment.confidenceLow,
     lowConfidenceNotice: assessment.confidenceLow ? LOW_CONFIDENCE_NOTICE : null,
   };
+}
+
+function vehicleSummaryLine(vehicleIdentifier: GuestVehicleIdentifier | null): string | null {
+  if (!vehicleIdentifier) return null;
+  const descriptor = [vehicleIdentifier.year, vehicleIdentifier.make, vehicleIdentifier.model]
+    .filter(Boolean)
+    .join(" ");
+  return descriptor || vehicleIdentifier.unitNumber || vehicleIdentifier.vin || null;
+}
+
+function reportSummaryLines(
+  row: { concernText: string; vehicleIdentifier: unknown },
+  card: {
+    readinessLabel: string;
+    operatingAction: string;
+    recommendation: string;
+    safetyGuidance: string | null;
+    possibleCauses: GuestLikelyCause[] | null;
+  }
+): string[] {
+  const vehicleLine = vehicleSummaryLine((row.vehicleIdentifier ?? null) as GuestVehicleIdentifier | null);
+  return [
+    `Concern: ${row.concernText}`,
+    vehicleLine ? `Vehicle: ${vehicleLine}` : null,
+    `Decision: ${card.readinessLabel}`,
+    `Operating action: ${card.operatingAction}`,
+    `Recommendation: ${card.recommendation}`,
+    card.safetyGuidance ? `Safety guidance: ${card.safetyGuidance}` : null,
+    card.possibleCauses?.length
+      ? `Possible causes: ${card.possibleCauses
+          .map((c) => `${c.label} (${c.confidenceBand} confidence)`)
+          .join("; ")}`
+      : null,
+  ].filter((line): line is string => Boolean(line));
+}
+
+/**
+ * Delivers the final report to the guest and a follow-up notice (guest email +
+ * diagnosis summary) to TruckFixr's follow-up inbox, once the report is
+ * released via verifyGuestContactCode. Best-effort/non-fatal on both sends —
+ * the guest already has the report on-screen either way.
+ */
+async function sendGuestFinalReportEmails(params: {
+  row: { concernText: string; vehicleIdentifier: unknown };
+  card: {
+    readinessLabel: string;
+    operatingAction: string;
+    recommendation: string;
+    safetyGuidance: string | null;
+    possibleCauses: GuestLikelyCause[] | null;
+  };
+  guestEmail: string;
+}): Promise<void> {
+  const summaryLines = reportSummaryLines(params.row, params.card);
+  const disclaimer =
+    "This is decision support only — not a confirmed diagnosis, roadworthiness certification, or emergency service.";
+
+  try {
+    await sendEmail({
+      to: [params.guestEmail],
+      subject: "Your TruckFixr vehicle assessment report",
+      text: [
+        "Here is your TruckFixr vehicle assessment report.",
+        "",
+        ...summaryLines,
+        "",
+        disclaimer,
+      ].join("\n"),
+    });
+  } catch (error) {
+    console.error("[GuestCaseService] failed to send final report email to guest:", error);
+  }
+
+  try {
+    await sendEmail({
+      to: [ENV.caseFollowUpNotificationEmail],
+      subject: "TruckFixr guest case report released — follow up",
+      text: [
+        "A guest \"/try-one-case\" report was just released.",
+        "",
+        `Guest email: ${params.guestEmail}`,
+        ...summaryLines,
+        "",
+        "Follow up with the guest as appropriate.",
+      ].join("\n"),
+    });
+  } catch (error) {
+    console.error("[GuestCaseService] failed to send follow-up notification to TruckFixr:", error);
+  }
 }
 
 async function emitEvent(
@@ -687,6 +777,20 @@ export async function verifyGuestContactCode(params: { publicToken: string; code
   }
 
   await emitEvent(db, row.id, "contact_verified", {});
+
+  const [contact] = await db
+    .select()
+    .from(guestCaseContacts)
+    .where(eq(guestCaseContacts.guestCaseId, row.id))
+    .orderBy(desc(guestCaseContacts.id))
+    .limit(1);
+  if (contact?.email) {
+    await sendGuestFinalReportEmails({
+      row,
+      card: stored.card as Parameters<typeof sendGuestFinalReportEmails>[0]["card"],
+      guestEmail: contact.email,
+    });
+  }
 
   return {
     decision: stored.card,
