@@ -146,6 +146,12 @@ export async function getCompanyMembership(input: { userId: number; fleetId?: nu
     return null;
   }
 
+  // When a user holds more than one active membership (e.g. they own one
+  // fleet and are also a manager on another), prefer the fleet they own:
+  // this is what downstream callers like getUserPrimaryFleetId use to
+  // resolve billing and the manager dashboard, and picking a non-owner
+  // membership just because it was touched more recently would silently
+  // route billing checks to a fleet the user can't actually manage.
   const [membership] = await db
     .select()
     .from(companyMemberships)
@@ -155,7 +161,10 @@ export async function getCompanyMembership(input: { userId: number; fleetId?: nu
         eq(companyMemberships.status, "active")
       )
     )
-    .orderBy(desc(companyMemberships.updatedAt))
+    .orderBy(
+      desc(sql`case when ${companyMemberships.role} = 'owner' then 1 else 0 end`),
+      desc(companyMemberships.updatedAt)
+    )
     .limit(1);
 
   if (membership) {

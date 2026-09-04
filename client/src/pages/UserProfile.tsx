@@ -242,8 +242,18 @@ export default function UserProfile() {
     }
   };
 
-  const createInitialFleet = async () => {
-    // Create initial fleet
+  const createInitialFleetIfMissing = async () => {
+    // The "fleet" step can be reached with stale fleet state — e.g. the
+    // profile form was submitted before subscriptions.getCurrent finished
+    // its first load, so hasExistingFleet read as false even though the
+    // account already has a fleet. Re-check with fresh data immediately
+    // before creating so this never produces a duplicate fleet.
+    await utils.subscriptions.getCurrent.invalidate();
+    const fresh = await utils.subscriptions.getCurrent.fetch();
+    if (typeof fresh?.activeFleetId === "number" && fresh.activeFleetId > 0) {
+      return null;
+    }
+
     const fleet = await createFleetMutation.mutateAsync({
       name: `${formData.company.trim() || formData.name.trim() || "My"} Fleet`,
     });
@@ -269,8 +279,8 @@ export default function UserProfile() {
     setIsLoading(true);
 
     try {
-      await createInitialFleet();
-      toast.success("Fleet created successfully!");
+      const fleet = await createInitialFleetIfMissing();
+      toast.success(fleet ? "Fleet created successfully!" : "Profile updated.");
       // Redirect to manager dashboard
       setTimeout(() => {
         window.location.href = "/manager";
@@ -294,7 +304,7 @@ export default function UserProfile() {
 
     setIsLoading(true);
     try {
-      await createInitialFleet();
+      await createInitialFleetIfMissing();
       window.location.href = "/manager";
     } catch (error: any) {
       toast.error(error?.message || "Failed to create fleet");
