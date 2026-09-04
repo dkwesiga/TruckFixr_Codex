@@ -18,7 +18,11 @@ evidence from the domain owner, and update the shared module, not ad hoc strings
 
 ## Core domain model (as implemented, `drizzle/schema.ts`)
 
-- **fleets** — the tenant. Every customer-data table is scoped by `fleetId`.
+- **fleets** — the tenant. Every customer-data table is scoped by `fleetId`, either
+  directly or via a join to a fleet-scoped parent — e.g. `partsRequests` has no
+  `fleetId` column of its own and scopes only through its `caseId` →
+  `maintenanceCases.fleetId`. Don't assume a raw `fleetId` column exists on every
+  table without checking `drizzle/schema.ts`.
 - **users** + **companyMemberships** — role is `owner` | `manager` | `driver` per fleet;
   `internalAdminRole` (`super_admin` | `admin` | `read_only_viewer`) marks TruckFixr staff,
   independent of fleet role.
@@ -48,9 +52,16 @@ naming here must match the implementation, not aspirational docs.
 - DB: Postgres via Drizzle ORM (`drizzle/schema.ts`, migrations in `drizzle/*.sql`).
   Auth/storage: Supabase. Payments: Stripe. Email: Resend.
 - tRPC procedure tiers (`server/_core/trpc.ts`): `publicProcedure` (no auth) →
-  `protectedProcedure` (any authenticated user) → `adminProcedure` (fleet `owner`/
-  `manager`, still fleet-scoped) → `staffProcedure` (TruckFixr internal staff only,
+  `protectedProcedure` (any authenticated user) → `adminProcedure` (requires
+  `ctx.user.role` is `owner`/`manager` — this check alone does **not** scope to a
+  specific fleet) → `staffProcedure` (TruckFixr internal staff only,
   `isStaffAdminUser`, crosses fleet boundaries — used for admin/observability routes).
+  **`adminProcedure`'s middleware checks role only.** Every resolver behind it must
+  still explicitly resolve and verify the caller's fleet itself
+  (`resolveActiveFleetId` / `assertManagesFleet` / `assertVehicleInFleet` in
+  `server/services/maintenanceTenantScope.ts`, or the equivalent in
+  `companyAccess.ts`) — do not assume the procedure tier alone enforces tenant
+  scoping.
 - Build/deploy: `render.yaml` (Render, `autoDeploy`). CI: `.github/workflows/ci.yml`
   (typecheck + tests + gitleaks secret scan + non-blocking `pnpm audit`), plus a
   separate `rls-isolation.yml` workflow.

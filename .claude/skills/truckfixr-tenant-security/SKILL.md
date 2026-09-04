@@ -48,7 +48,10 @@ check.
 - `publicProcedure` — no auth. Must never return customer data.
 - `protectedProcedure` — any authenticated user. Correct default; still needs its own
   fleet-scope check inside the resolver.
-- `adminProcedure` — fleet `owner`/`manager` only, still fleet-scoped.
+- `adminProcedure` — checks `ctx.user.role` is `owner`/`manager` only. This is a
+  role check, not a fleet-scope check — the middleware itself does not restrict
+  which fleet. The resolver behind it must still call `resolveActiveFleetId` +
+  `assertManagesFleet` (or the `companyAccess.ts` equivalent) itself.
 - `staffProcedure` — TruckFixr internal staff, the only sanctioned cross-fleet path.
 
 Flag any new procedure that reads/writes customer data using anything looser than

@@ -34,8 +34,13 @@ list wants doesn't exist yet, say so as a gap rather than skip it silently.
 - `secret-scan` job: gitleaks (blocking).
 - `dependency-audit` job: `pnpm audit --audit-level=high --prod` (`continue-on-error:
   true` — non-blocking today; see `docs/security/policies/14-vulnerability-management-policy.md`).
-- A second workflow, `rls-isolation.yml`, exists separately for RLS verification —
-  check its current trigger conditions before assuming it runs on every PR.
+- A second workflow, `rls-isolation.yml`, exists separately for RLS verification.
+  **It does not run on push or pull_request at all** — only on
+  `workflow_dispatch` and a weekly cron (Mondays 13:00 UTC), and only if the
+  `RLS_DATABASE_URL` secret is configured (it skips itself otherwise). It feeds
+  the weekly SOC 2 readiness review, not per-PR CI — don't assume a PR's green
+  checks include an RLS proof; that only happens on the weekly schedule or a
+  manual dispatch.
 
 ## Gaps (report, don't fabricate)
 

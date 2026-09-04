@@ -19,11 +19,14 @@ this expands on, and `docs/security/` for security-specific detail.
   present in dependencies for some asset flows.
 - **Payments**: Stripe (`server/_core/stripeBillingRoutes.ts`, `billingRoutes.ts`).
 - **Email**: Resend.
-- **AI**: `server/services/aiOrchestrator.ts` fronts the configured LLM
-  provider(s) (OpenRouter-backed per code comments; provider/model via env) for
-  TADIS diagnostics; a separate vision path exists for VIN OCR
-  (`vehicleLookupRoutes.ts`, `voiceTranscription.ts` also present for a voice input
-  path).
+- **AI**: `server/services/aiOrchestrator.ts` is a genuinely multi-provider
+  orchestrator (`AiProvider = "openai" | "anthropic" | "gemini" | "openrouter" |
+  "groq"`), selected and modeled via env (`PRIMARY_AI_PROVIDER` defaults to
+  `openrouter`, `FALLBACK_AI_PROVIDER` supported) — do not describe this as
+  "OpenRouter-backed" as though OpenRouter were the only or hardcoded provider.
+  Used for TADIS diagnostics; a separate vision path exists for VIN OCR
+  (`vehicleLookupRoutes.ts`, with a model-aware image-capability check per
+  provider), and `voiceTranscription.ts` for a voice-input path.
 - **Deploy**: Render (`render.yaml`, `autoDeploy` on `main`).
 - **CI**: GitHub Actions (`.github/workflows/ci.yml` — typecheck/test/secret-scan/
   audit; `rls-isolation.yml` — separate RLS verification workflow).
@@ -72,10 +75,12 @@ only, because the app's DB role bypasses it.
 |---|---|
 | Driver reports issue → case created → triage → manager sees recommendation → action → repair → confirmed outcome | Covered piecemeal by service-level unit tests (`inspectionWorkflow.test.ts`, `aiTriage`/`aiOrchestrator.test.ts`, `maintenanceCases` service, `confirmedOutcomes.test.ts`); no single E2E test asserts the full chain end-to-end. |
 | Safety escalation (critical issue escalates, unsafe vehicle not shown as safe) | Covered by unit-level severity/action mapping tests in `shared/maintenance/`; no integration/E2E test simulates a full critical-defect submission through to an escalation notification. |
-| Tenant isolation (Fleet A cannot access Fleet B) | Covered by `scripts/verify/rls.ts` (live-DB, `authenticated`-role proof) for the RLS defense-in-depth layer; the *primary* application-layer boundary has no equivalent automated test suite today (this is the residual risk already flagged in `docs/security/tenant-isolation.md`). |
+| Tenant isolation (Fleet A cannot access Fleet B) | **Correction (this doc previously understated this):** `scripts/verify/rls.ts` covers the live-DB RLS defense-in-depth layer, but the *primary* application-layer boundary already has real, non-trivial coverage too — `server/companyAccessFleetScope.test.ts` (unit tests on `canManageCompanyOperations`: cross-tenant denial, owner fallback, inactive membership, driver denial), `server/routerFleetScope.test.ts` (tRPC-caller-level cross-fleet tests for `inspections.getRecentByFleet`, `defects.listByFleet`, `fleet.getById`), `server/managerActionQueueAuthz.test.ts` (`diagnostics.getManagerActionQueue`), and `server/services/confirmedOutcomes.test.ts` / `server/diagnosticFeedbackPersistence.test.ts` (cross-fleet leakage guard in the confirmed-outcome builder). See `docs/architecture/tenant-isolation-test-coverage.md` for the full resource-by-resource map and the identified gap (the `maintenanceCases` router's case-derived-fleet path had no router-level cross-tenant test until this pass added one). |
 | Demo isolation (demo data cannot contaminate production) | Covered by `pnpm validate:demo-seed` plus the `ALLOW_DEMO_SEED`/`ALLOW_DEMO_PRODUCTION_SEED` env guards. No CI job runs this today (it needs a database) — a manual/staging-only check. |
 | Parts lifecycle (requirement → fitment → supplier → approval → order → receipt → install → outcome) | Only the early stages exist (`partsRequests.ts` concierge intake/triage). No fitment-validation, ordering, or receipt tracking yet — see `docs/architecture/parts-acquisition.md`. |
 
 Recommended priority for closing these (see `CLAUDE.md` / final report for the full
-ranked list): an automated application-layer tenant-scoping test suite is the
-highest-value gap, since it's the layer with no safety net today.
+ranked list): the application-layer tenant boundary already has a real safety net
+(see above) — the remaining work is extending its per-resource coverage (see
+`docs/architecture/tenant-isolation-test-coverage.md`) and adding at least one
+E2E-level proof of the same boundary, not building a suite from nothing.

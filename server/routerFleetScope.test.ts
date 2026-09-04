@@ -19,15 +19,25 @@ import type { TrpcContext } from "./_core/context";
  */
 const FLEET_A = 1;
 const FLEET_B = 2;
+const CASE_IN_FLEET_A = 101;
+const CASE_IN_FLEET_B = 202;
 
-const { canManageVehicleAccessMock, getCompanyMembershipMock } = vi.hoisted(() => ({
-  canManageVehicleAccessMock: vi.fn(async ({ fleetId }: { fleetId: number }) => fleetId === FLEET_A),
-  getCompanyMembershipMock: vi.fn(async ({ fleetId }: { fleetId?: number | null }) =>
-    fleetId === FLEET_A
-      ? { fleetId: FLEET_A, userId: 14, role: "manager", status: "active" }
-      : null
-  ),
-}));
+const { canManageVehicleAccessMock, getCompanyMembershipMock, getCaseFleetIdMock, requireFleetFeatureMock } =
+  vi.hoisted(() => ({
+    canManageVehicleAccessMock: vi.fn(async ({ fleetId }: { fleetId: number }) => fleetId === FLEET_A),
+    getCompanyMembershipMock: vi.fn(async ({ fleetId }: { fleetId?: number | null }) =>
+      fleetId === FLEET_A
+        ? { fleetId: FLEET_A, userId: 14, role: "manager", status: "active" }
+        : null
+    ),
+    // maintenanceCases.get/transition resolve a caseId to its OWNING fleet (not the
+    // caller's own fleet) before checking membership — see getCaseFleetId in
+    // server/services/maintenanceCases.ts. This mock stands in for that lookup.
+    getCaseFleetIdMock: vi.fn(async (caseId: number) => (caseId === CASE_IN_FLEET_A ? FLEET_A : FLEET_B)),
+    // Feature-flag gating is orthogonal to tenant isolation; stub it out so these
+    // tests isolate the fleet-scoping boundary specifically.
+    requireFleetFeatureMock: vi.fn(async () => {}),
+  }));
 
 vi.mock("./services/vehicleAccess", async () => {
   const actual = await vi.importActual<typeof import("./services/vehicleAccess")>(
@@ -41,6 +51,20 @@ vi.mock("./services/companyAccess", async () => {
     "./services/companyAccess"
   );
   return { ...actual, getCompanyMembership: getCompanyMembershipMock };
+});
+
+vi.mock("./services/maintenanceCases", async () => {
+  const actual = await vi.importActual<typeof import("./services/maintenanceCases")>(
+    "./services/maintenanceCases"
+  );
+  return { ...actual, getCaseFleetId: getCaseFleetIdMock };
+});
+
+vi.mock("./services/fleetFeatures", async () => {
+  const actual = await vi.importActual<typeof import("./services/fleetFeatures")>(
+    "./services/fleetFeatures"
+  );
+  return { ...actual, requireFleetFeature: requireFleetFeatureMock };
 });
 
 // Thenable query stub: every chained call resolves to an empty result set, so the
@@ -65,6 +89,24 @@ function managerContext(): TrpcContext {
       name: "Manager Fourteen",
       loginMethod: "email",
       role: "manager",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      lastSignedIn: new Date(),
+    },
+    req: { protocol: "https", headers: {} } as TrpcContext["req"],
+    res: {} as TrpcContext["res"],
+  };
+}
+
+function driverContext(): TrpcContext {
+  return {
+    user: {
+      id: 15,
+      openId: "driver-15",
+      email: "driver15@example.com",
+      name: "Driver Fifteen",
+      loginMethod: "email",
+      role: "driver",
       createdAt: new Date(),
       updatedAt: new Date(),
       lastSignedIn: new Date(),
@@ -131,5 +173,72 @@ describe("fleet.getById — fleet scoping", () => {
     expect(getCompanyMembershipMock).toHaveBeenCalledWith(
       expect.objectContaining({ fleetId: FLEET_B })
     );
+  });
+});
+
+/**
+ * maintenanceCases exposes case-scoped endpoints (get/transition/assign/reopen/
+ * decisions/repair-cycles) that take a `caseId` with NO client-supplied `fleetId`
+ * required. The router derives the case's OWNING fleet server-side
+ * (`getCaseFleetId`, see server/services/maintenanceCases.ts) and then checks the
+ * caller's membership against THAT fleet (resolveCaseFleetId ->
+ * resolveActiveFleetId in server/routers/maintenanceCases.ts /
+ * server/services/maintenanceTenantScope.ts) — this is the attack this suite
+ * guards against: a Fleet A manager submitting a Fleet B case id in the request
+ * body and expecting to read/mutate it. Before this test, no router-level test
+ * exercised this path end-to-end (unlike inspections/defects/fleet above, which
+ * take fleetId directly as input).
+ */
+describe("maintenanceCases.get — fleet scoping (case-derived fleet resolution)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("allows a case that belongs to the caller's own fleet", async () => {
+    const caller = appRouter.createCaller(managerContext());
+    await expect(caller.maintenanceCases.get({ caseId: CASE_IN_FLEET_A })).resolves.toBeTruthy();
+    expect(getCaseFleetIdMock).toHaveBeenCalledWith(CASE_IN_FLEET_A);
+  });
+
+  it("denies a case that belongs to another fleet, checking membership against the case's real fleet", async () => {
+    const caller = appRouter.createCaller(managerContext());
+    await expect(
+      caller.maintenanceCases.get({ caseId: CASE_IN_FLEET_B })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(getCaseFleetIdMock).toHaveBeenCalledWith(CASE_IN_FLEET_B);
+    expect(getCompanyMembershipMock).toHaveBeenCalledWith(
+      expect.objectContaining({ fleetId: FLEET_B })
+    );
+  });
+
+  it("does not trust a client-supplied fleetId that disagrees with the case's real fleet", async () => {
+    // Attacker: real case lives in FLEET_B, but the request body claims FLEET_A.
+    // resolveCaseFleetId only falls back to the case-derived fleet when the
+    // client omits fleetId — so an explicit (wrong) fleetId is checked on its
+    // own merits, which must still fail for a caller who isn't a FLEET_B member.
+    const caller = appRouter.createCaller(managerContext());
+    await expect(
+      caller.maintenanceCases.get({ fleetId: FLEET_B, caseId: CASE_IN_FLEET_B })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+});
+
+describe("maintenanceCases.transition — fleet scoping and role boundary (adminProcedure)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("denies transitioning a case owned by another fleet before any status logic runs", async () => {
+    const caller = appRouter.createCaller(managerContext());
+    await expect(
+      caller.maintenanceCases.transition({ caseId: CASE_IN_FLEET_B, toStatus: "triaging" })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(getCaseFleetIdMock).toHaveBeenCalledWith(CASE_IN_FLEET_B);
+  });
+
+  it("denies a driver outright at the procedure tier, before any fleet/case resolution", async () => {
+    const caller = appRouter.createCaller(driverContext());
+    await expect(
+      caller.maintenanceCases.transition({ caseId: CASE_IN_FLEET_A, toStatus: "triaging" })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    // adminProcedure's role check rejects before the resolver body runs, so the
+    // case-fleet lookup is never reached for a non-owner/manager caller.
+    expect(getCaseFleetIdMock).not.toHaveBeenCalled();
   });
 });

@@ -1,8 +1,16 @@
 # Security rules
 
 - Read `docs/security/tenant-isolation.md` before touching any query that returns
-  customer data. The application layer is the tenant boundary; Postgres RLS is
-  defense-in-depth only (the app DB role owns the tables and bypasses RLS).
+  customer data. The application layer is the tenant boundary for Postgres tables;
+  RLS there is defense-in-depth only (the app DB role owns the tables and bypasses
+  RLS). This distinction is specifically about the app's own Postgres queries —
+  it does not describe Supabase Storage. Evidence-photo buckets
+  (`inspection-evidence`, `diagnostic-evidence`, `fleet-documents`) go through
+  Supabase Storage's `authenticated` role and its own RLS policies on
+  `storage.objects` (`supabase/migrations/20260527113000_storage_privacy_policies.sql`,
+  asserted by `server/storagePolicies.test.ts`) — for that path, RLS *is* the real,
+  enforced boundary, not merely a backstop. Don't assume storage access is
+  app-layer-checked the same way Postgres table access is.
 - Never derive `fleetId`/`companyId` from client input for an authorization decision.
   Resolve it server-side from session context (`ctx.user`), the way
   `server/services/companyAccess.ts` / `maintenanceTenantScope.ts` do.

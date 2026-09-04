@@ -16,8 +16,13 @@ narrative.
   never fire in production; if you're debugging a staff-only route locally and it
   "just works," check whether you're relying on this fallback before assuming the
   real auth check passed.
-- The TADIS tie-to-first-array-entry bug (commit `dc280ad`) is the kind of subtle
-  logic bug this codebase has hit before in scoring/ranking code — when reviewing
-  new similarity/ranking logic (e.g. `jaccardSimilarity`/`scoreHistoricalDiagnosticCase`
-  in `confirmedOutcomes.ts`), check tie-breaking behavior explicitly, don't assume
-  "first match" is intentional.
+- Confirmed bug (commit `dc280ad`, `server/services/tadisCore.ts`
+  `evaluateCause`/`buildBaselineStage`): when a complaint matched no signal for any
+  cause in `CAUSE_LIBRARY`, every cause tied at the same base score and a stable
+  sort silently returned the first-declared library entry as a confident-looking
+  diagnosis. Fixed by detecting the zero-evidence case explicitly and surfacing
+  "insufficient evidence" instead of a guess. General lesson for *any new*
+  ranking/similarity code (not a claim that other files have this bug today): when
+  every candidate can tie at zero evidence, verify the code path explicitly handles
+  that case rather than relying on sort stability to produce a reasonable-looking
+  default.
