@@ -129,7 +129,7 @@
     "baseline-browser-mapping": "^2.10.17",
     "drizzle-kit": "^0.31.4",
     "esbuild": "^0.25.0",
-    "mysql2": "^3.15.1",
+    "mysql2": "^3.22.0",
     "pg": "^8.16.3",
     "pnpm": "^10.27.0",
     "postcss": "^8.4.47",
