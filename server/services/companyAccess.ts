@@ -239,13 +239,16 @@ export async function canManageCompanyOperations(input: { fleetId: number; user:
 }
 
 export async function canManageCompanyBilling(input: { fleetId: number; user: AppUser }) {
-  if (input.user.role !== "owner") return false;
-
   const membership = await getCompanyMembership({
     userId: input.user.id,
     fleetId: input.fleetId,
   });
 
+  // A membership row is the authoritative, per-fleet role: a user can be an
+  // "owner" member of one fleet (e.g. one they created themselves) while
+  // their account-level `role` still reflects a "manager" invite on a
+  // different fleet. Gating on the account-level role here would wrongly
+  // deny billing access to the owner of this specific fleet.
   if (membership) {
     return membership.status === "active" && membership.role === "owner";
   }
