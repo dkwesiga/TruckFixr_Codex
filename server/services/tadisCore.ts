@@ -18,6 +18,12 @@ import { queueDiagnosticReviewRecords } from "./diagnosticReviewQueue";
 const MAX_CLARIFICATION_ROUNDS = 1;
 const MAX_CLARIFICATION_HISTORY_ENTRIES = 5;
 const DEFAULT_SIMILAR_CASE_LIMIT = 7;
+export const INSUFFICIENT_EVIDENCE_CONFIDENCE_CAP = 20;
+export const INSUFFICIENT_EVIDENCE_CAUSE_LABEL = "Insufficient evidence to identify a likely cause";
+export const INSUFFICIENT_EVIDENCE_FALLBACK_QUESTION =
+  "Can you describe the symptom in more detail (what you see, hear, smell, or feel, and when it happens)? Nothing in the report matched a known failure pattern yet.";
+export const INSUFFICIENT_EVIDENCE_RECOMMENDED_FIX =
+  "No diagnostic pattern in the library matched the reported symptoms. Escalate to a technician for hands-on inspection instead of acting on a guessed cause.";
 
 const riskLevelSchema = z.enum(["low", "medium", "high", "critical"]);
 const nonZeroIntegerSchema = z.number().int().refine((value) => value !== 0, {
@@ -216,6 +222,7 @@ const ruleEngineBaselineSchema = z.object({
   matched_library_causes: z.array(z.string()).default([]),
   partial_library_matches: z.array(z.string()).default([]),
   candidate_universe: z.array(candidateUniverseSchema).default([]),
+  insufficient_evidence: z.boolean().default(false),
 });
 
 export const TadisOutputSchema = z.object({
@@ -328,6 +335,7 @@ export const TadisOutputSchema = z.object({
   safety_override_applied: z.boolean(),
   safety_override_reason: z.string().nullable().default(null),
   review_queue_record_ids: z.array(z.number()).default([]),
+  insufficient_evidence: z.boolean().default(false),
 });
 
 export type TadisOutput = z.infer<typeof TadisOutputSchema>;
@@ -2792,7 +2800,7 @@ function resolveFinalSystemsAffected(
   return combined.length > 0 ? combined : baselineSystemsAffected;
 }
 
-function buildBaselineStage(
+export function buildBaselineStage(
   rawInput: DiagnosticInputRequest,
   config: ReturnType<typeof getDiagnosticRuntimeConfig>,
   intakeInterpretation: DiagnosticIntakeInterpretation | null = null
@@ -2801,6 +2809,11 @@ function buildBaselineStage(
   const evidence = buildEvidenceStage(context);
   const evaluated = CAUSE_LIBRARY.map((cause) => evaluateCause(context, cause));
   const totalScore = evaluated.reduce((sum, item) => sum + item.score, 0) || 1;
+  // When no cause has any real evidence, every cause ties at the same base score. A stable
+  // sort would then silently return whichever cause happens to be declared first in
+  // CAUSE_LIBRARY, so break ties alphabetically by cause id instead of by array position.
+  const maxEvidenceMatches = evaluated.reduce((max, item) => Math.max(max, item.evidenceMatches), 0);
+  const hasInsufficientEvidence = maxEvidenceMatches === 0;
   const ranked = evaluated
     .map((item) => ({
       cause: item.cause,
@@ -2809,17 +2822,30 @@ function buildBaselineStage(
       evidenceMatches: item.evidenceMatches,
       evidenceSummary: item.evidenceSummary,
     }))
-    .sort((left, right) => right.probability - left.probability);
+    .sort((left, right) => {
+      if (right.probability !== left.probability) return right.probability - left.probability;
+      return left.cause.id.localeCompare(right.cause.id);
+    });
 
-  const confidenceScore = calculateConfidence(
-    evaluated.map((item) => ({ score: item.score, evidenceMatches: item.evidenceMatches })),
-    context.input.clarificationHistory.length
-  );
-  const clarifyingQuestion =
+  const confidenceScore = hasInsufficientEvidence
+    ? Math.min(
+        INSUFFICIENT_EVIDENCE_CONFIDENCE_CAP,
+        calculateConfidence(
+          evaluated.map((item) => ({ score: item.score, evidenceMatches: item.evidenceMatches })),
+          context.input.clarificationHistory.length
+        )
+      )
+    : calculateConfidence(
+        evaluated.map((item) => ({ score: item.score, evidenceMatches: item.evidenceMatches })),
+        context.input.clarificationHistory.length
+      );
+  const canAskClarifyingQuestion =
     confidenceScore < config.confidenceThreshold &&
-    context.input.clarificationHistory.length < MAX_CLARIFICATION_ROUNDS
-      ? selectClarifyingQuestion(context, ranked, context.input.clarificationHistory)
-      : "";
+    context.input.clarificationHistory.length < MAX_CLARIFICATION_ROUNDS;
+  const clarifyingQuestion = canAskClarifyingQuestion
+    ? selectClarifyingQuestion(context, ranked, context.input.clarificationHistory) ||
+      (hasInsufficientEvidence ? INSUFFICIENT_EVIDENCE_FALLBACK_QUESTION : "")
+    : "";
   const nextAction = confidenceScore >= config.confidenceThreshold || !clarifyingQuestion ? "proceed" : "ask_question";
   const topCauses = ranked.slice(0, 4);
   const leadingCause = topCauses[0]?.cause ?? CAUSE_LIBRARY[0];
@@ -2839,20 +2865,23 @@ function buildBaselineStage(
 
   const baseline = ruleEngineBaselineSchema.parse({
     systems_affected: systemsAffected.length > 0 ? systemsAffected : leadingCause.systems,
-    possible_causes: topCauses.map((item, index) => ({
-      cause: item.cause.cause,
-      probability: normalizedProbabilities[index] ?? 0,
-    })),
+    possible_causes: hasInsufficientEvidence
+      ? [{ cause: INSUFFICIENT_EVIDENCE_CAUSE_LABEL, probability: 0 }]
+      : topCauses.map((item, index) => ({
+          cause: item.cause.cause,
+          probability: normalizedProbabilities[index] ?? 0,
+        })),
     confidence_score: confidenceScore,
     next_action: nextAction,
     clarifying_question: nextAction === "ask_question" ? clarifyingQuestion : "",
     recommended_tests: recommendedTests,
-    recommended_fix: leadingCause.recommendedFix,
+    recommended_fix: hasInsufficientEvidence ? INSUFFICIENT_EVIDENCE_RECOMMENDED_FIX : leadingCause.recommendedFix,
     risk_level: riskLevel,
     compliance_impact: complianceImpact,
-    matched_library_causes: topCauses.slice(0, 3).map((item) => item.cause.cause),
-    partial_library_matches: ranked.slice(3, 6).map((item) => item.cause.cause),
+    matched_library_causes: hasInsufficientEvidence ? [] : topCauses.slice(0, 3).map((item) => item.cause.cause),
+    partial_library_matches: hasInsufficientEvidence ? [] : ranked.slice(3, 6).map((item) => item.cause.cause),
     candidate_universe: candidateUniverse,
+    insufficient_evidence: hasInsufficientEvidence,
   });
 
   return {
@@ -3831,6 +3860,7 @@ function buildSimpleTadisQuestionOutput(input: DiagnosticInputRequest, baselineS
         ? "Simple mode escalated to a critical safety response."
         : null,
     review_queue_record_ids: [],
+    insufficient_evidence: baselineStage.baseline.insufficient_evidence,
   });
 }
 
@@ -3952,6 +3982,7 @@ function buildAiUnavailableOutput(
     safety_override_applied: false,
     safety_override_reason: null,
     review_queue_record_ids: [],
+    insufficient_evidence: baseline.insufficient_evidence,
   });
 }
 
@@ -4482,6 +4513,7 @@ async function analyzeDiagnosticDetailed(input: DiagnosticInputRequest) {
     safety_override_applied: safetyOverride.applied,
     safety_override_reason: safetyOverride.reason,
     review_queue_record_ids: [],
+    insufficient_evidence: baselineStage.baseline.insufficient_evidence,
   });
 
   const reviewQueueRecordIds = await queueDiagnosticReviewRecords({
