@@ -24,3 +24,8 @@
   recommendation. Don't "fix" a low-confidence path by hardcoding a default answer.
 - Use `.claude/skills/truckfixr-safety-gate/SKILL.md` for any change that touches
   triage/recommendation logic, case-status transitions, or severity mapping.
+- A confirmed outcome must be verified before it feeds learning: don't remove or
+  weaken the `RESOLVED_OUTCOME_STATES` check in
+  `server/services/tadisLearningPromotion.ts` (`evaluateAndUpsertCandidate`) —
+  it's the boundary that keeps a bare unverified `reported` outcome from being
+  treated as training-quality evidence. See `.claude/skills/truckfixr-confirmed-outcome/SKILL.md`.
