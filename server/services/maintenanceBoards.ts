@@ -2,9 +2,13 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../db";
 import {
   activityLogs,
+  aiTriageRecords,
+  defects,
   maintenanceCases,
   maintenanceDecisions,
+  outcomeRevisions,
   repairCycles,
+  repairOutcomes,
 } from "../../drizzle/schema";
 import { ACTIVE_CASE_STATUSES, type CaseStatus } from "@shared/maintenance/caseWorkflow";
 
@@ -116,6 +120,56 @@ export async function getCaseTimeline(args: {
     details: { reference: caseRow.reference, origin: caseRow.origin },
   });
 
+  // Original observation + triage snapshot (§11 provenance read model). These
+  // are read-only lookups against the ORIGINAL rows — defects and
+  // aiTriageRecords are never mutated after creation (aiTriageRecords has no
+  // updatedAt column at all), so this always reflects what was actually
+  // reported/recommended at the time, not a later edit.
+  if (caseRow.sourceDefectId != null) {
+    const [defect] = await db
+      .select()
+      .from(defects)
+      .where(and(eq(defects.id, caseRow.sourceDefectId), eq(defects.fleetId, args.fleetId)))
+      .limit(1);
+    if (defect) {
+      entries.push({
+        at: new Date(defect.createdAt).toISOString(),
+        kind: "original_report",
+        summary: `Original report: ${defect.title}`,
+        userId: defect.driverId,
+        details: {
+          defectId: defect.id,
+          description: defect.description,
+          severity: defect.severity,
+          symptoms: defect.symptoms ?? null,
+        },
+      });
+
+      // ALL triage records for this defect, not just the latest — a defect can
+      // be re-triaged (manual "Run AI Triage"), and the ORIGINAL assessment
+      // must stay visible even after a later one is added, not be shadowed.
+      const triages = await db
+        .select()
+        .from(aiTriageRecords)
+        .where(and(eq(aiTriageRecords.defectId, defect.id), eq(aiTriageRecords.fleetId, args.fleetId)))
+        .orderBy(desc(aiTriageRecords.createdAt));
+      for (const triage of triages) {
+        entries.push({
+          at: new Date(triage.createdAt).toISOString(),
+          kind: "ai_triage",
+          summary: `AI triage: ${triage.mostLikelyCause ?? "no cause identified"} (${triage.severity}, ${triage.confidenceScore}% confidence)`,
+          userId: null,
+          details: {
+            severity: triage.severity,
+            confidenceScore: triage.confidenceScore,
+            recommendedAction: triage.recommendedAction,
+            safetyWarning: triage.safetyWarning,
+          },
+        });
+      }
+    }
+  }
+
   const decisions = await db
     .select()
     .from(maintenanceDecisions)
@@ -160,6 +214,82 @@ export async function getCaseTimeline(args: {
       entries.push({ at: new Date(c.returnedToServiceAt).toISOString(), kind: "return_to_service", summary: `Cycle ${c.cycleNumber}: returned to service`, userId: null, details: { downtimeHours: c.downtimeHours } });
     if (c.completedAt)
       entries.push({ at: new Date(c.completedAt).toISOString(), kind: "cycle_completed", summary: `Cycle ${c.cycleNumber}: ${c.closureResult ?? "completed"}`, userId: null, details: { closureResult: c.closureResult } });
+  }
+
+  // Confirmed-outcome lifecycle (§9/§10 — unknown -> reported -> verified ->
+  // confirmed/failed). Each stage is an explicit timestamp+actor field on the
+  // SAME repairOutcomes row (never a separate mutated copy), so surfacing all
+  // four here is a read, not a reconstruction from inference.
+  const outcomes = await db
+    .select()
+    .from(repairOutcomes)
+    .where(and(eq(repairOutcomes.fleetId, args.fleetId), eq(repairOutcomes.maintenanceCaseId, args.caseId)));
+  for (const o of outcomes) {
+    if (o.reportedAt) {
+      entries.push({
+        at: new Date(o.reportedAt).toISOString(),
+        kind: "outcome_reported",
+        summary: `Outcome reported: ${o.confirmedFault}`,
+        userId: o.reportedByUserId,
+        details: { outcomeId: o.id, repairPerformed: o.repairPerformed, evidenceSource: o.evidenceSource },
+      });
+    }
+    if (o.verifiedAt) {
+      entries.push({
+        at: new Date(o.verifiedAt).toISOString(),
+        kind: "outcome_verified",
+        summary: `Outcome verified (${o.verificationMethod ?? "method not recorded"})`,
+        userId: o.verifiedByUserId,
+        details: { outcomeId: o.id, verificationMethod: o.verificationMethod },
+      });
+    }
+    if (o.confirmedAt) {
+      entries.push({
+        at: new Date(o.confirmedAt).toISOString(),
+        kind: "outcome_confirmed",
+        summary: `Outcome confirmed (${o.confirmationEvidenceType ?? "evidence not recorded"})`,
+        userId: o.confirmedByUserId,
+        details: { outcomeId: o.id, confirmationEvidenceType: o.confirmationEvidenceType },
+      });
+    }
+    if (o.failedAt) {
+      entries.push({
+        at: new Date(o.failedAt).toISOString(),
+        kind: "outcome_failed",
+        summary: "Outcome marked failed — repair did not resolve the issue",
+        userId: o.failedByUserId,
+        details: { outcomeId: o.id, failureNotes: o.failureNotes },
+      });
+    }
+  }
+
+  // Revisions to an already-verified/confirmed outcome are append-only
+  // (outcomeRevisions) and never overwrite the row they correct — surface the
+  // fact and reason of each correction without echoing the full before/after
+  // JSON blobs (avoid leaking internal diff payloads into a general-purpose
+  // timeline read).
+  if (outcomes.length > 0) {
+    const revisions = await db
+      .select()
+      .from(outcomeRevisions)
+      .where(
+        and(
+          eq(outcomeRevisions.fleetId, args.fleetId),
+          inArray(
+            outcomeRevisions.outcomeId,
+            outcomes.map((o) => o.id)
+          )
+        )
+      );
+    for (const r of revisions) {
+      entries.push({
+        at: new Date(r.createdAt).toISOString(),
+        kind: "outcome_revised",
+        summary: `Outcome revision (${r.changeType}): ${r.reason}`,
+        userId: r.changedByUserId,
+        details: { outcomeId: r.outcomeId, changeType: r.changeType, requiresReVerification: r.requiresReVerification },
+      });
+    }
   }
 
   // Merge in document/authorization/outcome audit entries recorded against this
