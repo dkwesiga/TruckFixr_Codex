@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "../db";
 import { partRequirements, partSupplierOptions } from "../../drizzle/schema";
@@ -119,7 +119,12 @@ export async function listSupplierOptionsForRequirement(fleetId: number, partReq
         eq(partSupplierOptions.fleetId, fleetId),
         eq(partSupplierOptions.partRequirementId, partRequirementId)
       )
-    );
+    )
+    // Without an explicit order, SQL row order is unspecified — compareOptions'
+    // sort is stable, but a stable sort over a nondeterministically-ordered
+    // input is itself nondeterministic. Order by id (capture order) so a tie
+    // across every ranking factor still resolves the same way every time.
+    .orderBy(asc(partSupplierOptions.id));
 }
 
 export async function getSupplierOption(fleetId: number, id: number) {

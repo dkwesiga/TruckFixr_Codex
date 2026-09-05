@@ -353,6 +353,17 @@ describe("partIntelligence resource-derived endpoints — fleet scoping by partR
       caller.partIntelligence.get({ fleetId: FLEET_B, id: REQUIREMENT_IN_FLEET_B })
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
+
+  it("rejects a malformed currency code on addSupplierOption before it reaches the service layer", async () => {
+    const caller = appRouter.createCaller(managerContext());
+    await expect(
+      caller.partIntelligence.addSupplierOption({
+        partRequirementId: REQUIREMENT_IN_FLEET_A,
+        supplierName: "ABC Truck Parts",
+        currency: "12$",
+      })
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
 });
 
 describe("partIntelligence.getSupplierOption — fleet scoping by option id (Parts Intelligence Phase 2)", () => {

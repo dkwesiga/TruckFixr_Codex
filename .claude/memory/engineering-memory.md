@@ -35,3 +35,15 @@ narrative.
   full-access policy (pattern in `0048`/`0056`), not the older per-fleet
   `authenticated`-role policies (`0005`/`0012`/`0015`/`0016`/`0031`). Register the
   table in `scripts/verify/rls.ts`'s `POST_0012_RLS_TABLES` either way.
+- Confirmed bug (found in fresh-context review, `server/services/partOptionApprovals.ts`
+  `recordApprovalDecision`): an unconditional `UPDATE ... WHERE id = ...` status
+  transition, followed later by an unconditional `INSERT` of an append-only
+  decision row, let two concurrent callers both pass validation and both insert
+  conflicting rows for the same resource — no DB transactions are used in this
+  codebase, so this isn't guarded implicitly. Fixed with a compare-and-swap:
+  `UPDATE ... WHERE id = ... AND status = <expected-from> ... RETURNING`, only
+  proceeding to the append-only insert if a row was actually returned, otherwise
+  throwing a conflict error. General lesson: any status-transition-then-append-row
+  sequence on a resource that can be acted on by more than one caller needs this
+  CAS guard, not just an allow-list check on the transition itself — the allow-list
+  (`canTransitionX`) proves the transition is *legal*, not that it's still *current*.

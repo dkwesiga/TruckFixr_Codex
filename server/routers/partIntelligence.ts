@@ -271,7 +271,12 @@ export const partIntelligenceRouter = router({
         quotedPartNumber: z.string().trim().max(120).optional().nullable(),
         conditionType: z.enum(PART_CONDITIONS).optional().nullable(),
         priceCents: z.number().int().nonnegative().optional().nullable(),
-        currency: z.string().trim().length(3).optional(),
+        currency: z
+          .string()
+          .trim()
+          .toUpperCase()
+          .regex(/^[A-Z]{3}$/, "currency must be a 3-letter ISO 4217 code")
+          .optional(),
         freightCents: z.number().int().nonnegative().optional().nullable(),
         coreChargeCents: z.number().int().nonnegative().optional().nullable(),
         stockStatus: z.string().trim().max(40).optional().nullable(),

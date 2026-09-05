@@ -36,6 +36,13 @@ async function findExistingPart(
 ) {
   if (!oemNormalized && !mfrNormalized) return null;
 
+  // Known scaling gap (documented, not fixed here — see
+  // docs/architecture/parts-acquisition.md "Known gaps"): matching happens
+  // in application code against normalized values, so this scans the whole
+  // catalog rather than using `parts_oemPartNumber_idx`/
+  // `parts_manufacturerPartNumber_idx` (those index the raw, un-normalized
+  // columns). Acceptable while the catalog is small; revisit with a
+  // normalized/indexed column or a functional index if it grows.
   const candidates = await db.select().from(parts);
   for (const candidate of candidates) {
     const candidateOem = normalizePartNumber(candidate.oemPartNumber);

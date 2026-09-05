@@ -57,23 +57,40 @@ async function requireOptionInFleetOrNull(
   return row.id;
 }
 
-async function transitionIfAllowed(
+// Atomic compare-and-swap: only actually moves the requirement to `to` if it
+// is STILL `from` at the moment of the write (single UPDATE ... WHERE status
+// = from ... RETURNING). Guards the two-managers-decide-concurrently race:
+// without this, two concurrent decisions on the same requirement could both
+// read "awaiting_approval", both pass the allow-list check, and both insert
+// a partOptionApprovals row (e.g. two different selectedOptionId values)
+// even though only one decision should ever win. Returns false (no rows
+// affected) when another decision already changed the status first — the
+// caller must not insert an approval row in that case.
+async function tryTransitionAtomically(
   db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
   fleetId: number,
   id: number,
   from: PartRequirementStatus,
   to: PartRequirementStatus
-) {
+): Promise<boolean> {
   if (!canTransitionPartRequirement(from, to)) {
     throw new TRPCError({
       code: "BAD_REQUEST",
       message: `Cannot move a part requirement from ${from} to ${to}.`,
     });
   }
-  await db
+  const updated = await db
     .update(partRequirements)
     .set({ status: to, updatedAt: new Date() })
-    .where(and(eq(partRequirements.id, id), eq(partRequirements.fleetId, fleetId)));
+    .where(
+      and(
+        eq(partRequirements.id, id),
+        eq(partRequirements.fleetId, fleetId),
+        eq(partRequirements.status, from)
+      )
+    )
+    .returning({ id: partRequirements.id });
+  return updated.length > 0;
 }
 
 /**
@@ -119,9 +136,45 @@ export async function recordApprovalDecision(input: {
   // Move into awaiting_approval first, unless a prior decision cycle
   // already left the requirement there (needs_more_information can loop
   // back through fitment/sourcing and return to awaiting_approval again).
+  // Both this hop and the final decision transition below use the atomic
+  // compare-and-swap: without it, two concurrent decisions could each read
+  // the requirement's status before either writes, both pass every check
+  // above, and both insert a partOptionApprovals row even though only one
+  // decision should ever win. A CAS failure at either hop means another
+  // request already changed the status first, so this request must fail
+  // loudly (CONFLICT) instead of silently corrupting provenance with a
+  // phantom approval row.
   const from = requirement.status as PartRequirementStatus;
   if (from !== "awaiting_approval") {
-    await transitionIfAllowed(db, input.fleetId, requirement.id, from, "awaiting_approval");
+    const movedToAwaitingApproval = await tryTransitionAtomically(
+      db,
+      input.fleetId,
+      requirement.id,
+      from,
+      "awaiting_approval"
+    );
+    if (!movedToAwaitingApproval) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message:
+          "This part requirement's status changed before this decision could be recorded — reload and try again.",
+      });
+    }
+  }
+
+  const transitioned = await tryTransitionAtomically(
+    db,
+    input.fleetId,
+    requirement.id,
+    "awaiting_approval",
+    input.decision
+  );
+  if (!transitioned) {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message:
+        "This part requirement's status changed before this decision could be recorded — reload and try again.",
+    });
   }
 
   const [created] = await db
@@ -136,16 +189,6 @@ export async function recordApprovalDecision(input: {
       decidedByUserId: input.decidedByUserId,
     })
     .returning();
-
-  const currentStatus = (
-    await db
-      .select({ status: partRequirements.status })
-      .from(partRequirements)
-      .where(eq(partRequirements.id, requirement.id))
-      .limit(1)
-  )[0]?.status as PartRequirementStatus;
-
-  await transitionIfAllowed(db, input.fleetId, requirement.id, currentStatus, input.decision);
 
   return created;
 }

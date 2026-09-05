@@ -129,10 +129,24 @@ const { store, makeTableProxy, getDbMock } = vi.hoisted(() => {
     }),
     update: (tbl: unknown) => ({
       set: (patch: Record<string, unknown>) => ({
-        where: async (pred: any) => {
+        where: (pred: any) => {
+          const matched: Record<string, unknown>[] = [];
           for (const row of rowsFor(tableNameOf(tbl))) {
-            if (matches(pred, row)) Object.assign(row, patch);
+            if (matches(pred, row)) {
+              Object.assign(row, patch);
+              matched.push(row);
+            }
           }
+          const result: any = Promise.resolve(matched);
+          result.returning = async (proj?: Record<string, unknown>) => {
+            if (!proj) return matched;
+            return matched.map((row) => {
+              const out: Record<string, unknown> = {};
+              for (const key of Object.keys(proj)) out[key] = row[key];
+              return out;
+            });
+          };
+          return result;
         },
       }),
     }),
@@ -147,6 +161,7 @@ vi.mock("drizzle-orm", () => ({
     ({ __match: (row: any) => preds.every((p) => (p?.__match ? p.__match(row) : true)) }),
   eq: (col: any, val: any) => ({ __match: (row: any) => row[col?.__col ?? col] === val }),
   desc: (col: any) => ({ __orderCol: col?.__col ?? col, __dir: "desc" }),
+  asc: (col: any) => ({ __orderCol: col?.__col ?? col, __dir: "asc" }),
 }));
 
 vi.mock("../../drizzle/schema", async () => {
@@ -606,6 +621,71 @@ describe("human approval — recommendation vs. selection provenance", () => {
 
     await expect(listApprovalHistory(FLEET_B, requirement!.id)).resolves.toEqual([]);
   });
+
+  it("lets only one of two concurrent conflicting decisions on the same requirement succeed", async () => {
+    await seedCase(FLEET_A, CASE_ID);
+    const requirement = await createPartRequirement({
+      fleetId: FLEET_A,
+      caseId: CASE_ID,
+      description: "Brake chamber",
+      requestedByUserId: MANAGER_ID,
+    });
+    await advanceToOptionsAvailable(requirement!.id);
+    await transitionPartRequirementStatus({
+      fleetId: FLEET_A,
+      id: requirement!.id,
+      toStatus: "recommendation_ready",
+    });
+    const option = await addSupplierOption({
+      fleetId: FLEET_A,
+      partRequirementId: requirement!.id,
+      supplierName: "Supplier",
+      priceCents: 1000,
+      capturedByUserId: MANAGER_ID,
+    });
+
+    // Two managers decide at "the same time": both read the requirement
+    // while it's still recommendation_ready/awaiting_approval and both
+    // attempt to record a decision. Only one may win — the loser must
+    // reject, not silently leave a second approval row behind.
+    const results = await Promise.allSettled([
+      recordApprovalDecision({
+        fleetId: FLEET_A,
+        partRequirementId: requirement!.id,
+        decision: "approved",
+        selectedOptionId: option!.id,
+        decidedByUserId: MANAGER_ID,
+      }),
+      recordApprovalDecision({
+        fleetId: FLEET_A,
+        partRequirementId: requirement!.id,
+        decision: "declined",
+        decidedByUserId: MANAGER_ID + 1,
+      }),
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    // The loser's rejection code depends on exactly where in the two-hop
+    // transition it lost the race (CONFLICT if it lost the final
+    // awaiting_approval -> decision CAS, BAD_REQUEST if the requirement had
+    // already left awaiting_approval entirely by the time it attempted its
+    // first hop) — either way it must be rejected, and never insert a
+    // second approval row (asserted below).
+    expect(["CONFLICT", "BAD_REQUEST"]).toContain(
+      (rejected[0] as PromiseRejectedResult).reason.code
+    );
+
+    const history = await listApprovalHistory(FLEET_A, requirement!.id);
+    expect(history).toHaveLength(1);
+
+    const finalRequirement = await getPartRequirement(FLEET_A, requirement!.id);
+    expect(finalRequirement?.status).toBe(
+      (fulfilled[0] as PromiseFulfilledResult<any>).value.decision
+    );
+  });
 });
 
 describe("money and availability handling", () => {
@@ -676,5 +756,46 @@ describe("money and availability handling", () => {
     const usdRanked = comparison.ranked.find((r) => r.id === usdOption!.id)!;
     expect(usdRanked.currencyMismatch).toBe(true);
     expect(comparison.recommended?.id).not.toBe(usdOption!.id);
+  });
+
+  it("resolves a full tie (same tier, same cost, same everything) the same way every time, not by unspecified DB row order", async () => {
+    await seedCase(FLEET_A, CASE_ID);
+    const requirement = await createPartRequirement({
+      fleetId: FLEET_A,
+      caseId: CASE_ID,
+      description: "Brake chamber",
+      requestedByUserId: MANAGER_ID,
+    });
+    await recordFitmentAssessment({
+      fleetId: FLEET_A,
+      partRequirementId: requirement!.id,
+      vehicleId: VEHICLE_ID,
+      evidence: { technicianConfirmed: true },
+      source: "technician_manual",
+      assessedByUserId: TECH_ID,
+    });
+    const first = await addSupplierOption({
+      fleetId: FLEET_A,
+      partRequirementId: requirement!.id,
+      supplierName: "Supplier First",
+      priceCents: 1000,
+      capturedByUserId: MANAGER_ID,
+    });
+    await addSupplierOption({
+      fleetId: FLEET_A,
+      partRequirementId: requirement!.id,
+      supplierName: "Supplier Second",
+      priceCents: 1000,
+      capturedByUserId: MANAGER_ID,
+    });
+
+    const runs = await Promise.all([
+      getRecommendedOptions(FLEET_A, requirement!.id),
+      getRecommendedOptions(FLEET_A, requirement!.id),
+      getRecommendedOptions(FLEET_A, requirement!.id),
+    ]);
+    for (const run of runs) {
+      expect(run.recommended?.id).toBe(first!.id);
+    }
   });
 });
