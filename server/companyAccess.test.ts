@@ -29,7 +29,7 @@ vi.mock("./db", () => ({
   getDb,
 }));
 
-import { getCompanyMembership, getUserPrimaryFleetId } from "./services/companyAccess";
+import { canManageCompanyBilling, getCompanyMembership, getUserPrimaryFleetId } from "./services/companyAccess";
 
 describe("getCompanyMembership", () => {
   beforeEach(() => {
@@ -91,5 +91,46 @@ describe("getUserPrimaryFleetId", () => {
 
     await expect(getUserPrimaryFleetId(42)).resolves.toBeNull();
     expect(select).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("canManageCompanyBilling", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    queueSelectResults();
+  });
+
+  it("grants billing access to an active owner member even when the account-level role is stale", async () => {
+    // A user whose global `users.role` is still "manager" (e.g. from an
+    // invitation to a different fleet) but who is the active "owner" member
+    // of THIS fleet — such as one they created themselves — must still be
+    // able to manage this fleet's billing.
+    queueSelectResults([
+      { fleetId: 9, userId: 42, role: "owner", status: "active" },
+    ]);
+
+    await expect(
+      canManageCompanyBilling({ fleetId: 9, user: { id: 42, role: "manager" } })
+    ).resolves.toBe(true);
+  });
+
+  it("denies billing access for an active non-owner member regardless of account-level role", async () => {
+    queueSelectResults([
+      { fleetId: 9, userId: 42, role: "manager", status: "active" },
+    ]);
+
+    await expect(
+      canManageCompanyBilling({ fleetId: 9, user: { id: 42, role: "owner" } })
+    ).resolves.toBe(false);
+  });
+
+  it("denies billing access when neither an owner membership nor fleet ownership exists", async () => {
+    // getCompanyMembership(fleetId, userId): no membership row, and this
+    // fleet isn't owned by the user either, so it returns null.
+    queueSelectResults([], [], [{ ownerId: 999 }]);
+
+    await expect(
+      canManageCompanyBilling({ fleetId: 9, user: { id: 42, role: "manager" } })
+    ).resolves.toBe(false);
   });
 });

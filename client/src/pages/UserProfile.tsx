@@ -242,31 +242,45 @@ export default function UserProfile() {
     }
   };
 
+  const createInitialFleetIfMissing = async () => {
+    // The "fleet" step can be reached with stale fleet state — e.g. the
+    // profile form was submitted before subscriptions.getCurrent finished
+    // its first load, so hasExistingFleet read as false even though the
+    // account already has a fleet. Re-check with fresh data immediately
+    // before creating so this never produces a duplicate fleet.
+    await utils.subscriptions.getCurrent.invalidate();
+    const fresh = await utils.subscriptions.getCurrent.fetch();
+    if (typeof fresh?.activeFleetId === "number" && fresh.activeFleetId > 0) {
+      return null;
+    }
+
+    const fleet = await createFleetMutation.mutateAsync({
+      name: `${formData.company.trim() || formData.name.trim() || "My"} Fleet`,
+    });
+
+    if (formData.company.trim()) {
+      saveCompanyName(formData.company);
+    }
+
+    // Track event
+    if ((window as any).posthog) {
+      (window as any).posthog.capture("fleet_created", {
+        fleet_name: fleet.name,
+        company: formData.company,
+      });
+    }
+
+    await utils.auth.me.invalidate();
+    return fleet;
+  };
+
   const handleFleetCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
     try {
-      // Create initial fleet
-      const fleet = await createFleetMutation.mutateAsync({
-        name: `${formData.company} Fleet`,
-      });
-
-      if (formData.company.trim()) {
-        saveCompanyName(formData.company);
-      }
-
-      toast.success("Fleet created successfully!");
-
-      // Track event
-      if ((window as any).posthog) {
-        (window as any).posthog.capture("fleet_created", {
-          fleet_name: fleet.name,
-          company: formData.company,
-        });
-      }
-
-      await utils.auth.me.invalidate();
+      const fleet = await createInitialFleetIfMissing();
+      toast.success(fleet ? "Fleet created successfully!" : "Profile updated.");
       // Redirect to manager dashboard
       setTimeout(() => {
         window.location.href = "/manager";
@@ -277,9 +291,25 @@ export default function UserProfile() {
     }
   };
 
-  const handleSkip = () => {
-    const redirectPath = formData.role === "driver" ? "/driver" : "/manager";
-    window.location.href = redirectPath;
+  const handleSkip = async () => {
+    // Owner/manager accounts can't function without a fleet (billing, the
+    // manager dashboard, and vehicles all key off it) — "Skip for Now" used
+    // to bypass fleet creation entirely and leave the account stranded with
+    // a role but no company. Create the fleet with a default name instead
+    // so the account lands in a working state; they can rename it later.
+    if (formData.role === "driver") {
+      window.location.href = "/driver";
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await createInitialFleetIfMissing();
+      window.location.href = "/manager";
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to create fleet");
+      setIsLoading(false);
+    }
   };
 
   const handleUpgrade = async (planKey: PlanKey) => {

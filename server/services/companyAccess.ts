@@ -146,6 +146,12 @@ export async function getCompanyMembership(input: { userId: number; fleetId?: nu
     return null;
   }
 
+  // When a user holds more than one active membership (e.g. they own one
+  // fleet and are also a manager on another), prefer the fleet they own:
+  // this is what downstream callers like getUserPrimaryFleetId use to
+  // resolve billing and the manager dashboard, and picking a non-owner
+  // membership just because it was touched more recently would silently
+  // route billing checks to a fleet the user can't actually manage.
   const [membership] = await db
     .select()
     .from(companyMemberships)
@@ -155,7 +161,10 @@ export async function getCompanyMembership(input: { userId: number; fleetId?: nu
         eq(companyMemberships.status, "active")
       )
     )
-    .orderBy(desc(companyMemberships.updatedAt))
+    .orderBy(
+      desc(sql`case when ${companyMemberships.role} = 'owner' then 1 else 0 end`),
+      desc(companyMemberships.updatedAt)
+    )
     .limit(1);
 
   if (membership) {
@@ -239,13 +248,16 @@ export async function canManageCompanyOperations(input: { fleetId: number; user:
 }
 
 export async function canManageCompanyBilling(input: { fleetId: number; user: AppUser }) {
-  if (input.user.role !== "owner") return false;
-
   const membership = await getCompanyMembership({
     userId: input.user.id,
     fleetId: input.fleetId,
   });
 
+  // A membership row is the authoritative, per-fleet role: a user can be an
+  // "owner" member of one fleet (e.g. one they created themselves) while
+  // their account-level `role` still reflects a "manager" invite on a
+  // different fleet. Gating on the account-level role here would wrongly
+  // deny billing access to the owner of this specific fleet.
   if (membership) {
     return membership.status === "active" && membership.role === "owner";
   }
