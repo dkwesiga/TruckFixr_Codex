@@ -38,10 +38,11 @@ evidence from the domain owner, and update the shared module, not ad hoc strings
 - **repairOutcomes** — confirmed repair outcomes (see below).
 - **partsRequests**/**partsOffers** — staff-only concierge parts sourcing, linked
   to the legacy `cases` table, not `maintenanceCases`. **partRequirements**/
-  **parts**/**partFitmentAssessments**/**partSupplierOptions** — Parts
-  Intelligence Phase 1, case-embedded and fleet-user-facing, with a
-  deterministic (no-AI) fitment engine. These are two separate flows — see
-  `docs/architecture/parts-acquisition.md`.
+  **parts**/**partFitmentAssessments**/**partSupplierOptions**/
+  **partOptionApprovals** — Parts Intelligence, case-embedded and
+  fleet-user-facing, with a deterministic (no-AI) fitment/comparison engine and
+  an owner/manager-only human-approval step (`approved` ≠ ordered). These are
+  two separate flows — see `docs/architecture/parts-acquisition.md`.
 - **subscriptions**, **plans**, **planFeatures** — billing/entitlements (Stripe).
 
 Do not rename or reinterpret these entities without checking `drizzle/schema.ts` first —

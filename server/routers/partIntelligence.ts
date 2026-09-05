@@ -3,7 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
 import { FLEET_MAINTENANCE_CAPABILITY_FLAGS as CAP } from "@shared/maintenance/featureKeys";
 import { requireFleetFeature } from "../services/fleetFeatures";
-import { resolveActiveFleetId } from "../services/maintenanceTenantScope";
+import { resolveActiveFleetId, assertManagesFleet } from "../services/maintenanceTenantScope";
 import { hasMaintenanceCapability } from "../services/maintenancePermissions";
 import { MAINTENANCE_CAPABILITIES } from "@shared/maintenance/permissions";
 import { PART_REQUIREMENT_STATUSES } from "@shared/parts/partRequirementWorkflow";
@@ -25,8 +25,16 @@ import {
 import {
   addSupplierOption,
   getRecommendedOptions,
+  getSupplierOption,
+  getSupplierOptionFleetId,
   listSupplierOptionsForRequirement,
 } from "../services/partSupplierOptions";
+import {
+  getCurrentApproval,
+  listApprovalHistory,
+  recordApprovalDecision,
+} from "../services/partOptionApprovals";
+import { PART_CONDITIONS, AVAILABILITY_STATES, ETA_TYPES } from "@shared/parts/recommendation";
 
 // Parts Intelligence Phase 1 router. Every procedure resolves its fleet
 // scope server-side via the SAME two patterns already established for
@@ -66,6 +74,20 @@ async function resolveFleetForRequirement(
   return resolveActiveFleetId({ user: ctx.user, requestedFleetId: requestedFleetId ?? null });
 }
 
+async function resolveFleetForOption(
+  ctx: { user: { id: number; role: string } },
+  requestedFleetId: number | null | undefined,
+  optionId: number
+) {
+  if (requestedFleetId == null) {
+    const owningFleetId = await getSupplierOptionFleetId(optionId);
+    if (owningFleetId != null) {
+      return resolveActiveFleetId({ user: ctx.user, requestedFleetId: owningFleetId });
+    }
+  }
+  return resolveActiveFleetId({ user: ctx.user, requestedFleetId: requestedFleetId ?? null });
+}
+
 async function gateRead(fleetId: number) {
   await requireFleetFeature(fleetId, CAP.maintenanceCases);
 }
@@ -83,6 +105,17 @@ async function gateManage(ctx: { user: { id: number; role: string } }, fleetId: 
       message: "You do not have the capability required to manage part requirements.",
     });
   }
+}
+
+// Approving/declining a sourcing option is a financial/procurement-adjacent
+// decision — the same category the existing capability system already
+// reserves for owners/managers only (see `approve_estimate` in
+// FORBIDDEN_MAINTENANCE_CAPABILITIES, shared/maintenance/permissions.ts: it
+// can never be granted to a technician). Reuse that existing policy via
+// assertManagesFleet rather than inventing a new grantable capability.
+async function gateApprove(ctx: { user: { id: number; role: string } }, fleetId: number) {
+  await requireFleetFeature(fleetId, CAP.maintenanceCases);
+  await assertManagesFleet({ user: ctx.user, fleetId });
 }
 
 export const partIntelligenceRouter = router({
@@ -232,15 +265,24 @@ export const partIntelligenceRouter = router({
         partRequirementId: z.number(),
         partId: z.number().optional().nullable(),
         supplierName: z.string().trim().min(1).max(255),
+        supplierContact: z.string().trim().max(500).optional().nullable(),
+        supplierLocation: z.string().trim().max(255).optional().nullable(),
+        externalSupplierId: z.string().trim().max(120).optional().nullable(),
         quotedPartNumber: z.string().trim().max(120).optional().nullable(),
+        conditionType: z.enum(PART_CONDITIONS).optional().nullable(),
         priceCents: z.number().int().nonnegative().optional().nullable(),
         currency: z.string().trim().length(3).optional(),
         freightCents: z.number().int().nonnegative().optional().nullable(),
+        coreChargeCents: z.number().int().nonnegative().optional().nullable(),
         stockStatus: z.string().trim().max(40).optional().nullable(),
+        availabilityState: z.enum(AVAILABILITY_STATES).optional().nullable(),
+        etaType: z.enum(ETA_TYPES).optional().nullable(),
         etaAt: z.string().datetime().optional().nullable(),
+        etaLeadTimeDays: z.number().int().nonnegative().optional().nullable(),
         warrantyText: z.string().trim().max(2000).optional().nullable(),
         returnable: z.boolean().optional().nullable(),
         quoteReference: z.string().trim().max(120).optional().nullable(),
+        quoteExpiresAt: z.string().datetime().optional().nullable(),
         fitmentClaim: z.string().trim().max(2000).optional().nullable(),
         notes: z.string().trim().max(2000).optional().nullable(),
       })
@@ -253,19 +295,36 @@ export const partIntelligenceRouter = router({
         partRequirementId: input.partRequirementId,
         partId: input.partId,
         supplierName: input.supplierName,
+        supplierContact: input.supplierContact,
+        supplierLocation: input.supplierLocation,
+        externalSupplierId: input.externalSupplierId,
         quotedPartNumber: input.quotedPartNumber,
+        conditionType: input.conditionType,
         priceCents: input.priceCents,
         currency: input.currency,
         freightCents: input.freightCents,
+        coreChargeCents: input.coreChargeCents,
         stockStatus: input.stockStatus,
+        availabilityState: input.availabilityState,
+        etaType: input.etaType,
         etaAt: input.etaAt ? new Date(input.etaAt) : null,
+        etaLeadTimeDays: input.etaLeadTimeDays,
         warrantyText: input.warrantyText,
         returnable: input.returnable,
         quoteReference: input.quoteReference,
+        quoteExpiresAt: input.quoteExpiresAt ? new Date(input.quoteExpiresAt) : null,
         fitmentClaim: input.fitmentClaim,
         notes: input.notes,
         capturedByUserId: ctx.user.id,
       });
+    }),
+
+  getSupplierOption: protectedProcedure
+    .input(z.object({ fleetId: z.number().optional(), id: z.number() }))
+    .query(async ({ ctx, input }) => {
+      const fleetId = await resolveFleetForOption(ctx, input.fleetId, input.id);
+      await gateRead(fleetId);
+      return getSupplierOption(fleetId, input.id);
     }),
 
   listSupplierOptions: protectedProcedure
@@ -282,5 +341,100 @@ export const partIntelligenceRouter = router({
       const fleetId = await resolveFleetForRequirement(ctx, input.fleetId, input.partRequirementId);
       await gateRead(fleetId);
       return getRecommendedOptions(fleetId, input.partRequirementId);
+    }),
+
+  // ---- Human approval (§17/§18) -------------------------------------------
+  // Owner/manager only — see gateApprove above. APPROVED != ORDERED: this
+  // records a sourcing decision only, never a purchase/order event.
+  //
+  // recommendedOptionId is NEVER accepted from the client for any of these
+  // three mutations — it is computed here, server-side, from the SAME
+  // compareOptions() logic the read endpoints use, at the moment of
+  // decision. Trusting a client-supplied "this was the recommendation"
+  // value would let a caller corrupt the provenance record this is meant
+  // to protect (§19: recommendation vs. human selection must both be
+  // genuine, not asserted by whichever side benefits from the claim).
+  approveOption: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().optional(),
+        partRequirementId: z.number(),
+        selectedOptionId: z.number(),
+        reasonNote: z.string().trim().max(2000).optional().nullable(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const fleetId = await resolveFleetForRequirement(ctx, input.fleetId, input.partRequirementId);
+      await gateApprove(ctx, fleetId);
+      const comparison = await getRecommendedOptions(fleetId, input.partRequirementId);
+      return recordApprovalDecision({
+        fleetId,
+        partRequirementId: input.partRequirementId,
+        decision: "approved",
+        selectedOptionId: input.selectedOptionId,
+        recommendedOptionId: (comparison.recommended?.id as number | undefined) ?? null,
+        reasonNote: input.reasonNote,
+        decidedByUserId: ctx.user.id,
+      });
+    }),
+
+  declineOptions: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().optional(),
+        partRequirementId: z.number(),
+        reasonNote: z.string().trim().max(2000).optional().nullable(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const fleetId = await resolveFleetForRequirement(ctx, input.fleetId, input.partRequirementId);
+      await gateApprove(ctx, fleetId);
+      const comparison = await getRecommendedOptions(fleetId, input.partRequirementId);
+      return recordApprovalDecision({
+        fleetId,
+        partRequirementId: input.partRequirementId,
+        decision: "declined",
+        recommendedOptionId: (comparison.recommended?.id as number | undefined) ?? null,
+        reasonNote: input.reasonNote,
+        decidedByUserId: ctx.user.id,
+      });
+    }),
+
+  requestMoreInformation: protectedProcedure
+    .input(
+      z.object({
+        fleetId: z.number().optional(),
+        partRequirementId: z.number(),
+        reasonNote: z.string().trim().max(2000).optional().nullable(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const fleetId = await resolveFleetForRequirement(ctx, input.fleetId, input.partRequirementId);
+      await gateApprove(ctx, fleetId);
+      const comparison = await getRecommendedOptions(fleetId, input.partRequirementId);
+      return recordApprovalDecision({
+        fleetId,
+        partRequirementId: input.partRequirementId,
+        decision: "needs_more_information",
+        recommendedOptionId: (comparison.recommended?.id as number | undefined) ?? null,
+        reasonNote: input.reasonNote,
+        decidedByUserId: ctx.user.id,
+      });
+    }),
+
+  listApprovalHistory: protectedProcedure
+    .input(z.object({ fleetId: z.number().optional(), partRequirementId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      const fleetId = await resolveFleetForRequirement(ctx, input.fleetId, input.partRequirementId);
+      await gateRead(fleetId);
+      return listApprovalHistory(fleetId, input.partRequirementId);
+    }),
+
+  getCurrentApproval: protectedProcedure
+    .input(z.object({ fleetId: z.number().optional(), partRequirementId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      const fleetId = await resolveFleetForRequirement(ctx, input.fleetId, input.partRequirementId);
+      await gateRead(fleetId);
+      return getCurrentApproval(fleetId, input.partRequirementId);
     }),
 });

@@ -52,7 +52,14 @@ const { store, makeTableProxy, getDbMock } = vi.hoisted(() => {
   }
 
   let nextId = 20000;
-  const DATE_DEFAULT_FIELDS = ["createdAt", "updatedAt", "requestedAt", "assessedAt", "capturedAt"];
+  const DATE_DEFAULT_FIELDS = [
+    "createdAt",
+    "updatedAt",
+    "requestedAt",
+    "assessedAt",
+    "capturedAt",
+    "decidedAt",
+  ];
 
   function matches(pred: any, row: any): boolean {
     if (!pred) return true;
@@ -97,6 +104,13 @@ const { store, makeTableProxy, getDbMock } = vi.hoisted(() => {
     return c;
   }
 
+  // A monotonic tick added to each defaulted timestamp so two rows inserted
+  // within the same real-world millisecond (routine in a fast synchronous
+  // test) still sort in insertion order — a real Postgres `now()` has this
+  // same coarse-granularity tie-breaking need, which is exactly why
+  // append-only history here should not rely on timestamp alone in a
+  // pathological case; this stub just needs deterministic test behavior.
+  let insertTick = 0;
   const getDbMock = vi.fn(async () => ({
     select: (_proj?: unknown) => ({ from: (tbl: unknown) => chain(rowsFor(tableNameOf(tbl))) }),
     insert: (tbl: unknown) => ({
@@ -105,7 +119,7 @@ const { store, makeTableProxy, getDbMock } = vi.hoisted(() => {
           const name = tableNameOf(tbl);
           const row: Record<string, unknown> = { ...vals };
           for (const field of DATE_DEFAULT_FIELDS) {
-            if (row[field] === undefined) row[field] = new Date();
+            if (row[field] === undefined) row[field] = new Date(Date.now() + insertTick++);
           }
           if (row.id === undefined) row.id = nextId++;
           rowsFor(name).push(row);
@@ -146,10 +160,16 @@ vi.mock("../../drizzle/schema", async () => {
 
 vi.mock("../db", () => ({ getDb: getDbMock }));
 
-import { createPartRequirement, getPartRequirement, getPartRequirementFleetId } from "./partRequirements";
+import {
+  createPartRequirement,
+  getPartRequirement,
+  getPartRequirementFleetId,
+  transitionPartRequirementStatus,
+} from "./partRequirements";
 import { identifyPartCandidate } from "./partIdentification";
 import { recordFitmentAssessment, listFitmentAssessments } from "./partFitmentAssessments";
 import { addSupplierOption, getRecommendedOptions } from "./partSupplierOptions";
+import { getCurrentApproval, listApprovalHistory, recordApprovalDecision } from "./partOptionApprovals";
 
 function resetStore() {
   for (const key of Object.keys(store)) store[key].length = 0;
@@ -331,15 +351,15 @@ describe("supplier option recommendation", () => {
       capturedByUserId: MANAGER_ID,
     });
 
-    const ranked = await getRecommendedOptions(FLEET_A, requirement!.id);
-    expect(ranked).toHaveLength(1);
-    expect(ranked[0].fitmentState).toBe("confirmed");
+    const result = await getRecommendedOptions(FLEET_A, requirement!.id);
+    expect(result.ranked).toHaveLength(1);
+    expect(result.recommended?.fitmentState).toBe("confirmed");
     // The supplier's own claim never becomes TruckFixr's fitment determination.
     const rawOptions = store.partSupplierOptions;
     expect(rawOptions[0].fitmentClaim).toBe("Should fit most Cascadias");
   });
 
-  it("treats a requirement with no fitment assessment yet as not_confirmed, never as a safe default", async () => {
+  it("treats a requirement with no fitment assessment yet as not_confirmed and hard-gates it — never a safe default", async () => {
     await seedCase(FLEET_A, CASE_ID);
     const requirement = await createPartRequirement({
       fleetId: FLEET_A,
@@ -355,8 +375,12 @@ describe("supplier option recommendation", () => {
       capturedByUserId: MANAGER_ID,
     });
 
-    const ranked = await getRecommendedOptions(FLEET_A, requirement!.id);
-    expect(ranked[0].fitmentState).toBe("not_confirmed");
+    const result = await getRecommendedOptions(FLEET_A, requirement!.id);
+    expect(result.ranked).toHaveLength(0);
+    expect(result.recommended).toBeNull();
+    expect(result.hardGated).toHaveLength(1);
+    expect(result.hardGated[0].fitmentState).toBe("not_confirmed");
+    expect(result.hardGated[0].hardGateReasons[0].code).toBe("fitment_not_eligible");
   });
 });
 
@@ -392,5 +416,265 @@ describe("cross-tenant denial", () => {
     // The requirement's real fleet is unaffected by the denied attempt.
     const owningFleetId = await getPartRequirementFleetId(requirement!.id);
     expect(owningFleetId).toBe(FLEET_A);
+  });
+});
+
+async function advanceToOptionsAvailable(requirementId: number) {
+  await transitionPartRequirementStatus({ fleetId: FLEET_A, id: requirementId, toStatus: "identifying" });
+  await transitionPartRequirementStatus({ fleetId: FLEET_A, id: requirementId, toStatus: "fitment_review" });
+  await transitionPartRequirementStatus({ fleetId: FLEET_A, id: requirementId, toStatus: "fitment_verified" });
+  await transitionPartRequirementStatus({ fleetId: FLEET_A, id: requirementId, toStatus: "sourcing" });
+  await transitionPartRequirementStatus({ fleetId: FLEET_A, id: requirementId, toStatus: "options_available" });
+}
+
+describe("human approval — recommendation vs. selection provenance", () => {
+  it("preserves both TruckFixr's recommendation and a different human selection, never overwriting one with the other", async () => {
+    await seedCase(FLEET_A, CASE_ID);
+    const requirement = await createPartRequirement({
+      fleetId: FLEET_A,
+      caseId: CASE_ID,
+      description: "Brake chamber",
+      requestedByUserId: MANAGER_ID,
+    });
+    await recordFitmentAssessment({
+      fleetId: FLEET_A,
+      partRequirementId: requirement!.id,
+      vehicleId: VEHICLE_ID,
+      evidence: { technicianConfirmed: true },
+      source: "technician_manual",
+      assessedByUserId: TECH_ID,
+    });
+    const recommended = await addSupplierOption({
+      fleetId: FLEET_A,
+      partRequirementId: requirement!.id,
+      supplierName: "Recommended Supplier",
+      priceCents: 1000,
+      capturedByUserId: MANAGER_ID,
+    });
+    const alternative = await addSupplierOption({
+      fleetId: FLEET_A,
+      partRequirementId: requirement!.id,
+      supplierName: "Alternative Supplier",
+      priceCents: 1500,
+      capturedByUserId: MANAGER_ID,
+    });
+
+    const comparison = await getRecommendedOptions(FLEET_A, requirement!.id);
+    expect(comparison.recommended?.id).toBe(recommended!.id);
+
+    await advanceToOptionsAvailable(requirement!.id);
+    await transitionPartRequirementStatus({
+      fleetId: FLEET_A,
+      id: requirement!.id,
+      toStatus: "recommendation_ready",
+    });
+
+    // The fleet manager picks the ALTERNATIVE, more expensive option anyway
+    // (e.g. faster delivery not otherwise modeled) — both facts must survive.
+    const approval = await recordApprovalDecision({
+      fleetId: FLEET_A,
+      partRequirementId: requirement!.id,
+      decision: "approved",
+      recommendedOptionId: comparison.recommended!.id as number,
+      selectedOptionId: alternative!.id,
+      reasonNote: "Faster pickup available same day",
+      decidedByUserId: MANAGER_ID,
+    });
+
+    expect(approval.recommendedOptionId).toBe(recommended!.id);
+    expect(approval.selectedOptionId).toBe(alternative!.id);
+    expect(approval.recommendedOptionId).not.toBe(approval.selectedOptionId);
+    expect(approval.decidedByUserId).toBe(MANAGER_ID);
+    expect(approval.decidedAt).toBeInstanceOf(Date);
+
+    const updated = await getPartRequirement(FLEET_A, requirement!.id);
+    expect(updated?.status).toBe("approved");
+  });
+
+  it("requires selecting an option to approve, and rejects a decline/more-information decision that names a selection", async () => {
+    await seedCase(FLEET_A, CASE_ID);
+    const requirement = await createPartRequirement({
+      fleetId: FLEET_A,
+      caseId: CASE_ID,
+      description: "Brake chamber",
+      requestedByUserId: MANAGER_ID,
+    });
+    await advanceToOptionsAvailable(requirement!.id);
+    await transitionPartRequirementStatus({
+      fleetId: FLEET_A,
+      id: requirement!.id,
+      toStatus: "recommendation_ready",
+    });
+
+    await expect(
+      recordApprovalDecision({
+        fleetId: FLEET_A,
+        partRequirementId: requirement!.id,
+        decision: "approved",
+        selectedOptionId: null,
+        decidedByUserId: MANAGER_ID,
+      })
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  it("records a declined decision and a needs_more_information decision distinctly, with full history retained", async () => {
+    await seedCase(FLEET_A, CASE_ID);
+    const requirement = await createPartRequirement({
+      fleetId: FLEET_A,
+      caseId: CASE_ID,
+      description: "Brake chamber",
+      requestedByUserId: MANAGER_ID,
+    });
+    await advanceToOptionsAvailable(requirement!.id);
+    await transitionPartRequirementStatus({
+      fleetId: FLEET_A,
+      id: requirement!.id,
+      toStatus: "recommendation_ready",
+    });
+
+    await recordApprovalDecision({
+      fleetId: FLEET_A,
+      partRequirementId: requirement!.id,
+      decision: "needs_more_information",
+      reasonNote: "Need a firmer ETA before deciding",
+      decidedByUserId: MANAGER_ID,
+    });
+
+    // The requirement can now go back through fitment/sourcing work...
+    await transitionPartRequirementStatus({ fleetId: FLEET_A, id: requirement!.id, toStatus: "sourcing" });
+    await transitionPartRequirementStatus({
+      fleetId: FLEET_A,
+      id: requirement!.id,
+      toStatus: "options_available",
+    });
+    await transitionPartRequirementStatus({
+      fleetId: FLEET_A,
+      id: requirement!.id,
+      toStatus: "recommendation_ready",
+    });
+
+    await recordApprovalDecision({
+      fleetId: FLEET_A,
+      partRequirementId: requirement!.id,
+      decision: "declined",
+      reasonNote: "No acceptable option found",
+      decidedByUserId: MANAGER_ID,
+    });
+
+    const history = await listApprovalHistory(FLEET_A, requirement!.id);
+    expect(history).toHaveLength(2);
+    expect(history.map((h: any) => h.decision).sort()).toEqual(["declined", "needs_more_information"]);
+
+    const current = await getCurrentApproval(FLEET_A, requirement!.id);
+    expect(current?.decision).toBe("declined");
+
+    const finalRequirement = await getPartRequirement(FLEET_A, requirement!.id);
+    expect(finalRequirement?.status).toBe("declined");
+  });
+
+  it("denies Fleet B from approving or reading Fleet A's approval history", async () => {
+    await seedCase(FLEET_A, CASE_ID);
+    const requirement = await createPartRequirement({
+      fleetId: FLEET_A,
+      caseId: CASE_ID,
+      description: "Brake chamber",
+      requestedByUserId: MANAGER_ID,
+    });
+    await advanceToOptionsAvailable(requirement!.id);
+    await transitionPartRequirementStatus({
+      fleetId: FLEET_A,
+      id: requirement!.id,
+      toStatus: "recommendation_ready",
+    });
+    const option = await addSupplierOption({
+      fleetId: FLEET_A,
+      partRequirementId: requirement!.id,
+      supplierName: "Supplier",
+      priceCents: 1000,
+      capturedByUserId: MANAGER_ID,
+    });
+
+    await expect(
+      recordApprovalDecision({
+        fleetId: FLEET_B,
+        partRequirementId: requirement!.id,
+        decision: "approved",
+        selectedOptionId: option!.id,
+        decidedByUserId: 999,
+      })
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    await expect(listApprovalHistory(FLEET_B, requirement!.id)).resolves.toEqual([]);
+  });
+});
+
+describe("money and availability handling", () => {
+  it("safely handles missing price/freight/core-charge fields without fabricating a cost", async () => {
+    await seedCase(FLEET_A, CASE_ID);
+    const requirement = await createPartRequirement({
+      fleetId: FLEET_A,
+      caseId: CASE_ID,
+      description: "Brake chamber",
+      requestedByUserId: MANAGER_ID,
+    });
+    await recordFitmentAssessment({
+      fleetId: FLEET_A,
+      partRequirementId: requirement!.id,
+      vehicleId: VEHICLE_ID,
+      evidence: { technicianConfirmed: true },
+      source: "technician_manual",
+      assessedByUserId: TECH_ID,
+    });
+    // No price given at all — e.g. a supplier who hasn't quoted yet.
+    await addSupplierOption({
+      fleetId: FLEET_A,
+      partRequirementId: requirement!.id,
+      supplierName: "No Quote Yet",
+      capturedByUserId: MANAGER_ID,
+    });
+
+    const comparison = await getRecommendedOptions(FLEET_A, requirement!.id);
+    expect(comparison.ranked).toHaveLength(1);
+    expect(comparison.ranked[0].estimatedAcquisitionCostCents).toBeNull();
+  });
+
+  it("does not let a foreign-currency option win on price against a same-currency option, at the full service layer", async () => {
+    await seedCase(FLEET_A, CASE_ID);
+    const requirement = await createPartRequirement({
+      fleetId: FLEET_A,
+      caseId: CASE_ID,
+      description: "Brake chamber",
+      requestedByUserId: MANAGER_ID,
+    });
+    await recordFitmentAssessment({
+      fleetId: FLEET_A,
+      partRequirementId: requirement!.id,
+      vehicleId: VEHICLE_ID,
+      evidence: { technicianConfirmed: true },
+      source: "technician_manual",
+      assessedByUserId: TECH_ID,
+    });
+    await addSupplierOption({
+      fleetId: FLEET_A,
+      partRequirementId: requirement!.id,
+      supplierName: "CAD Supplier",
+      priceCents: 5000,
+      currency: "CAD",
+      capturedByUserId: MANAGER_ID,
+    });
+    const usdOption = await addSupplierOption({
+      fleetId: FLEET_A,
+      partRequirementId: requirement!.id,
+      supplierName: "USD Supplier",
+      priceCents: 100,
+      currency: "USD",
+      capturedByUserId: MANAGER_ID,
+    });
+
+    const comparison = await getRecommendedOptions(FLEET_A, requirement!.id);
+    expect(comparison.primaryCurrency).toBe("CAD");
+    const usdRanked = comparison.ranked.find((r) => r.id === usdOption!.id)!;
+    expect(usdRanked.currencyMismatch).toBe(true);
+    expect(comparison.recommended?.id).not.toBe(usdOption!.id);
   });
 });

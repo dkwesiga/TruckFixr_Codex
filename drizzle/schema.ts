@@ -2617,12 +2617,37 @@ export const partSupplierOptions = pgTable(
       .references(() => partRequirements.id, { onDelete: "cascade" }),
     partId: integer("partId").references(() => parts.id, { onDelete: "set null" }),
     supplierName: varchar("supplierName", { length: 255 }).notNull(),
+    // Minimum supplier identity (Parts Intelligence Phase 2 §3) — kept as
+    // columns here rather than a new `suppliers` table: nothing yet requires
+    // deduplicating a supplier across options or scoring its reliability
+    // (see the "Supplier reliability" note below), so a normalized entity
+    // isn't justified. Revisit if/when that changes.
+    supplierContact: text("supplierContact"),
+    supplierLocation: varchar("supplierLocation", { length: 255 }),
+    // Set by a future real supplier-API adapter to the supplier's own id for
+    // this quote; null for manual_entry.
+    externalSupplierId: varchar("externalSupplierId", { length: 120 }),
     quotedPartNumber: varchar("quotedPartNumber", { length: 120 }),
+    // oem_new|aftermarket_new|remanufactured|rebuilt|used|unknown — see
+    // shared/parts/recommendation.ts PART_CONDITIONS. Distinct risk profiles;
+    // never used to auto-prefer a cheaper condition over a better-confirmed one.
+    conditionType: varchar("conditionType", { length: 24 }),
     priceCents: integer("priceCents"),
     currency: varchar("currency", { length: 8 }).default("CAD").notNull(),
     freightCents: integer("freightCents"),
+    coreChargeCents: integer("coreChargeCents"),
+    // Supplier's own raw words (e.g. "2 in stock, Brampton branch") — kept
+    // verbatim and separate from the normalized availabilityState below.
     stockStatus: varchar("stockStatus", { length: 40 }),
+    // in_stock|limited_stock|orderable|backordered|unavailable|unknown —
+    // TruckFixr's normalized reading of the supplier's stock claim, not a
+    // guarantee. See shared/parts/recommendation.ts AVAILABILITY_STATES.
+    availabilityState: varchar("availabilityState", { length: 24 }),
+    // pickup_today|same_day_delivery|estimated_date|lead_time_days|unknown —
+    // a vague supplier claim is never silently converted into a precise date.
+    etaType: varchar("etaType", { length: 24 }),
     etaAt: dateTimestamp(),
+    etaLeadTimeDays: integer("etaLeadTimeDays"),
     warrantyText: text("warrantyText"),
     returnable: boolean("returnable"),
     quoteReference: varchar("quoteReference", { length: 120 }),
@@ -2630,6 +2655,13 @@ export const partSupplierOptions = pgTable(
     source: varchar("source", { length: 32 }).default("manual_entry").notNull(),
     fitmentClaim: text("fitmentClaim"),
     notes: text("notes"),
+    // Freshness (§20): a quote's price/availability stop being trustworthy
+    // after this. Recommendation logic must not treat an expired quote as
+    // current — see shared/parts/recommendation.ts isOptionExpired.
+    quoteExpiresAt: dateTimestamp(),
+    // Set when someone re-checks an existing option's data without creating
+    // a new row (e.g. calls the supplier back to confirm stock still holds).
+    lastVerifiedAt: dateTimestamp(),
     capturedByUserId: integer("capturedByUserId").notNull(),
     capturedAt: dateTimestamp().defaultNow().notNull(),
     createdAt: dateTimestamp().defaultNow().notNull(),
@@ -2643,6 +2675,49 @@ export const partSupplierOptions = pgTable(
 
 export type PartSupplierOption = typeof partSupplierOptions.$inferSelect;
 export type InsertPartSupplierOption = typeof partSupplierOptions.$inferInsert;
+
+// Parts Intelligence Phase 2: human approval decision. Append-only, same
+// pattern as maintenanceDecisions/outcomeRevisions — a new decision is
+// always a NEW row, never an update to a prior one, so TruckFixr's
+// recommendation at decision time and the human's actual choice are both
+// preserved even when they differ (needed later for outcome learning: did
+// following vs. overriding the recommendation correlate with a better
+// outcome?). `recommendedOptionId` is a snapshot of what the system was
+// recommending WHEN the decision was made — it is never updated afterward,
+// even if a later re-ranking would recommend something else.
+export const partOptionApprovals = pgTable(
+  "partOptionApprovals",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId").notNull(),
+    partRequirementId: integer("partRequirementId")
+      .notNull()
+      .references(() => partRequirements.id, { onDelete: "cascade" }),
+    // approved|declined|needs_more_information — see
+    // shared/parts/partRequirementWorkflow.ts.
+    decision: varchar("decision", { length: 32 }).notNull(),
+    recommendedOptionId: integer("recommendedOptionId").references(() => partSupplierOptions.id, {
+      onDelete: "set null",
+    }),
+    // The option the human actually chose. Nullable: declined/needs-more-
+    // information decisions select nothing. APPROVED_OPTION != ORDERED —
+    // this row records a sourcing decision, never a purchase/order event.
+    selectedOptionId: integer("selectedOptionId").references(() => partSupplierOptions.id, {
+      onDelete: "set null",
+    }),
+    reasonNote: text("reasonNote"),
+    decidedByUserId: integer("decidedByUserId").notNull(),
+    decidedAt: dateTimestamp().defaultNow().notNull(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("partOptionApprovals_fleet_idx").on(table.fleetId),
+    index("partOptionApprovals_requirement_idx").on(table.partRequirementId),
+  ]
+);
+
+export type PartOptionApproval = typeof partOptionApprovals.$inferSelect;
+export type InsertPartOptionApproval = typeof partOptionApprovals.$inferInsert;
 
 // =====================================================================
 // Mr Diesel / TADIS closed-loop knowledge pipeline (§3, §12-16).

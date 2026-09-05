@@ -24,6 +24,7 @@ const CASE_IN_FLEET_B = 202;
 
 const REQUIREMENT_IN_FLEET_A = 301;
 const REQUIREMENT_IN_FLEET_B = 302;
+const SUPPLIER_OPTION_IN_FLEET_B = 402;
 
 const {
   canManageVehicleAccessMock,
@@ -32,6 +33,7 @@ const {
   requireFleetFeatureMock,
   hasMaintenanceCapabilityMock,
   getPartRequirementFleetIdMock,
+  getSupplierOptionFleetIdMock,
 } = vi.hoisted(() => ({
   canManageVehicleAccessMock: vi.fn(async ({ fleetId }: { fleetId: number }) => fleetId === FLEET_A),
   getCompanyMembershipMock: vi.fn(async ({ fleetId }: { fleetId?: number | null }) =>
@@ -56,6 +58,10 @@ const {
   // the OWNING fleet the same resource-derived way maintenanceCases does.
   getPartRequirementFleetIdMock: vi.fn(async (id: number) =>
     id === REQUIREMENT_IN_FLEET_A ? FLEET_A : FLEET_B
+  ),
+  // partIntelligence.getSupplierOption is keyed by the option's own id.
+  getSupplierOptionFleetIdMock: vi.fn(async (id: number) =>
+    id === SUPPLIER_OPTION_IN_FLEET_B ? FLEET_B : FLEET_A
   ),
 }));
 
@@ -99,6 +105,13 @@ vi.mock("./services/partRequirements", async () => {
     "./services/partRequirements"
   );
   return { ...actual, getPartRequirementFleetId: getPartRequirementFleetIdMock };
+});
+
+vi.mock("./services/partSupplierOptions", async () => {
+  const actual = await vi.importActual<typeof import("./services/partSupplierOptions")>(
+    "./services/partSupplierOptions"
+  );
+  return { ...actual, getSupplierOptionFleetId: getSupplierOptionFleetIdMock };
 });
 
 // Thenable query stub: every chained call resolves to an empty result set, so the
@@ -338,6 +351,54 @@ describe("partIntelligence resource-derived endpoints — fleet scoping by partR
     const caller = appRouter.createCaller(managerContext());
     await expect(
       caller.partIntelligence.get({ fleetId: FLEET_B, id: REQUIREMENT_IN_FLEET_B })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+});
+
+describe("partIntelligence.getSupplierOption — fleet scoping by option id (Parts Intelligence Phase 2)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("denies reading a supplier option owned by another fleet", async () => {
+    const caller = appRouter.createCaller(managerContext());
+    await expect(
+      caller.partIntelligence.getSupplierOption({ id: SUPPLIER_OPTION_IN_FLEET_B })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(getSupplierOptionFleetIdMock).toHaveBeenCalledWith(SUPPLIER_OPTION_IN_FLEET_B);
+  });
+});
+
+describe("partIntelligence human-approval endpoints — fleet scoping (Parts Intelligence Phase 2)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("denies approving an option on another fleet's part requirement", async () => {
+    const caller = appRouter.createCaller(managerContext());
+    await expect(
+      caller.partIntelligence.approveOption({
+        partRequirementId: REQUIREMENT_IN_FLEET_B,
+        selectedOptionId: SUPPLIER_OPTION_IN_FLEET_B,
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(getPartRequirementFleetIdMock).toHaveBeenCalledWith(REQUIREMENT_IN_FLEET_B);
+  });
+
+  it("denies declining options on another fleet's part requirement", async () => {
+    const caller = appRouter.createCaller(managerContext());
+    await expect(
+      caller.partIntelligence.declineOptions({ partRequirementId: REQUIREMENT_IN_FLEET_B })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("denies requesting more information on another fleet's part requirement", async () => {
+    const caller = appRouter.createCaller(managerContext());
+    await expect(
+      caller.partIntelligence.requestMoreInformation({ partRequirementId: REQUIREMENT_IN_FLEET_B })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("denies reading another fleet's approval history", async () => {
+    const caller = appRouter.createCaller(managerContext());
+    await expect(
+      caller.partIntelligence.listApprovalHistory({ partRequirementId: REQUIREMENT_IN_FLEET_B })
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });

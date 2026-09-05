@@ -29,12 +29,20 @@
   `server/services/tadisLearningPromotion.ts` (`evaluateAndUpsertCandidate`) —
   it's the boundary that keeps a bare unverified `reported` outcome from being
   treated as training-quality evidence. See `.claude/skills/truckfixr-confirmed-outcome/SKILL.md`.
-- Parts fitment (`shared/parts/fitmentEvidence.ts` → `assessFitment`) is
-  deterministic by design — no AI call exists in it today, and none should be
-  added without explicit sign-off. If AI assistance is added later (parsing
-  technician notes, normalizing descriptions, suggesting clarifying questions),
-  it may only ever supply *evidence* for `assessFitment` to evaluate — it must
-  never set a fitment state directly, invent a part number/cross-reference/
-  supersession/supplier-availability claim, or be the sole basis for promoting
-  `likely`/`ambiguous` to `confirmed`. See
-  `.claude/skills/truckfixr-parts-acquisition/SKILL.md`.
+- Parts fitment (`shared/parts/fitmentEvidence.ts` → `assessFitment`) and option
+  comparison (`shared/parts/recommendation.ts` → `compareOptions`) are
+  deterministic by design — no AI call exists in either today, and none should
+  be added without explicit sign-off. If AI assistance is added later (parsing
+  technician notes or supplier quotes, normalizing descriptions, extracting an
+  ETA, summarizing tradeoffs, suggesting clarifying questions), it may only
+  ever supply *evidence* for `assessFitment`/`compareOptions` to evaluate — it
+  must never: set a fitment state directly; invent a part number/cross-
+  reference/supersession claim; fabricate a price, stock/availability claim,
+  warranty term, ETA, or supplier identity; override deterministic fitment
+  evidence; or autonomously approve a sourcing option (`partOptionApprovals` —
+  approval is owner/manager-only by policy, never system-initiated). If AI
+  extraction is introduced, preserve the chain **raw source → AI-extracted
+  value → verified/non-verified status** — never treat an extraction as fact
+  on its own, the same way a supplier's own claim
+  (`partSupplierOptions.fitmentClaim`) is never treated as TruckFixr's fitment
+  conclusion. See `.claude/skills/truckfixr-parts-acquisition/SKILL.md`.
