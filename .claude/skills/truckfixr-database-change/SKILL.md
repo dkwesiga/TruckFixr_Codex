@@ -14,11 +14,14 @@ file for the full sequence; this is the condensed version to run through inline.
    table/column you're changing.
 3. Prefer additive: new nullable column + backfill, rather than rename/narrow/drop
    on a table with existing rows.
-4. Generate the migration via the project's Drizzle tooling
-   (`drizzle-kit generate`), don't hand-write divergent SQL.
-5. If the table is fleet-scoped (has or should have `fleetId`), add/update the RLS
-   policy migration following the pattern in migrations `0005`, `0012`, `0015`,
-   `0016`, `0031`, and add coverage in `scripts/verify/rls.ts`.
+4. Write the migration by hand (`drizzle-kit generate`'s snapshots are stale in
+   this repo — verified, last real one is `0004`), matching a recent migration's
+   exact style in `drizzle/*.sql`.
+5. If the table is fleet-scoped (has or should have `fleetId`), enable RLS +
+   add a `service_role`-only policy following the pattern in migrations `0048`/
+   `0056` (the current convention — not the older per-fleet `authenticated`-role
+   policies in `0005`/`0012`/`0015`/`0016`/`0031`), and add coverage in
+   `scripts/verify/rls.ts`'s `POST_0012_RLS_TABLES`.
 6. Check whether `scripts/seed-demo-data.ts` needs updating for the new shape, and
    run `pnpm validate:demo-seed` if so.
 7. Update any test asserting the old shape.

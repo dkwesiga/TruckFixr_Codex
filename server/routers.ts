@@ -28,6 +28,7 @@ import { caseReviewRouter } from "./routers/caseReview";
 import { pilotApplicationsRouter } from "./routers/pilotApplications";
 import { technicianReviewsRouter } from "./routers/technicianReviews";
 import { partsRequestsRouter } from "./routers/partsRequests";
+import { partIntelligenceRouter } from "./routers/partIntelligence";
 import { historicalImportRouter } from "./routers/historicalImport";
 
 export const appRouter = router({
@@ -60,6 +61,7 @@ export const appRouter = router({
   pilotApplications: pilotApplicationsRouter,
   technicianReviews: technicianReviewsRouter,
   partsRequests: partsRequestsRouter,
+  partIntelligence: partIntelligenceRouter,
   historicalImport: historicalImportRouter,
 });
 

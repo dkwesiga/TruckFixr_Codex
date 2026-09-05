@@ -2477,6 +2477,174 @@ export type PartsOffer = typeof partsOffers.$inferSelect;
 export type InsertPartsOffer = typeof partsOffers.$inferInsert;
 
 // =====================================================================
+// Parts Intelligence Phase 1 (case-embedded parts workflow — distinct from
+// the staff concierge flow above, which links to the legacy `cases` table
+// via partsRequests.caseId, not to `maintenanceCases`). See
+// docs/architecture/parts-acquisition.md.
+//
+// Tenant model: `partRequirements`/`partFitmentAssessments`/
+// `partSupplierOptions` all carry a direct `fleetId` column (the same
+// resource-derived-fleet convention as `maintenanceDecisions`/`repairCycles`/
+// `repairOutcomes` — resolved server-side from the owning `maintenanceCases`
+// row, never trusted from client input). `parts` itself is NOT fleet-scoped
+// — it is shared reference data (an OEM/part-identity catalog), the same
+// category as `faultCodeReferences`, since a part's OEM number is a fact
+// about the part, not about any one fleet.
+// =====================================================================
+
+// Shared, cross-fleet part-identity catalog. Never populated by inventing a
+// number — see server/services/partIdentification.ts. `crossReferences`
+// holds aftermarket/cross-reference numbers as evidence, NOT as OEM
+// confirmation (see shared/parts/fitmentEvidence.ts).
+export const parts = pgTable(
+  "parts",
+  {
+    id: serial("id").primaryKey(),
+    manufacturer: varchar("manufacturer", { length: 255 }),
+    oemPartNumber: varchar("oemPartNumber", { length: 120 }),
+    manufacturerPartNumber: varchar("manufacturerPartNumber", { length: 120 }),
+    supersededPartNumber: varchar("supersededPartNumber", { length: 120 }),
+    // Array of { source: string, number: string, note?: string }. A
+    // cross-reference/aftermarket number is evidence for fitment, never
+    // itself an OEM confirmation.
+    crossReferences: jsonb("crossReferences"),
+    description: text("description"),
+    category: varchar("category", { length: 100 }),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("parts_oemPartNumber_idx").on(table.oemPartNumber),
+    index("parts_manufacturerPartNumber_idx").on(table.manufacturerPartNumber),
+  ]
+);
+
+export type Part = typeof parts.$inferSelect;
+export type InsertPart = typeof parts.$inferInsert;
+
+// A maintenance case's need for a part. Independent of whether the part's
+// identity has been resolved yet (partId is nullable — "unresolved" is a
+// valid, honest state, not an error).
+export const partRequirements = pgTable(
+  "partRequirements",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId").notNull(),
+    caseId: integer("caseId")
+      .notNull()
+      .references(() => maintenanceCases.id, { onDelete: "cascade" }),
+    repairCycleId: integer("repairCycleId"),
+    // Resolved identity, once identification/fitment work concludes.
+    // Nullable — a requirement can exist before its part is identified. On
+    // delete: set null rather than cascade — removing a catalog entry must
+    // never silently delete the fleet's own requirement history.
+    partId: integer("partId").references(() => parts.id, { onDelete: "set null" }),
+    description: text("description").notNull(),
+    reasonContext: text("reasonContext"),
+    quantity: integer("quantity").default(1).notNull(),
+    // PART_REQUIRED|IDENTIFYING|FITMENT_REVIEW|FITMENT_VERIFIED|SOURCING|
+    // OPTIONS_AVAILABLE|FITMENT_AMBIGUOUS|PART_NOT_FOUND|CANCELLED — see
+    // shared/parts/partRequirementWorkflow.ts.
+    status: varchar("status", { length: 32 }).default("part_required").notNull(),
+    requestedByUserId: integer("requestedByUserId").notNull(),
+    requestedAt: dateTimestamp().defaultNow().notNull(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("partRequirements_fleet_idx").on(table.fleetId),
+    index("partRequirements_case_idx").on(table.caseId),
+  ]
+);
+
+export type PartRequirement = typeof partRequirements.$inferSelect;
+export type InsertPartRequirement = typeof partRequirements.$inferInsert;
+
+// Append-only: TruckFixr's OWN evidence-based fitment determination for a
+// requirement. This is deliberately separate from a supplier's fitment
+// CLAIM (partSupplierOptions.fitmentClaim) — a supplier saying "fits" is not
+// the same fact as TruckFixr having verified it (§13). Never updated in
+// place — a re-assessment (new evidence, e.g. a technician confirms the
+// existing part number) is a new row; the most recent row for a
+// requirement is the current assessment.
+export const partFitmentAssessments = pgTable(
+  "partFitmentAssessments",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId").notNull(),
+    partRequirementId: integer("partRequirementId")
+      .notNull()
+      .references(() => partRequirements.id, { onDelete: "cascade" }),
+    partId: integer("partId").references(() => parts.id, { onDelete: "set null" }),
+    vehicleId: varchar("vehicleId", { length: 64 }).notNull(),
+    // not_confirmed|ambiguous|likely|confirmed — shared/parts/fitmentEvidence.ts.
+    state: varchar("state", { length: 16 }).notNull(),
+    // Structured evidence actually used (see FitmentEvidenceInput) — not a
+    // free-text rationale. Preserves what was checked, not just the result.
+    evidenceJson: jsonb("evidenceJson").notNull(),
+    missingEvidenceJson: jsonb("missingEvidenceJson"),
+    conflictsJson: jsonb("conflictsJson"),
+    // deterministic_rule|technician_manual|ai_assisted_extraction — an AI
+    // source may only ever produce evidence to feed the deterministic rule,
+    // never set `state` directly to confirmed itself (see
+    // .claude/rules/ai-safety.md).
+    source: varchar("source", { length: 32 }).notNull(),
+    assessedByUserId: integer("assessedByUserId"),
+    assessedAt: dateTimestamp().defaultNow().notNull(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("partFitmentAssessments_fleet_idx").on(table.fleetId),
+    index("partFitmentAssessments_requirement_idx").on(table.partRequirementId),
+  ]
+);
+
+export type PartFitmentAssessment = typeof partFitmentAssessments.$inferSelect;
+export type InsertPartFitmentAssessment = typeof partFitmentAssessments.$inferInsert;
+
+// A candidate sourcing option for a requirement. No ordering/procurement —
+// this phase only represents the option (manually entered today; a future
+// supplier integration would populate the same shape, not a parallel one).
+// `fitmentClaim` is the supplier's own, UNVERIFIED statement (raw text) —
+// distinct from partFitmentAssessments, which is TruckFixr's own evidence.
+export const partSupplierOptions = pgTable(
+  "partSupplierOptions",
+  {
+    id: serial("id").primaryKey(),
+    fleetId: integer("fleetId").notNull(),
+    partRequirementId: integer("partRequirementId")
+      .notNull()
+      .references(() => partRequirements.id, { onDelete: "cascade" }),
+    partId: integer("partId").references(() => parts.id, { onDelete: "set null" }),
+    supplierName: varchar("supplierName", { length: 255 }).notNull(),
+    quotedPartNumber: varchar("quotedPartNumber", { length: 120 }),
+    priceCents: integer("priceCents"),
+    currency: varchar("currency", { length: 8 }).default("CAD").notNull(),
+    freightCents: integer("freightCents"),
+    stockStatus: varchar("stockStatus", { length: 40 }),
+    etaAt: dateTimestamp(),
+    warrantyText: text("warrantyText"),
+    returnable: boolean("returnable"),
+    quoteReference: varchar("quoteReference", { length: 120 }),
+    // manual_entry today; reserved for a future real supplier integration.
+    source: varchar("source", { length: 32 }).default("manual_entry").notNull(),
+    fitmentClaim: text("fitmentClaim"),
+    notes: text("notes"),
+    capturedByUserId: integer("capturedByUserId").notNull(),
+    capturedAt: dateTimestamp().defaultNow().notNull(),
+    createdAt: dateTimestamp().defaultNow().notNull(),
+    updatedAt: dateTimestamp().defaultNow().notNull(),
+  },
+  (table) => [
+    index("partSupplierOptions_fleet_idx").on(table.fleetId),
+    index("partSupplierOptions_requirement_idx").on(table.partRequirementId),
+  ]
+);
+
+export type PartSupplierOption = typeof partSupplierOptions.$inferSelect;
+export type InsertPartSupplierOption = typeof partSupplierOptions.$inferInsert;
+
+// =====================================================================
 // Mr Diesel / TADIS closed-loop knowledge pipeline (§3, §12-16).
 // partnerProfiles models a repair-shop tenant's type + knowledge
 // contribution policy explicitly (fleets.isPartner remains the fast

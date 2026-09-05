@@ -22,22 +22,42 @@ const FLEET_B = 2;
 const CASE_IN_FLEET_A = 101;
 const CASE_IN_FLEET_B = 202;
 
-const { canManageVehicleAccessMock, getCompanyMembershipMock, getCaseFleetIdMock, requireFleetFeatureMock } =
-  vi.hoisted(() => ({
-    canManageVehicleAccessMock: vi.fn(async ({ fleetId }: { fleetId: number }) => fleetId === FLEET_A),
-    getCompanyMembershipMock: vi.fn(async ({ fleetId }: { fleetId?: number | null }) =>
-      fleetId === FLEET_A
-        ? { fleetId: FLEET_A, userId: 14, role: "manager", status: "active" }
-        : null
-    ),
-    // maintenanceCases.get/transition resolve a caseId to its OWNING fleet (not the
-    // caller's own fleet) before checking membership — see getCaseFleetId in
-    // server/services/maintenanceCases.ts. This mock stands in for that lookup.
-    getCaseFleetIdMock: vi.fn(async (caseId: number) => (caseId === CASE_IN_FLEET_A ? FLEET_A : FLEET_B)),
-    // Feature-flag gating is orthogonal to tenant isolation; stub it out so these
-    // tests isolate the fleet-scoping boundary specifically.
-    requireFleetFeatureMock: vi.fn(async () => {}),
-  }));
+const REQUIREMENT_IN_FLEET_A = 301;
+const REQUIREMENT_IN_FLEET_B = 302;
+
+const {
+  canManageVehicleAccessMock,
+  getCompanyMembershipMock,
+  getCaseFleetIdMock,
+  requireFleetFeatureMock,
+  hasMaintenanceCapabilityMock,
+  getPartRequirementFleetIdMock,
+} = vi.hoisted(() => ({
+  canManageVehicleAccessMock: vi.fn(async ({ fleetId }: { fleetId: number }) => fleetId === FLEET_A),
+  getCompanyMembershipMock: vi.fn(async ({ fleetId }: { fleetId?: number | null }) =>
+    fleetId === FLEET_A
+      ? { fleetId: FLEET_A, userId: 14, role: "manager", status: "active" }
+      : null
+  ),
+  // maintenanceCases.get/transition resolve a caseId to its OWNING fleet (not the
+  // caller's own fleet) before checking membership — see getCaseFleetId in
+  // server/services/maintenanceCases.ts. This mock stands in for that lookup.
+  getCaseFleetIdMock: vi.fn(async (caseId: number) => (caseId === CASE_IN_FLEET_A ? FLEET_A : FLEET_B)),
+  // Feature-flag gating is orthogonal to tenant isolation; stub it out so these
+  // tests isolate the fleet-scoping boundary specifically.
+  requireFleetFeatureMock: vi.fn(async () => {}),
+  // hasMaintenanceCapability internally calls canManageCompanyOperations, which
+  // calls companyAccess's OWN internal (unmocked, same-module) getCompanyMembership
+  // reference -- mocking the exported getCompanyMembership above does not reach
+  // it. Mock hasMaintenanceCapability directly instead, same as the fleetId
+  // membership mocks above: FLEET_A is authorized, FLEET_B is not.
+  hasMaintenanceCapabilityMock: vi.fn(async ({ fleetId }: { fleetId: number }) => fleetId === FLEET_A),
+  // partIntelligence endpoints keyed by partRequirementId (not caseId) resolve
+  // the OWNING fleet the same resource-derived way maintenanceCases does.
+  getPartRequirementFleetIdMock: vi.fn(async (id: number) =>
+    id === REQUIREMENT_IN_FLEET_A ? FLEET_A : FLEET_B
+  ),
+}));
 
 vi.mock("./services/vehicleAccess", async () => {
   const actual = await vi.importActual<typeof import("./services/vehicleAccess")>(
@@ -65,6 +85,20 @@ vi.mock("./services/fleetFeatures", async () => {
     "./services/fleetFeatures"
   );
   return { ...actual, requireFleetFeature: requireFleetFeatureMock };
+});
+
+vi.mock("./services/maintenancePermissions", async () => {
+  const actual = await vi.importActual<typeof import("./services/maintenancePermissions")>(
+    "./services/maintenancePermissions"
+  );
+  return { ...actual, hasMaintenanceCapability: hasMaintenanceCapabilityMock };
+});
+
+vi.mock("./services/partRequirements", async () => {
+  const actual = await vi.importActual<typeof import("./services/partRequirements")>(
+    "./services/partRequirements"
+  );
+  return { ...actual, getPartRequirementFleetId: getPartRequirementFleetIdMock };
 });
 
 // Thenable query stub: every chained call resolves to an empty result set, so the
@@ -240,5 +274,70 @@ describe("maintenanceCases.transition — fleet scoping and role boundary (admin
     // adminProcedure's role check rejects before the resolver body runs, so the
     // case-fleet lookup is never reached for a non-owner/manager caller.
     expect(getCaseFleetIdMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("partIntelligence.create — fleet scoping (case-derived fleet, Parts Intelligence Phase 1)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("denies creating a part requirement on a case owned by another fleet", async () => {
+    const caller = appRouter.createCaller(managerContext());
+    await expect(
+      caller.partIntelligence.create({ caseId: CASE_IN_FLEET_B, description: "Brake chamber" })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(getCaseFleetIdMock).toHaveBeenCalledWith(CASE_IN_FLEET_B);
+    // The fleet-scope check runs (and fails) before any capability check.
+    expect(hasMaintenanceCapabilityMock).not.toHaveBeenCalled();
+  });
+
+  it("denies a driver outright at the capability-gate, before any DB write", async () => {
+    const caller = appRouter.createCaller(driverContext());
+    hasMaintenanceCapabilityMock.mockResolvedValueOnce(false);
+    await expect(
+      caller.partIntelligence.create({ caseId: CASE_IN_FLEET_A, description: "Brake chamber" })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+});
+
+describe("partIntelligence resource-derived endpoints — fleet scoping by partRequirementId", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("denies reading a part requirement owned by another fleet", async () => {
+    const caller = appRouter.createCaller(managerContext());
+    await expect(
+      caller.partIntelligence.get({ id: REQUIREMENT_IN_FLEET_B })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(getPartRequirementFleetIdMock).toHaveBeenCalledWith(REQUIREMENT_IN_FLEET_B);
+  });
+
+  it("denies recording a fitment assessment against another fleet's requirement", async () => {
+    const caller = appRouter.createCaller(managerContext());
+    await expect(
+      caller.partIntelligence.recordFitmentAssessment({
+        partRequirementId: REQUIREMENT_IN_FLEET_B,
+        vehicleId: "veh-1",
+        source: "technician_manual",
+        evidence: { technicianConfirmed: true },
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("denies adding a supplier option against another fleet's requirement", async () => {
+    const caller = appRouter.createCaller(managerContext());
+    await expect(
+      caller.partIntelligence.addSupplierOption({
+        partRequirementId: REQUIREMENT_IN_FLEET_B,
+        supplierName: "ABC Truck Parts",
+      })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("still denies access when the client explicitly supplies the requirement's real (foreign) fleetId", async () => {
+    // Even naming the correct fleet doesn't help — the caller still isn't a
+    // member of it (same pattern as the maintenanceCases.get test above).
+    const caller = appRouter.createCaller(managerContext());
+    await expect(
+      caller.partIntelligence.get({ fleetId: FLEET_B, id: REQUIREMENT_IN_FLEET_B })
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });

@@ -82,6 +82,10 @@ const POST_0012_RLS_TABLES = [
   "guestCaseEvidence",
   "partsRequests",
   "partsOffers",
+  "parts",
+  "partRequirements",
+  "partFitmentAssessments",
+  "partSupplierOptions",
 ] as const;
 
 async function assertPost0012RlsEnabled(client: PoolClient) {

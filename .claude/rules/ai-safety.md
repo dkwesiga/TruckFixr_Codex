@@ -29,3 +29,12 @@
   `server/services/tadisLearningPromotion.ts` (`evaluateAndUpsertCandidate`) —
   it's the boundary that keeps a bare unverified `reported` outcome from being
   treated as training-quality evidence. See `.claude/skills/truckfixr-confirmed-outcome/SKILL.md`.
+- Parts fitment (`shared/parts/fitmentEvidence.ts` → `assessFitment`) is
+  deterministic by design — no AI call exists in it today, and none should be
+  added without explicit sign-off. If AI assistance is added later (parsing
+  technician notes, normalizing descriptions, suggesting clarifying questions),
+  it may only ever supply *evidence* for `assessFitment` to evaluate — it must
+  never set a fitment state directly, invent a part number/cross-reference/
+  supersession/supplier-availability claim, or be the sole basis for promoting
+  `likely`/`ambiguous` to `confirmed`. See
+  `.claude/skills/truckfixr-parts-acquisition/SKILL.md`.

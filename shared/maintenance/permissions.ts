@@ -25,6 +25,10 @@ export const MAINTENANCE_CAPABILITIES = {
   // should (see SERVICE_ADVISOR_CAPABILITIES / TECHNICIAN_CAPABILITIES below).
   verifyOutcome: "verify_outcome",
   confirmOutcome: "confirm_outcome",
+  // Parts Intelligence Phase 1: create/update a case's part requirements,
+  // record fitment assessments, and add supplier options. Does not include
+  // any procurement/ordering action (none exists yet).
+  managePartRequirements: "manage_part_requirements",
 } as const;
 
 export type MaintenanceCapability =
@@ -75,6 +79,7 @@ export const SERVICE_ADVISOR_CAPABILITIES: MaintenanceCapability[] = [
   MAINTENANCE_CAPABILITIES.uploadDocuments,
   MAINTENANCE_CAPABILITIES.updateRepairStatus,
   MAINTENANCE_CAPABILITIES.recordExpectedCompletion,
+  MAINTENANCE_CAPABILITIES.managePartRequirements,
 ];
 
 // Technician capabilities are a superset of Service Advisor — a technician

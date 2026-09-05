@@ -12,10 +12,12 @@ sequence. Do not skip steps to save time — schema mistakes are expensive to un
    constraint? Does a renamed column break a consumer that isn't in this diff?
    Prefer additive changes (new nullable column, backfill later) over
    rename-in-place.
-4. **Define the migration.** Generate it with `drizzle-kit generate` (via
-   `pnpm db:push` locally against a scratch DB, or by hand following the existing
-   numbered-file convention in `drizzle/*.sql`) — don't hand-write SQL that diverges
-   from what Drizzle would generate for the schema.
+4. **Define the migration.** `drizzle-kit generate`'s snapshot tracking is stale
+   in this repo (verified: `drizzle/meta`'s last real snapshot is `0004`) — write
+   the SQL by hand, matching the exact style of a recent migration in
+   `drizzle/*.sql` (idempotent `CREATE TABLE IF NOT EXISTS`, matching column
+   types/defaults to `drizzle/schema.ts`). Applied via
+   `scripts/verify/apply-readiness-migrations.ts`, not `drizzle-kit migrate`.
 5. **Define rollback** where the migration is anything beyond a pure addition —
    at minimum, note in the migration file or PR what a rollback would require.
 6. **Assess tenant implications.** Does the new table need `fleetId`? Does it need

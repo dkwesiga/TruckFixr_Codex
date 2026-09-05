@@ -26,3 +26,12 @@ narrative.
   every candidate can tie at zero evidence, verify the code path explicitly handles
   that case rather than relying on sort stability to produce a reasonable-looking
   default.
+- `drizzle-kit generate`'s snapshot tracking (`drizzle/meta/`) is stale (last real
+  snapshot is `0004`; migrations since then are hand-written directly). Don't run
+  `drizzle-kit generate` expecting a usable diff — write migration SQL by hand
+  matching a recent migration's style, per `.claude/rules/database.md`.
+- New fleet-scoped tables since roughly migration `0043` use a simpler RLS
+  convention than the older tables: enable RLS + one `service_role`-only
+  full-access policy (pattern in `0048`/`0056`), not the older per-fleet
+  `authenticated`-role policies (`0005`/`0012`/`0015`/`0016`/`0031`). Register the
+  table in `scripts/verify/rls.ts`'s `POST_0012_RLS_TABLES` either way.

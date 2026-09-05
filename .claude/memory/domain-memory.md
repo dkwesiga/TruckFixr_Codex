@@ -15,9 +15,19 @@ promotion rule before adding an entry.
   re-checks `fleetId` defensively even though callers are expected to have already
   scoped it. Treat this defensive re-check as the pattern to copy in any new
   cross-cutting AI-context builder, not boilerplate to remove.
-- Parts sourcing today is a human-mediated concierge flow (staff triage via
-  `partsRequests.ts`), not automated procurement — don't assume a fitment or
-  supplier-selection field means "AI-confirmed" unless the code actually says so.
+- TruckFixr has two separate parts flows — don't conflate them. `partsRequests.ts`
+  is a staff-only concierge intake linked to the legacy `cases` table (not
+  `maintenanceCases`), no fleet-user endpoint. `partIntelligence.ts` (Phase 1) is
+  case-embedded and fleet-user-facing, linked directly to `maintenanceCases.id`.
+  Neither does automated procurement — no ordering/supplier-contact exists in
+  either. Don't assume a fitment or supplier-selection field means "AI-confirmed"
+  unless the code actually says so; Phase 1's fitment engine
+  (`shared/parts/fitmentEvidence.ts`) is fully deterministic, no AI call.
+- A supplier's own fitment claim and TruckFixr's own fitment determination are
+  different facts, kept in different fields on purpose:
+  `partSupplierOptions.fitmentClaim` (raw, unverified supplier text) vs.
+  `partFitmentAssessments.state` (evidence-based, deterministic). Never let one
+  overwrite or get copied into the other.
 - Demo fleets are 3 fixed companies (Maple Route Logistics = 4 vehicles, Peel
   Community Transport = 6, NorthStone Construction = 8; 18 total, 12 users) —
   changing these counts requires updating `validate:demo-seed` in the same change.

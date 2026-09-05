@@ -36,8 +36,12 @@ evidence from the domain owner, and update the shared module, not ad hoc strings
   plus repair-shop states `awaiting_follow_up`, `return_job`. `reopened`/`cancelled`
   exist off the happy path. Terminal: `closed`, `cancelled`, `return_job`.
 - **repairOutcomes** — confirmed repair outcomes (see below).
-- **partsRequests** / parts concierge tables — human-mediated parts sourcing (see
-  `docs/architecture/parts-acquisition.md`).
+- **partsRequests**/**partsOffers** — staff-only concierge parts sourcing, linked
+  to the legacy `cases` table, not `maintenanceCases`. **partRequirements**/
+  **parts**/**partFitmentAssessments**/**partSupplierOptions** — Parts
+  Intelligence Phase 1, case-embedded and fleet-user-facing, with a
+  deterministic (no-AI) fitment engine. These are two separate flows — see
+  `docs/architecture/parts-acquisition.md`.
 - **subscriptions**, **plans**, **planFeatures** — billing/entitlements (Stripe).
 
 Do not rename or reinterpret these entities without checking `drizzle/schema.ts` first —
