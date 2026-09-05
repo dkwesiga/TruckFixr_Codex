@@ -25,7 +25,7 @@ import { Switch } from "@/components/ui/switch";
 
 export default function UserProfile() {
   const { user } = useAuthContext();
-  const [location] = useLocation();
+  const [location, navigate] = useLocation();
   const utils = trpc.useUtils();
   const [formData, setFormData] = useState({
     name: user?.name || "",
@@ -442,8 +442,6 @@ export default function UserProfile() {
       </div>
     );
   }
-
-  const [, navigate] = useLocation();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4">
