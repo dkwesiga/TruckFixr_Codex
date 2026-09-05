@@ -1,5 +1,31 @@
 # Parts acquisition architecture
 
+## Product boundary: Parts Intelligence is frozen at Phase 2 (human approval)
+
+**As of the PR that closed out Phase 2, Parts Intelligence is intentionally
+stopping at human approval — not because of a technical limitation, but as a
+deliberate product decision.** The implemented, supported workflow is:
+
+```
+PART REQUIRED → IDENTIFICATION → FITMENT ASSESSMENT → SUPPLIER OPTIONS
+  → RECOMMENDATION → HUMAN SELECTION / APPROVAL
+```
+
+**Approval does not mean an order has been placed.** TruckFixr currently helps
+a fleet determine: what part is required; what candidate part identities
+exist; whether fitment is sufficiently supported by evidence; what supplier
+options are available; which option TruckFixr recommends; and which option
+the human selected. The actual transaction — placing the order, paying,
+tracking shipment, receiving the part, confirming installation — remains
+outside TruckFixr in this product phase and happens through the fleet's/shop's
+existing process, same as before Parts Intelligence existed.
+
+This is a scope decision, not an implementation gap: see "Deferred — Phase 3"
+and "What stopping at Phase 2 means" below for exactly what is and isn't
+covered, and "When to reopen Phase 3" for how that decision gets revisited.
+Do not build any part of Phase 3 as a side effect of unrelated work — see
+`.claude/skills/truckfixr-parts-acquisition/SKILL.md`.
+
 ## Implemented now — Phase 1 (requirement + identity + fitment foundation) + Phase 2 (sourcing + comparison + approval)
 
 TruckFixr has **two separate, non-overlapping parts flows**. Don't conflate them:
@@ -233,14 +259,88 @@ The API layer already reflects this today: `recordFitmentAssessment`'s
 `source` enum accepts only `deterministic_rule`/`technician_manual` —
 `ai_assisted_extraction` is a reserved future value, not yet exposed.
 
-## Deferred — Phase 3 (order execution + fulfillment tracking + receiving)
+## Deferred: Parts Intelligence Phase 3 — **NOT IMPLEMENTED**
 
-Not started. Extension points left clean: `approved` (Phase 2's terminal
-"selected" state) → `order_request` → `ordered` → `in_transit` → `received` →
-`installed` → linkage into `confirmed_outcome`. Also deferred: supplier
-integrations beyond the sourcing abstraction, quote ingestion automation, RFQ
-automation, inventory, returns, warranty claims. Reconcile any new statuses
-against `shared/parts/partRequirementWorkflow.ts`'s existing vocabulary.
+Nothing below this line exists in code today. This section describes a
+*potential* future workflow, not a build in progress — no partial states, no
+speculative columns, no half-wired router endpoints exist for any of it, and
+none should be added until the trigger conditions below are met and a human
+explicitly asks for this phase.
+
+Potential future workflow (conceptual only):
+
+```
+APPROVED_OPTION → ORDER_REQUEST → ORDERED → IN_TRANSIT → RECEIVED → INSTALLED
+  → CONFIRMED_OUTCOME
+```
+
+Also out of scope until Phase 3 is opened: supplier integrations beyond the
+sourcing abstraction, quote ingestion automation, RFQ automation, inventory,
+returns, warranty claims, payment. Reconcile any new statuses against
+`shared/parts/partRequirementWorkflow.ts`'s existing vocabulary when/if this
+work starts.
+
+### What stopping at Phase 2 means TruckFixr does not currently capture
+
+Because the workflow stops at `approved`/`declined`, TruckFixr does not
+record:
+
+- actual purchase-order transmission to a supplier,
+- supplier acknowledgement of an order,
+- the actual date an order was placed,
+- actual fulfillment/shipment status,
+- actual delivery date,
+- received quantity,
+- damaged- or wrong-part receipt,
+- installed-part confirmation linked directly back to the selected supplier
+  option,
+- quoted-vs-actual supplier performance (ETA accuracy, fill rate, etc.),
+- any automatic linkage from an approved option to a confirmed repair outcome.
+
+**None of these gaps prevent Parts Intelligence from doing its actual job.**
+The product's value in this phase is decision support — helping a human reach
+a good, evidence-based, well-compared sourcing decision quickly — not
+transaction execution. A fleet can still place the order, track it, and
+receive the part through whatever process it already uses; Parts Intelligence
+simply doesn't (yet) observe or record that part of the process.
+
+### When to reopen Phase 3
+
+Phase 3 is **demand-triggered, not calendar-triggered** — it should not be
+built merely because the architecture supports it or because a roadmap slot
+opens up. Reopen it when real usage shows evidence such as:
+
+- pilot fleets repeatedly ask TruckFixr to place or manage parts orders,
+- fleet users approve supplier options but then struggle with the manual
+  hand-off to actually ordering,
+- approved-option volume becomes high enough that order tracking is
+  operationally significant on its own,
+- fleets explicitly request receiving or shipment visibility,
+- supplier-performance data becomes necessary to keep recommendation quality
+  improving (i.e., Phase 2's recommendations are limited by not knowing which
+  suppliers actually deliver as quoted),
+- commercial customers indicate procurement execution materially affects
+  willingness to pay.
+
+Until one of these shows up in real usage, the near-term priority stays
+pilot/customer usage, sales conversion, confirmed-outcome growth, and product
+gaps surfaced by actual fleets using Phase 1/2 — not building Phase 3 ahead of
+demonstrated need.
+
+### Why Phase 3 can be added later without redesigning Phase 1/2
+
+The current data model already supports the relationship a future Phase 3
+needs, without any destructive schema change:
+`partOptionApprovals.selectedOptionId` already points at the exact
+`partSupplierOptions` row a human chose, and `partRequirements.caseId`
+already links that decision back to a `maintenanceCases` row (and, via
+`repairCycleId`, to a repair cycle). A future `ORDER_REQUEST`/`ORDERED`/etc.
+table (or new terminal states) would attach *additively* to
+`partOptionApprovals`/`partRequirements` by id — nothing about the existing
+append-only approval history, the requirement lifecycle, or the fitment/
+recommendation engines would need to change shape to support it. This
+document does not add any new table or column now in anticipation of that —
+only the existing relationship is noted here.
 
 ## Future — supplier reliability + outcome learning + Parts Intelligence Graph
 

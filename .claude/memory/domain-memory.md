@@ -63,3 +63,9 @@ promotion rule before adding an entry.
   Currency mismatches are handled by treating a foreign-currency price as
   "cost unknown" for ranking purposes (reusing the existing missing-price
   tie-break), never by FX conversion.
+- Parts Intelligence currently stops at human approval. Approval is not an
+  order. Procurement execution (Phase 3: order placement, fulfillment
+  tracking, receiving, installation linkage) is intentionally deferred until
+  customer demand justifies building it — see "When to reopen Phase 3" in
+  `docs/architecture/parts-acquisition.md`. Don't add any order/fulfillment
+  state or table as a side effect of unrelated work.
